@@ -6,18 +6,27 @@ const NAV = {
     technician: [
         { path: '/dashboard', label: 'Dashboard' },
         { path: '/tickets',   label: 'Tickets'   },
+        { path: '/alarms',    label: 'Alarms'    },
         { path: '/fleet',     label: 'Fleet'     },
+        { path: '/inventory', label: 'Inventory' },
+        { path: '/projects',  label: 'Projects'  },
     ],
     accounting: [
         { path: '/dashboard',  label: 'Dashboard'  },
         { path: '/financials', label: 'Financials' },
+        { path: '/alarms',     label: 'Alarms'     },
         { path: '/fleet',      label: 'Fleet'      },
+        { path: '/inventory',  label: 'Inventory'  },
+        { path: '/projects',   label: 'Projects'   },
     ],
     admin: [
         { path: '/dashboard',  label: 'Dashboard'  },
         { path: '/tickets',    label: 'Tickets'    },
         { path: '/financials', label: 'Financials' },
+        { path: '/alarms',     label: 'Alarms'     },
         { path: '/fleet',      label: 'Fleet'      },
+        { path: '/inventory',  label: 'Inventory'  },
+        { path: '/projects',   label: 'Projects'   },
         { path: '/admin',      label: 'Admin'      },
     ],
 };
@@ -59,9 +68,7 @@ export default function Layout({ children }) {
                         <div className="user-name">{user?.name}</div>
                         <div className="user-role">{user?.role}</div>
                     </div>
-                    <button className="logout-btn" onClick={handleLogout}>
-                        Logout
-                    </button>
+                    <button className="logout-btn" onClick={handleLogout}>Logout</button>
                 </div>
             </aside>
 

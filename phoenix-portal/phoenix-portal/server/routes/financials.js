@@ -39,6 +39,103 @@ router.get('/summary', requireRole('accounting', 'admin'), async (req, res) => {
     }
 });
 
+/* GET /api/financials/monthly
+   Returns last 12 months of income/expenses from financial_records
+   plus fleet invoice totals per month, and current MRR from client billing.
+   Response: { months: [{month, income, expenses, fleet}], mrr: number } */
+router.get('/monthly', requireRole('accounting', 'admin'), async (req, res) => {
+    try {
+        /* Build the 12-month label array (oldest → newest) */
+        const months = [];
+        for (let i = 11; i >= 0; i--) {
+            const d = new Date();
+            d.setDate(1);
+            d.setMonth(d.getMonth() - i);
+            months.push(d.toISOString().slice(0, 7));   /* 'YYYY-MM' */
+        }
+
+        const [finRows, fleetRows, mrrRow] = await Promise.all([
+            pool.query(`
+                SELECT TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM') AS month,
+                       COALESCE(SUM(CASE WHEN type = 'income'  THEN amount ELSE 0 END), 0) AS income,
+                       COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS expenses
+                FROM financial_records
+                WHERE created_at >= NOW() - INTERVAL '12 months'
+                GROUP BY 1
+                ORDER BY 1
+            `),
+            pool.query(`
+                SELECT TO_CHAR(DATE_TRUNC('month', invoice_date::date), 'YYYY-MM') AS month,
+                       COALESCE(SUM(amount), 0) AS fleet
+                FROM vehicle_invoices
+                WHERE invoice_date::date >= NOW() - INTERVAL '12 months'
+                GROUP BY 1
+                ORDER BY 1
+            `).catch(() => ({ rows: [] })),   /* graceful if table missing */
+            pool.query(`
+                SELECT COALESCE(SUM(billing_amount), 0) AS mrr
+                FROM clients
+                WHERE monitoring_enabled = TRUE AND billing_amount IS NOT NULL
+            `).catch(() => ({ rows: [{ mrr: 0 }] })),
+        ]);
+
+        const finMap   = Object.fromEntries(finRows.rows.map(r   => [r.month, r]));
+        const fleetMap = Object.fromEntries(fleetRows.rows.map(r => [r.month, r]));
+
+        const data = months.map(m => ({
+            month:    m,
+            income:   Number(finMap[m]?.income   || 0),
+            expenses: Number(finMap[m]?.expenses || 0),
+            fleet:    Number(fleetMap[m]?.fleet  || 0),
+        }));
+
+        return res.json({ months: data, mrr: Number(mrrRow.rows[0]?.mrr || 0) });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'Server error.' });
+    }
+});
+
+/* GET /api/financials/fleet
+   All vehicle invoices joined with vehicle name + unit, newest first.
+   Used by the Fleet Expenses section on the Financials page. */
+router.get('/fleet', requireRole('accounting', 'admin'), async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT vi.id, vi.description, vi.amount, vi.invoice_date, vi.created_at,
+                   v.name AS vehicle_name, v.vehicle_id AS unit
+            FROM vehicle_invoices vi
+            JOIN vehicles v ON vi.vehicle_id = v.id
+            ORDER BY vi.invoice_date DESC, vi.created_at DESC
+            LIMIT 100
+        `).catch(() => ({ rows: [] }));   /* graceful if table/join missing */
+        return res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'Server error.' });
+    }
+});
+
+/* GET /api/financials/client-transactions
+   All client_transactions joined with client name, newest first.
+   Used by the Client Billing tab on the Financials page. */
+router.get('/client-transactions', requireRole('accounting', 'admin'), async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT ct.id, ct.description, ct.amount, ct.type, ct.date, ct.created_at,
+                   c.name AS client_name, c.customer_id
+            FROM client_transactions ct
+            JOIN clients c ON ct.client_id = c.id
+            ORDER BY ct.date DESC, ct.created_at DESC
+            LIMIT 500
+        `).catch(() => ({ rows: [] }));
+        return res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'Server error.' });
+    }
+});
+
 /* POST /api/financials */
 router.post('/', requireRole('accounting', 'admin'), async (req, res) => {
     const { description, amount, type } = req.body;
@@ -62,8 +159,10 @@ router.post('/', requireRole('accounting', 'admin'), async (req, res) => {
         );
         const record = result.rows[0];
 
-        /* Notify admin */
-        const admins = await pool.query("SELECT email FROM users WHERE role = 'admin'");
+        /* Notify admin + accounting */
+        const admins = await pool.query(
+            "SELECT email FROM users WHERE role IN ('admin', 'accounting')"
+        );
         for (const admin of admins.rows) {
             await sendMail(
                 admin.email,

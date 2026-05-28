@@ -1,21 +1,27 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import { useAuth } from '../context/AuthContext';
+import './Financials.css';
 
+/* -----------------------------------------------------------------------
+   Add financial record modal
+   ----------------------------------------------------------------------- */
 function NewRecordModal({ onClose, onCreated }) {
-    const [desc, setDesc]     = useState('');
-    const [amount, setAmount] = useState('');
-    const [type, setType]     = useState('income');
-    const [error, setError]   = useState('');
+    const [desc, setDesc]       = useState('');
+    const [amount, setAmount]   = useState('');
+    const [type, setType]       = useState('income');
+    const [error, setError]     = useState('');
     const [loading, setLoading] = useState(false);
 
-    const submit = async (e) => {
+    async function submit(e) {
         e.preventDefault();
         setError('');
         setLoading(true);
         try {
-            const { data } = await api.post('/financials', { description: desc, amount: Number(amount), type });
+            const { data } = await api.post('/financials', {
+                description: desc, amount: Number(amount), type,
+            });
             onCreated(data);
             onClose();
         } catch (err) {
@@ -23,7 +29,7 @@ function NewRecordModal({ onClose, onCreated }) {
         } finally {
             setLoading(false);
         }
-    };
+    }
 
     return (
         <div className="modal-overlay" onClick={onClose}>
@@ -37,7 +43,8 @@ function NewRecordModal({ onClose, onCreated }) {
                     </div>
                     <div className="form-group">
                         <label className="form-label">Amount ($)</label>
-                        <input type="number" min="0.01" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} required />
+                        <input type="number" min="0.01" step="0.01" value={amount}
+                               onChange={e => setAmount(e.target.value)} required />
                     </div>
                     <div className="form-group">
                         <label className="form-label">Type</label>
@@ -49,7 +56,7 @@ function NewRecordModal({ onClose, onCreated }) {
                     <div className="modal-actions">
                         <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
                         <button type="submit" className="btn btn-primary" disabled={loading}>
-                            {loading ? 'Saving...' : 'Add Record'}
+                            {loading ? 'Saving…' : 'Add Record'}
                         </button>
                     </div>
                 </form>
@@ -58,29 +65,276 @@ function NewRecordModal({ onClose, onCreated }) {
     );
 }
 
+/* -----------------------------------------------------------------------
+   Monthly bar chart (pure CSS/flex — no library)
+   ----------------------------------------------------------------------- */
+function MonthlyChart({ months }) {
+    const BAR_H = 110; /* px — matches CSS .fin-bar-wrap height */
+
+    const maxVal = useMemo(() => {
+        return Math.max(
+            1,
+            ...months.map(m => Math.max(m.income, m.expenses, m.fleet))
+        );
+    }, [months]);
+
+    function px(val) {
+        return Math.max(2, Math.round((val / maxVal) * BAR_H));
+    }
+
+    function fmt(label) {
+        /* 'YYYY-MM' → 'Jan' */
+        const [y, mo] = label.split('-');
+        return new Date(Number(y), Number(mo) - 1, 1)
+            .toLocaleString('en-US', { month: 'short' });
+    }
+
+    return (
+        <div className="fin-chart-card">
+            <div className="fin-chart-title">Monthly Overview — last 12 months</div>
+            <div className="fin-chart">
+                {months.map(m => (
+                    <div className="fin-chart-col" key={m.month}>
+                        <div className="fin-bar-wrap">
+                            <div className="fin-bar fin-bar-income"  title={`Income $${m.income.toLocaleString()}`}  style={{ height: px(m.income) }} />
+                            <div className="fin-bar fin-bar-expense" title={`Expenses $${m.expenses.toLocaleString()}`} style={{ height: px(m.expenses) }} />
+                            {m.fleet > 0 && (
+                                <div className="fin-bar fin-bar-fleet" title={`Fleet $${m.fleet.toLocaleString()}`} style={{ height: px(m.fleet) }} />
+                            )}
+                        </div>
+                        <span className="fin-chart-label">{fmt(m.month)}</span>
+                    </div>
+                ))}
+            </div>
+            <div className="fin-chart-legend">
+                <div className="fin-legend-item">
+                    <div className="fin-legend-dot" style={{ background: 'var(--green)' }} />
+                    Income
+                </div>
+                <div className="fin-legend-item">
+                    <div className="fin-legend-dot" style={{ background: 'var(--red)' }} />
+                    Expenses
+                </div>
+                <div className="fin-legend-item">
+                    <div className="fin-legend-dot" style={{ background: 'var(--yellow)' }} />
+                    Fleet
+                </div>
+            </div>
+        </div>
+    );
+}
+
+/* -----------------------------------------------------------------------
+   Financial records table
+   ----------------------------------------------------------------------- */
+function RecordsTable({ records, isAdmin, onDelete }) {
+    if (records.length === 0)
+        return <div className="fin-empty">No records found.</div>;
+
+    return (
+        <div className="fin-table-wrap">
+            <table className="fin-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Description</th>
+                        <th>Amount</th>
+                        <th>Type</th>
+                        <th>Added By</th>
+                        <th>Date</th>
+                        {isAdmin && <th></th>}
+                    </tr>
+                </thead>
+                <tbody>
+                    {records.map(r => (
+                        <tr key={r.id}>
+                            <td className="fin-mono">#{r.id}</td>
+                            <td className="fin-name">{r.description}</td>
+                            <td className={r.type === 'income' ? 'fin-amount-income' : 'fin-amount-expense'}>
+                                {r.type === 'income' ? '+' : '-'}${Number(r.amount).toLocaleString()}
+                            </td>
+                            <td>
+                                <span className={r.type === 'income' ? 'tag-green' : 'tag-red'}>{r.type}</span>
+                            </td>
+                            <td style={{ color: '#5c6e82' }}>{r.creator_name || '—'}</td>
+                            <td className="fin-mono">{new Date(r.created_at).toLocaleDateString()}</td>
+                            {isAdmin && (
+                                <td>
+                                    <button className="btn btn-danger"
+                                            style={{ padding: '4px 10px', fontSize: 12 }}
+                                            onClick={() => onDelete(r.id)}>
+                                        Del
+                                    </button>
+                                </td>
+                            )}
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
+/* -----------------------------------------------------------------------
+   Client transactions table
+   ----------------------------------------------------------------------- */
+function ClientTransactionsTable({ transactions }) {
+    if (transactions.length === 0)
+        return <div className="fin-empty">No client transactions found.</div>;
+
+    const totals = transactions.reduce(
+        (acc, t) => {
+            const n = Number(t.amount);
+            acc[t.type] = (acc[t.type] || 0) + n;
+            return acc;
+        },
+        {}
+    );
+
+    return (
+        <div className="fin-table-wrap">
+            <table className="fin-table">
+                <thead>
+                    <tr>
+                        <th>Client</th>
+                        <th>Description</th>
+                        <th>Amount</th>
+                        <th>Type</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {transactions.map(t => (
+                        <tr key={t.id}>
+                            <td>
+                                <div className="fin-name">{t.client_name}</div>
+                                {t.customer_id && <div className="fin-mono">{t.customer_id}</div>}
+                            </td>
+                            <td style={{ color: '#c9d4e0' }}>{t.description}</td>
+                            <td className={t.type === 'payment' ? 'fin-amount-income' : 'fin-amount-expense'}>
+                                {t.type === 'payment' ? '+' : ''}${Number(t.amount).toLocaleString()}
+                            </td>
+                            <td>
+                                <span className={
+                                    t.type === 'payment' ? 'tag-green' :
+                                    t.type === 'invoice' ? 'tag-yellow' : 'tag-dim'
+                                }>
+                                    {t.type}
+                                </span>
+                            </td>
+                            <td className="fin-mono">
+                                {t.date
+                                    ? new Date(t.date).toLocaleDateString()
+                                    : new Date(t.created_at).toLocaleDateString()}
+                            </td>
+                        </tr>
+                    ))}
+                    {/* Totals footer */}
+                    {Object.entries(totals).map(([type, sum]) => (
+                        <tr key={`total-${type}`} style={{ borderTop: '1px solid #2a3040' }}>
+                            <td colSpan={2} style={{ color: '#5c6e82', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                                {type} total
+                            </td>
+                            <td className={type === 'payment' ? 'fin-amount-income' : 'fin-amount-expense'}>
+                                ${sum.toLocaleString()}
+                            </td>
+                            <td /><td />
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
+/* -----------------------------------------------------------------------
+   Fleet expenses table
+   ----------------------------------------------------------------------- */
+function FleetTable({ invoices }) {
+    if (invoices.length === 0)
+        return <div className="fin-empty">No fleet invoices found.</div>;
+
+    const total = invoices.reduce((s, i) => s + Number(i.amount), 0);
+
+    return (
+        <div className="fin-table-wrap">
+            <table className="fin-table">
+                <thead>
+                    <tr>
+                        <th>Vehicle</th>
+                        <th>Description</th>
+                        <th>Amount</th>
+                        <th>Date</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {invoices.map(inv => (
+                        <tr key={inv.id}>
+                            <td>
+                                <div className="fin-name">{inv.vehicle_name}</div>
+                                <div className="fin-mono">{inv.unit}</div>
+                            </td>
+                            <td style={{ color: '#c9d4e0' }}>{inv.description}</td>
+                            <td className="fin-amount-expense">${Number(inv.amount).toLocaleString()}</td>
+                            <td className="fin-mono">
+                                {inv.invoice_date
+                                    ? new Date(inv.invoice_date).toLocaleDateString()
+                                    : new Date(inv.created_at).toLocaleDateString()}
+                            </td>
+                        </tr>
+                    ))}
+                    <tr>
+                        <td colSpan={2} style={{ color: '#5c6e82', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Total</td>
+                        <td className="fin-amount-expense">${total.toLocaleString()}</td>
+                        <td />
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
+/* -----------------------------------------------------------------------
+   Main Financials page
+   ----------------------------------------------------------------------- */
+const TABS = ['records', 'fleet'];
+
 export default function Financials() {
     const { user } = useAuth();
-    const [records, setRecords]   = useState([]);
-    const [summary, setSummary]   = useState(null);
-    const [loading, setLoading]   = useState(true);
-    const [showModal, setShowModal] = useState(false);
+    const isAdmin  = user.role === 'admin';
 
-    const load = async () => {
+    const [records,      setRecords]      = useState([]);
+    const [summary,      setSummary]      = useState(null);
+    const [monthly,      setMonthly]      = useState(null);
+    const [fleet,        setFleet]        = useState([]);
+    const [clientTx,     setClientTx]     = useState([]);
+    const [loading,      setLoading]      = useState(true);
+    const [tab,          setTab]          = useState('records');
+    const [showModal,    setShowModal]    = useState(false);
+
+    async function load() {
+        setLoading(true);
         try {
-            const [recs, sum] = await Promise.all([
+            const [recs, sum, mon, fl, ctx] = await Promise.all([
                 api.get('/financials'),
                 api.get('/financials/summary'),
+                api.get('/financials/monthly').catch(() => null),
+                api.get('/financials/fleet').catch(() => ({ data: [] })),
+                api.get('/financials/client-transactions').catch(() => ({ data: [] })),
             ]);
             setRecords(recs.data);
             setSummary(sum.data);
+            if (mon) setMonthly(mon.data);
+            setFleet(fl.data);
+            setClientTx(ctx.data);
         } finally {
             setLoading(false);
         }
-    };
+    }
 
     useEffect(() => { load(); }, []);
 
-    const deleteRecord = async (id) => {
+    async function handleDelete(id) {
         if (!confirm('Delete this record?')) return;
         try {
             await api.delete(`/financials/${id}`);
@@ -88,92 +342,92 @@ export default function Financials() {
             const { data } = await api.get('/financials/summary');
             setSummary(data);
         } catch (e) { console.error(e); }
-    };
+    }
 
-    const handleCreated = (record) => {
+    function handleCreated(record) {
         setRecords(prev => [record, ...prev]);
         api.get('/financials/summary').then(r => setSummary(r.data));
-    };
+        api.get('/financials/monthly').then(r => setMonthly(r.data)).catch(() => {});
+    }
+
+    const mrr = monthly?.mrr ?? 0;
 
     return (
         <Layout>
-            <div className="page-header">
-                <h1 className="page-title">Financials <span>{records.length} records</span></h1>
-                <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Add Record</button>
-            </div>
+            <div className="fin-page">
+                <div className="fin-header">
+                    <h1 className="page-title">Financials</h1>
+                    <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Add Record</button>
+                </div>
 
-            {summary && (
-                <div className="stats-grid" style={{ marginBottom: 28 }}>
-                    <div className="stat-card">
-                        <div className="stat-label">Total Income</div>
-                        <div className="stat-value green">${Number(summary.total_income).toLocaleString()}</div>
-                    </div>
-                    <div className="stat-card">
-                        <div className="stat-label">Total Expenses</div>
-                        <div className="stat-value red">${Number(summary.total_expenses).toLocaleString()}</div>
-                    </div>
-                    <div className="stat-card">
-                        <div className="stat-label">Net</div>
-                        <div className={`stat-value ${Number(summary.net) >= 0 ? 'green' : 'red'}`}>
-                            {Number(summary.net) < 0 ? '-' : ''}${Math.abs(Number(summary.net)).toLocaleString()}
+                {/* Summary stats */}
+                {summary && (
+                    <div className="stats-grid" style={{ marginBottom: 24 }}>
+                        <div className="stat-card">
+                            <div className="stat-label">Total Income</div>
+                            <div className="stat-value" style={{ color: 'var(--green)' }}>
+                                ${Number(summary.total_income).toLocaleString()}
+                            </div>
+                        </div>
+                        <div className="stat-card">
+                            <div className="stat-label">Total Expenses</div>
+                            <div className="stat-value" style={{ color: 'var(--red)' }}>
+                                ${Number(summary.total_expenses).toLocaleString()}
+                            </div>
+                        </div>
+                        <div className="stat-card">
+                            <div className="stat-label">Net</div>
+                            <div className="stat-value"
+                                 style={{ color: Number(summary.net) >= 0 ? 'var(--green)' : 'var(--red)' }}>
+                                {Number(summary.net) < 0 ? '-' : ''}${Math.abs(Number(summary.net)).toLocaleString()}
+                            </div>
+                        </div>
+                        <div className="stat-card">
+                            <div className="stat-label">Monthly Recurring (MRR)</div>
+                            <div className="stat-value" style={{ color: 'var(--accent)' }}>
+                                ${mrr.toLocaleString()}
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                )}
 
-            {loading && <p style={{ color: 'var(--text-dim)' }}>Loading...</p>}
+                {/* Monthly chart */}
+                {monthly?.months?.length > 0 && (
+                    <MonthlyChart months={monthly.months} />
+                )}
 
-            {!loading && (
-                <div className="table-card">
-                    <table className="data-table">
-                        <thead>
-                            <tr>
-                                <th>#</th>
-                                <th>Description</th>
-                                <th>Amount</th>
-                                <th>Type</th>
-                                <th>Added By</th>
-                                <th>Date</th>
-                                {user.role === 'admin' && <th></th>}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {records.length === 0 && (
-                                <tr><td colSpan={7} style={{ color: 'var(--text-dim)', textAlign: 'center', padding: 32 }}>No records found.</td></tr>
-                            )}
-                            {records.map(r => (
-                                <tr key={r.id}>
-                                    <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', fontSize: 12 }}>#{r.id}</td>
-                                    <td style={{ color: 'var(--text-hi)', fontWeight: 500 }}>{r.description}</td>
-                                    <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, color: r.type === 'income' ? 'var(--green)' : 'var(--red)' }}>
-                                        {r.type === 'income' ? '+' : '-'}${Number(r.amount).toLocaleString()}
-                                    </td>
-                                    <td>
-                                        <span className={`tag ${r.type === 'income' ? 'tag-green' : 'tag-red'}`}>{r.type}</span>
-                                    </td>
-                                    <td style={{ color: 'var(--text-dim)' }}>{r.creator_name || '—'}</td>
-                                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>
-                                        {new Date(r.created_at).toLocaleDateString()}
-                                    </td>
-                                    {user.role === 'admin' && (
-                                        <td>
-                                            <button className="btn btn-danger" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => deleteRecord(r.id)}>
-                                                Del
-                                            </button>
-                                        </td>
-                                    )}
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                {/* Section tabs */}
+                <div className="fin-section-tabs">
+                    <button className={`fin-tab ${tab === 'records' ? 'active' : ''}`}
+                            onClick={() => setTab('records')}>
+                        Financial Records
+                        <span className="fin-tab-count">{records.length}</span>
+                    </button>
+                    <button className={`fin-tab ${tab === 'fleet' ? 'active' : ''}`}
+                            onClick={() => setTab('fleet')}>
+                        Fleet Expenses
+                        <span className="fin-tab-count">{fleet.length}</span>
+                    </button>
+                    <button className={`fin-tab ${tab === 'clients' ? 'active' : ''}`}
+                            onClick={() => setTab('clients')}>
+                        Client Billing
+                        <span className="fin-tab-count">{clientTx.length}</span>
+                    </button>
                 </div>
-            )}
+
+                {loading ? (
+                    <div className="fin-empty">Loading…</div>
+                ) : tab === 'records' ? (
+                    <RecordsTable records={records} isAdmin={isAdmin} onDelete={handleDelete} />
+                ) : tab === 'fleet' ? (
+                    <FleetTable invoices={fleet} />
+                ) : (
+                    <ClientTransactionsTable transactions={clientTx} />
+                )}
+            </div>
 
             {showModal && (
-                <NewRecordModal
-                    onClose={() => setShowModal(false)}
-                    onCreated={handleCreated}
-                />
+                <NewRecordModal onClose={() => setShowModal(false)} onCreated={handleCreated} />
             )}
         </Layout>
     );

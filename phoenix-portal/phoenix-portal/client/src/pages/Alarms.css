@@ -1,0 +1,164 @@
+.alarm-page { padding: 32px; }
+.alarm-page-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; gap: 16px; }
+
+.alarm-search {
+    background: var(--bg-2);
+    border: 1px solid #2a3040;
+    border-radius: 4px;
+    color: var(--text, #c9d4e0);
+    padding: 8px 14px;
+    font-size: 13px;
+    width: 280px;
+    outline: none;
+}
+.alarm-search:focus { border-color: var(--accent); }
+
+/* Service tabs */
+.alarm-service-tabs { display: flex; gap: 4px; margin-bottom: 20px; flex-wrap: wrap; }
+.alarm-tab {
+    background: var(--bg-2);
+    border: 1px solid #2a3040;
+    border-radius: 4px;
+    color: #5c6e82;
+    padding: 6px 14px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.alarm-tab:hover { border-color: var(--accent); color: #c9d4e0; }
+.alarm-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.alarm-tab-count {
+    background: rgba(255,255,255,0.12);
+    border-radius: 10px;
+    padding: 1px 7px;
+    font-size: 11px;
+}
+
+/* Client grid */
+.alarm-client-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.alarm-client-card {
+    background: var(--bg-2);
+    border: 1px solid #2a3040;
+    border-radius: 4px;
+    padding: 16px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+.alarm-client-card:hover { border-color: var(--accent); }
+.alarm-client-name { color: #eaf0f8; font-size: 14px; font-weight: 500; margin-bottom: 8px; }
+.alarm-client-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11px; }
+
+.alarm-empty { color: #5c6e82; font-size: 13px; padding: 24px 0; }
+
+/* Detail overlay */
+.alarm-detail-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6);
+    z-index: 100;
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-end;
+}
+.alarm-detail {
+    background: var(--bg-2, #13171b);
+    border-left: 1px solid #2a3040;
+    width: 640px;
+    max-width: 100vw;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.alarm-detail-header {
+    padding: 24px;
+    border-bottom: 1px solid #2a3040;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+.alarm-detail-name { color: #eaf0f8; font-size: 18px; font-weight: 600; margin-bottom: 6px; }
+.alarm-detail-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; color: #5c6e82; }
+.alarm-sep { color: #2a3040; }
+.alarm-svc-tag { margin-left: 4px; }
+.alarm-close-btn { background: none; border: none; color: #5c6e82; font-size: 18px; cursor: pointer; padding: 0; }
+.alarm-close-btn:hover { color: #eaf0f8; }
+
+/* Tabs inside detail */
+.alarm-tabs { display: flex; border-bottom: 1px solid #2a3040; }
+.alarm-tabs .alarm-tab { border-radius: 0; border: none; border-bottom: 2px solid transparent; padding: 12px 20px; background: none; }
+.alarm-tabs .alarm-tab.active { background: none; color: var(--accent); border-bottom-color: var(--accent); }
+
+.alarm-detail-body { flex: 1; overflow-y: auto; padding: 24px; }
+.alarm-section { display: flex; flex-direction: column; gap: 16px; }
+
+/* System grid */
+.alarm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.alarm-field {}
+.alarm-label { font-size: 11px; color: #5c6e82; text-transform: uppercase; letter-spacing: 0.06em; font-family: var(--font-mono, monospace); margin-bottom: 4px; }
+.alarm-value { font-size: 13px; color: #c9d4e0; }
+
+.alarm-notes-section { display: flex; flex-direction: column; gap: 8px; }
+.alarm-notes-input {
+    background: var(--bg-3, #0d0f11);
+    border: 1px solid #2a3040;
+    border-radius: 4px;
+    color: #c9d4e0;
+    padding: 10px 12px;
+    font-size: 13px;
+    resize: vertical;
+    outline: none;
+    font-family: var(--font-sans, sans-serif);
+}
+.alarm-notes-input:focus { border-color: var(--accent); }
+
+/* Ticket form */
+.alarm-ticket-form { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.alarm-input {
+    background: var(--bg-3, #0d0f11);
+    border: 1px solid #2a3040;
+    border-radius: 4px;
+    color: #c9d4e0;
+    padding: 8px 12px;
+    font-size: 13px;
+    outline: none;
+    flex: 1;
+    min-width: 160px;
+}
+.alarm-input:focus { border-color: var(--accent); }
+.alarm-select {
+    background: var(--bg-3, #0d0f11);
+    border: 1px solid #2a3040;
+    border-radius: 4px;
+    color: #c9d4e0;
+    padding: 8px 12px;
+    font-size: 13px;
+    outline: none;
+}
+
+.alarm-ticket-list { display: flex; flex-direction: column; gap: 8px; }
+.alarm-ticket-row { background: var(--bg-3, #0d0f11); border: 1px solid #2a3040; border-radius: 4px; padding: 12px; }
+.alarm-ticket-title { color: #eaf0f8; font-size: 13px; margin-bottom: 6px; }
+.alarm-ticket-meta { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11px; }
+
+/* Transactions */
+.alarm-tx-form { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; align-items: flex-end; }
+.alarm-tx-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.alarm-tx-table th { text-align: left; color: #5c6e82; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; padding: 6px 8px; border-bottom: 1px solid #2a3040; }
+.alarm-tx-table td { padding: 10px 8px; border-bottom: 1px solid #1a2030; color: #c9d4e0; }
+.tx-pos { color: var(--green, #2db56d) !important; }
+.tx-neg { color: var(--red, #e05252) !important; }
+
+/* Slack feed */
+.alarm-slack-feed { display: flex; flex-direction: column; gap: 12px; }
+.alarm-slack-empty { color: #5c6e82; font-size: 13px; padding: 16px 0; }
+.alarm-slack-msg { background: var(--bg-3, #0d0f11); border: 1px solid #2a3040; border-radius: 4px; padding: 14px; }
+.alarm-slack-date { font-size: 11px; color: #5c6e82; font-family: var(--font-mono, monospace); margin-bottom: 10px; }
+.alarm-slack-field { margin-bottom: 8px; }
+.alarm-slack-label { font-size: 10px; color: #5c6e82; text-transform: uppercase; letter-spacing: 0.06em; font-family: var(--font-mono, monospace); margin-bottom: 2px; }
+.alarm-slack-val { font-size: 13px; color: #c9d4e0; white-space: pre-wrap; }
+.alarm-slack-raw { font-size: 12px; color: #5c6e82; white-space: pre-wrap; }

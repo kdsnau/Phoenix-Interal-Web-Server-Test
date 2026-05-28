@@ -13,7 +13,9 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
     (res) => res,
     (err) => {
-        if (err.response?.status === 401) {
+        // Only force-redirect on 401 if the user was already logged in
+        // (session expiry). Don't redirect during the login attempt itself.
+        if (err.response?.status === 401 && localStorage.getItem('token')) {
             localStorage.removeItem('token');
             localStorage.removeItem('user');
             window.location.href = '/login';

@@ -59,6 +59,10 @@ export default function Login() {
                             placeholder="you@phoenixsectech.com"
                             required
                             autoFocus
+                            autoCapitalize="none"
+                            autoCorrect="off"
+                            spellCheck="false"
+                            autoComplete="email"
                         />
                     </div>
 
@@ -70,6 +74,9 @@ export default function Login() {
                             onChange={e => setPassword(e.target.value)}
                             placeholder="••••••••"
                             required
+                            autoCapitalize="off"
+                            autoCorrect="off"
+                            autoComplete="current-password"
                         />
                     </div>
 

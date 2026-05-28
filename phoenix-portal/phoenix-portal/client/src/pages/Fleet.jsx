@@ -50,13 +50,13 @@ function VehicleCard({ vehicle, onClick }) {
     );
 }
 
-function SlackFeed({ vehicleId, name, unit }) {
+function SlackFeed({ vehicleId, name, make, model, slackName }) {
     const [messages, setMessages] = useState([]);
     const [loading, setLoading]   = useState(true);
     const [error, setError]       = useState('');
 
     useEffect(() => {
-        api.get(`/slack/vehicle/${vehicleId}`, { params: { name, unit } })
+        api.get(`/slack/vehicle/${vehicleId}`, { params: { name, make, model, slackName } })
             .then(r => setMessages(r.data.messages))
             .catch(() => setError('Could not load Slack messages.'))
             .finally(() => setLoading(false));
@@ -80,7 +80,10 @@ function SlackFeed({ vehicleId, name, unit }) {
                                 {new Date(m.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                             </span>
                         </div>
-                        <div style={{ fontSize: 13, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{m.text}</div>
+                        <div
+                            style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.5 }}
+                            dangerouslySetInnerHTML={{ __html: m.html }}
+                        />
                     </div>
                 ))}
             </div>
@@ -393,7 +396,7 @@ function VehicleDetail({ vehicleId, onClose }) {
                             </table>
                         </div>
                     </section>
-		  <SlackFeed vehicleId={v.vehicle_id} name={v.name} unit={v.name} />
+                    <SlackFeed vehicleId={v.vehicle_id} name={v.name} make={v.make} model={v.model} slackName={v.slack_name} />
                 </div>
             </div>
         </div>

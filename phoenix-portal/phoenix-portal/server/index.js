@@ -1,0 +1,53 @@
+require('dotenv').config();
+
+const express = require('express');
+const cors    = require('cors');
+const path    = require('path');
+
+const authRoutes       = require('./routes/auth');
+const ticketRoutes     = require('./routes/tickets');
+const financialRoutes  = require('./routes/financials');
+const adminRoutes      = require('./routes/admin');
+const fleetRoutes      = require('./routes/fleet');
+const importRoutes     = require('./routes/import');
+const slackRoutes      = require('./routes/slack');
+const clientRoutes     = require('./routes/clients');
+const alarmSlackRoutes = require('./routes/alarmSlack');
+const inventoryRoutes  = require('./routes/inventory');
+const projectRoutes    = require('./routes/projects');
+const { startScheduler } = require('./services/monitoringScheduler');
+
+const app  = express();
+const PORT = process.env.PORT || 5000;
+
+const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:5173').split(',').map(o => o.trim());
+app.use(cors({ origin: (origin, cb) => cb(null, !origin || allowedOrigins.includes(origin)) }));
+app.use(express.json());
+
+app.use('/api/auth',        authRoutes);
+app.use('/api/tickets',     ticketRoutes);
+app.use('/api/financials',  financialRoutes);
+app.use('/api/admin',       adminRoutes);
+app.use('/api/fleet',       fleetRoutes);
+app.use('/api/import',      importRoutes);
+app.use('/api/slack',       slackRoutes);
+app.use('/api/clients',     clientRoutes);
+app.use('/api/alarm-slack', alarmSlackRoutes);
+app.use('/api/inventory',   inventoryRoutes);
+app.use('/api/projects',    projectRoutes);
+
+app.get('/api/health', (_, res) => res.json({ status: 'ok' }));
+
+/* -----------------------------------------------------------------------
+   Serve the React production build.
+   Run `npm run build` in the client directory first.
+   API routes above take priority; everything else falls through to React.
+   ----------------------------------------------------------------------- */
+const DIST = path.join(__dirname, '../client/dist');
+app.use(express.static(DIST));
+app.use((_, res) => res.sendFile(path.join(DIST, 'index.html')));
+
+app.listen(PORT, () => {
+    console.log(`Phoenix SecTech API running on port ${PORT}`);
+    startScheduler();
+});

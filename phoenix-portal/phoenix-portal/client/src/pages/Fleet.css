@@ -1,0 +1,200 @@
+.fleet-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 20px;
+}
+
+.vehicle-card {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+}
+.vehicle-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+
+.vehicle-card-img {
+    width: 100%;
+    height: 160px;
+    overflow: hidden;
+    background: var(--bg-3);
+}
+.vehicle-card-img img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    transition: transform 0.3s;
+}
+.vehicle-card:hover .vehicle-card-img img {
+    transform: scale(1.04);
+}
+
+.vehicle-card-body {
+    padding: 16px;
+}
+.vehicle-card-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-hi);
+    margin-bottom: 3px;
+}
+.vehicle-card-sub {
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 12px;
+}
+.vehicle-card-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-dim);
+}
+
+.fleet-overlay {
+    align-items: flex-start;
+    padding: 24px;
+    overflow-y: auto;
+}
+
+.fleet-detail {
+    background: var(--bg-2);
+    border: 1px solid var(--border-hi);
+    border-radius: var(--radius);
+    width: 100%;
+    max-width: 780px;
+    margin: auto;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+}
+
+.fleet-detail-header {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-3);
+    position: relative;
+}
+
+.fleet-detail-img {
+    width: 100px;
+    height: 68px;
+    object-fit: cover;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.fleet-detail-name {
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--text-hi);
+}
+.fleet-detail-sub {
+    font-size: 14px;
+    color: var(--text-dim);
+    margin-top: 2px;
+}
+
+.fleet-close {
+    position: absolute;
+    right: 20px;
+    top: 20px;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius);
+    font-size: 13px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+}
+.fleet-close:hover {
+    border-color: var(--red);
+    color: var(--red);
+}
+
+.fleet-detail-body {
+    padding: 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+}
+
+.fleet-section {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 28px;
+}
+.fleet-section:last-child {
+    border-bottom: none;
+    padding-bottom: 0;
+}
+
+.fleet-section-title {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.fleet-section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+}
+
+.fleet-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 14px;
+}
+.fleet-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.fleet-notif-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+}
+
+.fleet-notes-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.fleet-note {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+}
+
+.fleet-insurance-preview {
+    margin-top: 8px;
+}

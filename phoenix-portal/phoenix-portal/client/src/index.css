@@ -1,0 +1,79 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+
+:root {
+  --bg:         #0d0f11;
+  --bg-2:       #13171b;
+  --bg-3:       #1b2028;
+  --border:     #2a3040;
+  --border-hi:  #3d4f66;
+  --text:       #c9d4e0;
+  --text-dim:   #5c6e82;
+  --text-hi:    #eaf0f8;
+  --accent:     #e85d26;
+  --accent-dim: #7a2e10;
+  --green:      #2db56d;
+  --yellow:     #d9a832;
+  --red:        #d94040;
+  --blue:       #3a8fd4;
+  --font-mono:  'IBM Plex Mono', monospace;
+  --font-sans:  'IBM Plex Sans', sans-serif;
+  --radius:     3px;
+  --shadow:     0 4px 24px rgba(0,0,0,0.5);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+a { color: inherit; text-decoration: none; }
+
+button {
+  font-family: var(--font-sans);
+  cursor: pointer;
+  border: none;
+  outline: none;
+}
+
+input, select, textarea {
+  font-family: var(--font-sans);
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  color: var(--text-hi);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font-size: 14px;
+  width: 100%;
+  transition: border-color 0.15s;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-2); }
+::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 3px; }
+
+/* Utility */
+.tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 2px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.tag-green  { background: rgba(45,181,109,0.15); color: var(--green); }
+.tag-yellow { background: rgba(217,168,50,0.15); color: var(--yellow); }
+.tag-red    { background: rgba(217,64,64,0.15);  color: var(--red); }
+.tag-blue   { background: rgba(58,143,212,0.15); color: var(--blue); }
+.tag-dim    { background: var(--bg-3); color: var(--text-dim); }

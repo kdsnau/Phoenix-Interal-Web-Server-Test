@@ -1,12 +1,25 @@
 const express      = require('express');
 const { WebClient } = require('@slack/web-api');
 const { authenticate } = require('../middleware/requireRole');
+const pool         = require('../db/pool');
 
 const router     = express.Router();
 router.use(authenticate);
 
 const slack      = new WebClient(process.env.SLACK_TOKEN);
 const CHANNEL_ID = process.env.PROJECT_SLACK_CHANNEL_ID;
+
+/* Ensure the manual-completion override table exists on first start */
+pool.query(`
+    CREATE TABLE IF NOT EXISTS project_completions (
+        name       TEXT      PRIMARY KEY,
+        completed  BOOLEAN   NOT NULL DEFAULT TRUE,
+        updated_at TIMESTAMP DEFAULT NOW()
+    )
+`).catch(err => console.error('project_completions table init:', err.message));
+
+/* Normalise a job name for grouping — case-insensitive, collapse whitespace */
+const normalizeKey = s => s.trim().replace(/\s+/g, ' ').toLowerCase();
 
 /* -----------------------------------------------------------------------
    Parse a Slack workflow form message into a field map.
@@ -59,13 +72,23 @@ function get(fields, keys) {
 
 /* -----------------------------------------------------------------------
    GET /api/projects
-   Groups Slack messages by job name into project cards.
+   Groups Slack messages by normalised job name into project cards,
+   then applies any manual completion overrides from the DB.
    ----------------------------------------------------------------------- */
 router.get('/', async (req, res) => {
     try {
-        const result = await slack.conversations.history({ channel: CHANNEL_ID, limit: 200 });
-        const msgs   = result.messages || [];
-        const map    = {};
+        const [slackResult, overrideResult] = await Promise.all([
+            slack.conversations.history({ channel: CHANNEL_ID, limit: 200 }),
+            pool.query('SELECT name, completed FROM project_completions').catch(() => ({ rows: [] })),
+        ]);
+
+        const msgs = slackResult.messages || [];
+
+        /* Build override lookup: normalised name → boolean */
+        const overrideMap = {};
+        overrideResult.rows.forEach(r => { overrideMap[r.name] = r.completed; });
+
+        const map = {};
 
         for (const m of msgs) {
             const fields = parseFields(m.text);
@@ -78,24 +101,43 @@ router.get('/', async (req, res) => {
             const arrival  = get(fields, ['Site arrival and departure times', 'Arrival', 'Times', 'Time']) || '';
             const techs    = get(fields, ['Technician', 'Technicians', 'Tech', 'Name', 'Who']) || '';
             const doneRaw  = get(fields, ['Is a return trip required', 'Return trip', 'Complete', 'Completed']) || '';
-            const completed = doneRaw.toLowerCase().includes('no') || doneRaw.toLowerCase().includes('complete');
+            const slackCompleted = doneRaw.toLowerCase().includes('no') || doneRaw.toLowerCase().includes('complete');
 
             const images = (m.files || [])
                 .filter(f => f.mimetype && f.mimetype.startsWith('image/'))
                 .map(f => ({ fileId: f.id, name: f.name }));
 
-            const visit = { ts: m.ts, date: new Date(Number(m.ts) * 1000).toISOString(), technicians: techs, arrival, work, parts, completed, images };
+            const visit = {
+                ts: m.ts,
+                date: new Date(Number(m.ts) * 1000).toISOString(),
+                technicians: techs,
+                arrival,
+                work,
+                parts,
+                completed: slackCompleted,
+                images,
+            };
 
-            if (!map[jobName]) {
-                map[jobName] = { name: jobName, rfq, completed: false, lastVisit: m.ts, visits: [] };
+            const key = normalizeKey(jobName);
+
+            if (!map[key]) {
+                map[key] = { name: jobName, rfq, slackCompleted: false, lastVisit: m.ts, visits: [] };
             }
-            map[jobName].visits.push(visit);
-            if (m.ts > map[jobName].lastVisit) map[jobName].lastVisit = m.ts;
-            if (completed) map[jobName].completed = true;
+            map[key].visits.push(visit);
+            if (m.ts > map[key].lastVisit) map[key].lastVisit = m.ts;
+            if (slackCompleted) map[key].slackCompleted = true;
         }
 
         const projects = Object.values(map)
-            .map(p => ({ ...p, visits: p.visits.sort((a, b) => b.ts - a.ts) }))
+            .map(p => ({
+                name:      p.name,
+                rfq:       p.rfq,
+                completed: normalizeKey(p.name) in overrideMap
+                    ? overrideMap[normalizeKey(p.name)]
+                    : p.slackCompleted,
+                lastVisit: p.lastVisit,
+                visits:    p.visits.sort((a, b) => b.ts - a.ts),
+            }))
             .sort((a, b) => {
                 if (a.completed !== b.completed) return a.completed ? 1 : -1;
                 return b.lastVisit - a.lastVisit;
@@ -105,6 +147,31 @@ router.get('/', async (req, res) => {
     } catch (err) {
         console.error('Projects Slack error:', err.message);
         res.status(500).json({ error: 'Failed to fetch project reports.' });
+    }
+});
+
+/* -----------------------------------------------------------------------
+   PATCH /api/projects/:name/complete
+   Stores a manual completion override for a project.
+   Body: { completed: boolean }
+   ----------------------------------------------------------------------- */
+router.patch('/:name/complete', async (req, res) => {
+    try {
+        const name      = decodeURIComponent(req.params.name);
+        const completed = !!req.body.completed;
+
+        await pool.query(`
+            INSERT INTO project_completions (name, completed, updated_at)
+            VALUES ($1, $2, NOW())
+            ON CONFLICT (name) DO UPDATE
+                SET completed  = EXCLUDED.completed,
+                    updated_at = NOW()
+        `, [normalizeKey(name), completed]);
+
+        return res.json({ ok: true });
+    } catch (err) {
+        console.error('Projects complete error:', err.message);
+        return res.status(500).json({ error: 'Failed to update project.' });
     }
 });
 

@@ -88,3 +88,51 @@
     font-size: 11px;
     color: #5c6e82;
 }
+
+/* Completed card — slightly dimmed so in-progress jobs stand out */
+.proj-card--done { opacity: 0.7; }
+.proj-card--done:hover { opacity: 1; }
+
+/* Card action row (sits below the meta tags) */
+.proj-card-actions {
+    padding: 0 16px 12px;
+    display: flex;
+    justify-content: flex-end;
+}
+
+/* Complete / Reopen button — card variant (compact) */
+.proj-complete-btn {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: opacity 0.15s, background 0.15s;
+    white-space: nowrap;
+}
+.proj-complete-btn--wip {
+    background: rgba(45, 181, 109, 0.15);
+    border-color: var(--green, #2db56d);
+    color: var(--green, #2db56d);
+}
+.proj-complete-btn--wip:hover {
+    background: rgba(45, 181, 109, 0.28);
+}
+.proj-complete-btn--done {
+    background: rgba(92, 110, 130, 0.15);
+    border-color: #5c6e82;
+    color: #5c6e82;
+}
+.proj-complete-btn--done:hover {
+    background: rgba(92, 110, 130, 0.28);
+    color: #c9d4e0;
+    border-color: #c9d4e0;
+}
+
+/* Detail panel header — button sits next to the close button */
+.proj-detail-header .proj-complete-btn {
+    font-size: 12px;
+    padding: 6px 14px;
+    flex-shrink: 0;
+}

@@ -75,7 +75,7 @@ router.get('/monthly', requireRole('accounting', 'admin'), async (req, res) => {
             pool.query(`
                 SELECT COALESCE(SUM(billing_amount), 0) AS mrr
                 FROM clients
-                WHERE monitoring_enabled = TRUE AND billing_amount IS NOT NULL
+                WHERE billing_amount IS NOT NULL AND billing_amount > 0
             `).catch(() => ({ rows: [{ mrr: 0 }] })),
         ]);
 

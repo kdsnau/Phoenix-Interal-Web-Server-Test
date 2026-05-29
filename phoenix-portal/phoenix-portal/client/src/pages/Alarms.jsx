@@ -71,6 +71,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
     const [txForm, setTxForm]     = useState({ description: '', amount: '', type: 'invoice', date: '' });
     const [newTicket, setNewTicket] = useState({ title: '', description: '', assigned_to: '' });
     const [togglingMon, setTogglingMon] = useState(false);
+    const [monEnabled, setMonEnabled] = useState(client.monitoring_enabled);
 
     useEffect(() => {
         if (tab === 'transactions' && canBilling) {
@@ -90,10 +91,17 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
     }
 
     async function toggleMonitoring() {
+        const newVal = !monEnabled;
+        setMonEnabled(newVal);          // optimistic — button flips instantly
         setTogglingMon(true);
-        await api.post(`/clients/${client.id}/monitoring`);
-        setTogglingMon(false);
-        onRefresh();
+        try {
+            await api.post(`/clients/${client.id}/monitoring`);
+            onRefresh();                // sync card list in background
+        } catch {
+            setMonEnabled(!newVal);     // revert if the request fails
+        } finally {
+            setTogglingMon(false);
+        }
     }
 
     async function addTransaction(e) {
@@ -158,16 +166,16 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                                     <div className="alarm-value">
                                         {canBilling ? (
                                             <button
-                                                className={`btn btn-${client.monitoring_enabled ? 'danger' : 'primary'}`}
+                                                className={`btn btn-${monEnabled ? 'danger' : 'primary'}`}
                                                 onClick={toggleMonitoring}
                                                 disabled={togglingMon}
                                                 style={{ fontSize: '12px', padding: '4px 12px' }}
                                             >
-                                                {client.monitoring_enabled ? 'Disable' : 'Enable'}
+                                                {monEnabled ? 'Disable' : 'Enable'}
                                             </button>
                                         ) : (
-                                            <span className={client.monitoring_enabled ? 'tag-green' : 'tag-dim'}>
-                                                {client.monitoring_enabled ? 'Active' : 'Inactive'}
+                                            <span className={monEnabled ? 'tag-green' : 'tag-dim'}>
+                                                {monEnabled ? 'Active' : 'Inactive'}
                                             </span>
                                         )}
                                     </div>

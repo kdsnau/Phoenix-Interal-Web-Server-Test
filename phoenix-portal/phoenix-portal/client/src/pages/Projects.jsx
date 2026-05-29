@@ -8,9 +8,9 @@ import './Projects.css';
    and uses a blob URL so <img> can display them without auth headers.
    ----------------------------------------------------------------------- */
 function ProjectImage({ fileId, name }) {
-    const [src, setSrc]       = useState(null);
-    const [error, setError]   = useState(false);
-    const blobRef             = useRef(null);
+    const [src, setSrc]     = useState(null);
+    const [error, setError] = useState(false);
+    const blobRef           = useRef(null);
 
     useEffect(() => {
         api.get(`/projects/image/${fileId}`, { responseType: 'blob' })
@@ -21,9 +21,7 @@ function ProjectImage({ fileId, name }) {
             })
             .catch(() => setError(true));
 
-        return () => {
-            if (blobRef.current) URL.revokeObjectURL(blobRef.current);
-        };
+        return () => { if (blobRef.current) URL.revokeObjectURL(blobRef.current); };
     }, [fileId]);
 
     if (error) return <div className="proj-img-placeholder">Image unavailable</div>;
@@ -69,7 +67,7 @@ function VisitCard({ visit }) {
             <div className="proj-field">
                 <div className="proj-label">Status</div>
                 <div className="proj-value">
-                    <span className={visit.completed ? 'tag-green' : 'tag-yellow'}>
+                    <span className={visit.completed ? 'tag tag-green' : 'tag tag-yellow'}>
                         {visit.completed ? 'Complete' : 'Return Required'}
                     </span>
                 </div>
@@ -91,15 +89,22 @@ function VisitCard({ visit }) {
 /* -----------------------------------------------------------------------
    Project detail overlay — shows all visits for a project
    ----------------------------------------------------------------------- */
-function ProjectDetail({ project, onClose }) {
+function ProjectDetail({ project, onClose, onComplete }) {
     return (
         <div className="proj-overlay" onClick={onClose}>
             <div className="proj-detail" onClick={e => e.stopPropagation()}>
                 <div className="proj-detail-header">
-                    <div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
                         <div className="proj-detail-name">{project.name}</div>
                         {project.rfq && <div className="proj-detail-rfq">RFQ# {project.rfq}</div>}
                     </div>
+                    <button
+                        className={`btn proj-complete-btn ${project.completed ? 'proj-complete-btn--done' : 'proj-complete-btn--wip'}`}
+                        onClick={e => { e.stopPropagation(); onComplete(project, e); }}
+                        title={project.completed ? 'Reopen project' : 'Mark project as complete'}
+                    >
+                        {project.completed ? '↩ Reopen' : '✓ Mark Complete'}
+                    </button>
                     <button className="proj-close-btn" onClick={onClose}>✕</button>
                 </div>
                 <div className="proj-detail-body">
@@ -113,24 +118,33 @@ function ProjectDetail({ project, onClose }) {
 /* -----------------------------------------------------------------------
    Project summary card
    ----------------------------------------------------------------------- */
-function ProjectCard({ project, onClick }) {
+function ProjectCard({ project, onClick, onComplete }) {
     const lastDate = new Date(Number(project.lastVisit) * 1000).toLocaleDateString('en-US', {
         month: 'short', day: 'numeric', year: 'numeric',
     });
 
     return (
-        <div className="proj-card" onClick={onClick}>
+        <div className={`proj-card ${project.completed ? 'proj-card--done' : ''}`} onClick={onClick}>
             <div className={`proj-card-bar ${project.completed ? 'proj-bar-done' : 'proj-bar-wip'}`} />
             <div className="proj-card-body">
                 <div className="proj-card-name">{project.name}</div>
                 {project.rfq && <div className="proj-card-rfq">RFQ# {project.rfq}</div>}
                 <div className="proj-card-meta">
-                    <span className={project.completed ? 'tag-green' : 'tag-yellow'}>
+                    <span className={`tag ${project.completed ? 'tag-green' : 'tag-yellow'}`}>
                         {project.completed ? 'Complete' : 'In Progress'}
                     </span>
-                    <span className="tag-dim">{project.visits.length} visit{project.visits.length !== 1 ? 's' : ''}</span>
-                    <span className="tag-dim">Last: {lastDate}</span>
+                    <span className="tag tag-dim">{project.visits.length} visit{project.visits.length !== 1 ? 's' : ''}</span>
+                    <span className="tag tag-dim">Last: {lastDate}</span>
                 </div>
+            </div>
+            <div className="proj-card-actions">
+                <button
+                    className={`proj-complete-btn ${project.completed ? 'proj-complete-btn--done' : 'proj-complete-btn--wip'}`}
+                    onClick={e => { e.stopPropagation(); onComplete(project, e); }}
+                    title={project.completed ? 'Reopen project' : 'Mark as complete'}
+                >
+                    {project.completed ? '↩ Reopen' : '✓ Complete'}
+                </button>
             </div>
         </div>
     );
@@ -142,11 +156,11 @@ function ProjectCard({ project, onClick }) {
 const FILTER_TABS = ['all', 'in_progress', 'completed'];
 
 export default function Projects() {
-    const [projects, setProjects]   = useState([]);
-    const [loading, setLoading]     = useState(true);
-    const [filter, setFilter]       = useState('all');
-    const [search, setSearch]       = useState('');
-    const [selected, setSelected]   = useState(null);
+    const [projects, setProjects] = useState([]);
+    const [loading, setLoading]   = useState(true);
+    const [filter, setFilter]     = useState('all');
+    const [search, setSearch]     = useState('');
+    const [selected, setSelected] = useState(null);
 
     useEffect(() => {
         api.get('/projects')
@@ -154,12 +168,46 @@ export default function Projects() {
             .finally(() => setLoading(false));
     }, []);
 
+    /* Keep the card list in the same order the server uses */
+    const sortProjects = arr => [...arr].sort((a, b) => {
+        if (a.completed !== b.completed) return a.completed ? 1 : -1;
+        return b.lastVisit - a.lastVisit;
+    });
+
+    const markComplete = async (project, e) => {
+        if (e) e.stopPropagation();
+        const newCompleted = !project.completed;
+
+        /* Optimistic update — re-sort so the card moves to the right section */
+        setProjects(prev =>
+            sortProjects(prev.map(p => p.name === project.name ? { ...p, completed: newCompleted } : p))
+        );
+        setSelected(prev =>
+            prev?.name === project.name ? { ...prev, completed: newCompleted } : prev
+        );
+
+        try {
+            await api.patch(`/projects/${encodeURIComponent(project.name)}/complete`, {
+                completed: newCompleted,
+            });
+        } catch {
+            /* Revert on failure */
+            setProjects(prev =>
+                sortProjects(prev.map(p => p.name === project.name ? { ...p, completed: !newCompleted } : p))
+            );
+            setSelected(prev =>
+                prev?.name === project.name ? { ...prev, completed: !newCompleted } : prev
+            );
+        }
+    };
+
     const visible = projects.filter(p => {
         if (filter === 'in_progress' && p.completed)  return false;
         if (filter === 'completed'   && !p.completed) return false;
         if (search) {
             const q = search.toLowerCase();
-            return p.name.toLowerCase().includes(q) || (p.rfq || '').toLowerCase().includes(q);
+            return p.name.toLowerCase().includes(q)
+                || (p.rfq || '').toLowerCase().includes(q);
         }
         return true;
     });
@@ -179,7 +227,11 @@ export default function Projects() {
 
                 <div className="alarm-service-tabs" style={{ marginBottom: '24px' }}>
                     {FILTER_TABS.map(t => (
-                        <button key={t} className={`alarm-tab ${filter === t ? 'active' : ''}`} onClick={() => setFilter(t)}>
+                        <button
+                            key={t}
+                            className={`alarm-tab ${filter === t ? 'active' : ''}`}
+                            onClick={() => setFilter(t)}
+                        >
                             {t === 'all' ? 'All' : t === 'in_progress' ? 'In Progress' : 'Completed'}
                             <span className="alarm-tab-count">
                                 {t === 'all'         ? projects.length :
@@ -197,12 +249,23 @@ export default function Projects() {
                 ) : (
                     <div className="proj-grid">
                         {visible.map(p => (
-                            <ProjectCard key={p.name} project={p} onClick={() => setSelected(p)} />
+                            <ProjectCard
+                                key={p.name}
+                                project={p}
+                                onClick={() => setSelected(p)}
+                                onComplete={markComplete}
+                            />
                         ))}
                     </div>
                 )}
 
-                {selected && <ProjectDetail project={selected} onClose={() => setSelected(null)} />}
+                {selected && (
+                    <ProjectDetail
+                        project={selected}
+                        onClose={() => setSelected(null)}
+                        onComplete={markComplete}
+                    />
+                )}
             </div>
         </Layout>
     );

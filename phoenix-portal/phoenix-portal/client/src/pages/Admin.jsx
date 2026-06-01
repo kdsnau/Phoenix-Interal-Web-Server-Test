@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import './Dashboard.css';
 
 const ROLE_TAG = { admin: 'tag-red', accounting: 'tag-blue', technician: 'tag-green' };
 
@@ -64,7 +65,124 @@ function NewUserModal({ onClose, onCreated }) {
     );
 }
 
+/* -----------------------------------------------------------------------
+   Bulk Billing Tab
+   ----------------------------------------------------------------------- */
+function BillingTab() {
+    const [clients, setClients]   = useState([]);
+    const [dirty, setDirty]       = useState({});   /* id → new value */
+    const [search, setSearch]     = useState('');
+    const [saving, setSaving]     = useState(false);
+    const [msg, setMsg]           = useState('');
+    const origRef                 = useRef({});
+
+    useEffect(() => {
+        api.get('/clients').then(r => {
+            setClients(r.data);
+            origRef.current = Object.fromEntries(r.data.map(c => [c.id, c.billing_amount ?? '']));
+        });
+    }, []);
+
+    const onChange = (id, val) => {
+        setDirty(prev => ({ ...prev, [id]: val }));
+    };
+
+    const getValue = (c) => (c.id in dirty ? dirty[c.id] : (c.billing_amount ?? ''));
+
+    const dirtyIds = clients.filter(c => {
+        const cur = getValue(c);
+        const orig = origRef.current[c.id] ?? '';
+        return String(cur) !== String(orig);
+    });
+
+    const save = async () => {
+        if (dirtyIds.length === 0) return;
+        setSaving(true);
+        setMsg('');
+        try {
+            await api.patch('/clients/billing/bulk', {
+                updates: dirtyIds.map(c => ({ id: c.id, billing_amount: getValue(c) })),
+            });
+            /* Commit dirty values to origRef so they no longer show as dirty */
+            dirtyIds.forEach(c => { origRef.current[c.id] = getValue(c); });
+            setDirty({});
+            setMsg(`Saved ${dirtyIds.length} client${dirtyIds.length !== 1 ? 's' : ''}.`);
+            setTimeout(() => setMsg(''), 3000);
+        } catch {
+            setMsg('Save failed.');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const visible = clients.filter(c =>
+        !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.customer_id.toLowerCase().includes(search.toLowerCase())
+    );
+
+    return (
+        <div className="billing-table-wrap">
+            <div className="billing-save-bar">
+                <input
+                    className="alarm-search billing-search"
+                    placeholder="Search clients…"
+                    value={search}
+                    onChange={e => setSearch(e.target.value)}
+                />
+                <button
+                    className="btn btn-primary"
+                    onClick={save}
+                    disabled={saving || dirtyIds.length === 0}
+                >
+                    {saving ? 'Saving…' : `Save Changes${dirtyIds.length > 0 ? ` (${dirtyIds.length})` : ''}`}
+                </button>
+                {msg && <span style={{ fontSize: 12, color: 'var(--green)', fontFamily: 'var(--font-mono)' }}>{msg}</span>}
+            </div>
+            <div className="table-card">
+                <table className="data-table">
+                    <thead>
+                        <tr>
+                            <th>Client</th>
+                            <th>ID</th>
+                            <th>Services</th>
+                            <th>Monthly Billing ($)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {visible.map(c => {
+                            const val = getValue(c);
+                            const isDirty = String(val) !== String(origRef.current[c.id] ?? '');
+                            return (
+                                <tr key={c.id} className={isDirty ? 'billing-row--dirty' : ''}>
+                                    <td style={{ fontWeight: 500, color: 'var(--text-hi)' }}>{c.name}</td>
+                                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>{c.customer_id}</td>
+                                    <td>
+                                        {(c.services || []).map(s => (
+                                            <span key={s} className={`tag ${s === 'fire' ? 'tag-red' : s === 'access_control' ? 'tag-blue' : 'tag-yellow'}`} style={{ marginRight: 4 }}>{s}</span>
+                                        ))}
+                                    </td>
+                                    <td>
+                                        <input
+                                            className="billing-input"
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            placeholder="—"
+                                            value={val}
+                                            onChange={e => onChange(c.id, e.target.value)}
+                                        />
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+}
+
 export default function Admin() {
+    const [tab, setTab]           = useState('users');
     const [users, setUsers]       = useState([]);
     const [loading, setLoading]   = useState(true);
     const [showModal, setShowModal] = useState(false);
@@ -98,13 +216,26 @@ export default function Admin() {
     return (
         <Layout>
             <div className="page-header">
-                <h1 className="page-title">Admin <span>{users.length} users</span></h1>
-                <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Create User</button>
+                <h1 className="page-title">Admin</h1>
+                {tab === 'users' && (
+                    <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Create User</button>
+                )}
             </div>
 
-            {loading && <p style={{ color: 'var(--text-dim)' }}>Loading...</p>}
+            <div className="alarm-service-tabs" style={{ marginBottom: 24 }}>
+                <button className={`alarm-tab ${tab === 'users' ? 'active' : ''}`} onClick={() => setTab('users')}>
+                    Users <span className="alarm-tab-count">{users.length}</span>
+                </button>
+                <button className={`alarm-tab ${tab === 'billing' ? 'active' : ''}`} onClick={() => setTab('billing')}>
+                    Billing
+                </button>
+            </div>
 
-            {!loading && (
+            {tab === 'billing' && <BillingTab />}
+
+            {tab === 'users' && loading && <p style={{ color: 'var(--text-dim)' }}>Loading...</p>}
+
+            {tab === 'users' && !loading && (
                 <div className="table-card">
                     <table className="data-table">
                         <thead>

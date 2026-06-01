@@ -1,6 +1,6 @@
 const express  = require('express');
 const pool     = require('../db/pool');
-const { requireRole } = require('../middleware/requireRole');
+const { authenticate, requireRole } = require('../middleware/requireRole');
 
 const router = express.Router();
 
@@ -68,6 +68,55 @@ router.delete('/users/:id', requireRole('admin'), async (req, res) => {
     } catch (err) {
         console.error(err);
         return res.status(500).json({ error: 'Server error.' });
+    }
+});
+
+/* GET /api/admin/alerts — dashboard alerts for all roles */
+router.get('/alerts', authenticate, async (req, res) => {
+    try {
+        const [vehicleIssues, permitsExpiring, tagsExpiring, mrrRow, openTickets] = await Promise.all([
+            pool.query(`
+                SELECT v.id, v.name, v.vehicle_id, COUNT(vn.id)::int AS open_issues
+                FROM vehicles v
+                JOIN vehicle_notes vn ON vn.vehicle_id = v.id AND vn.resolved = FALSE
+                GROUP BY v.id, v.name, v.vehicle_id
+                ORDER BY open_issues DESC
+            `).catch(() => ({ rows: [] })),
+            pool.query(`
+                SELECT id, name, customer_id, permit_number, permit_expires,
+                       (permit_expires::date - CURRENT_DATE)::int AS days_until
+                FROM clients
+                WHERE permit_expires IS NOT NULL
+                  AND permit_expires::date <= CURRENT_DATE + INTERVAL '60 days'
+                ORDER BY permit_expires ASC
+            `).catch(() => ({ rows: [] })),
+            pool.query(`
+                SELECT id, name, vehicle_id, tags_renewal,
+                       (tags_renewal::date - CURRENT_DATE)::int AS days_until
+                FROM vehicles
+                WHERE tags_renewal IS NOT NULL
+                  AND tags_renewal::date <= CURRENT_DATE + INTERVAL '30 days'
+                ORDER BY tags_renewal ASC
+            `).catch(() => ({ rows: [] })),
+            pool.query(`
+                SELECT COALESCE(SUM(billing_amount), 0) AS mrr
+                FROM clients WHERE billing_amount IS NOT NULL AND billing_amount > 0
+            `).catch(() => ({ rows: [{ mrr: 0 }] })),
+            pool.query(`
+                SELECT COUNT(*)::int AS count FROM service_tickets
+                WHERE status NOT IN ('resolved', 'closed')
+            `).catch(() => ({ rows: [{ count: 0 }] })),
+        ]);
+        res.json({
+            vehicleIssues:   vehicleIssues.rows,
+            permitsExpiring: permitsExpiring.rows,
+            tagsExpiring:    tagsExpiring.rows,
+            mrr:             Number(mrrRow.rows[0]?.mrr   || 0),
+            openTickets:     Number(openTickets.rows[0]?.count || 0),
+        });
+    } catch (err) {
+        console.error('Alerts error:', err.message);
+        res.status(500).json({ error: 'Failed to load alerts.' });
     }
 });
 

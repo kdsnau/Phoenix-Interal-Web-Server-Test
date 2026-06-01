@@ -15,6 +15,7 @@ const clientRoutes     = require('./routes/clients');
 const alarmSlackRoutes = require('./routes/alarmSlack');
 const inventoryRoutes  = require('./routes/inventory');
 const projectRoutes    = require('./routes/projects');
+const appSyncRoutes    = require('./routes/appSync');
 const { startScheduler } = require('./services/monitoringScheduler');
 
 const app  = express();
@@ -43,6 +44,7 @@ app.use('/api/clients',     clientRoutes);
 app.use('/api/alarm-slack', alarmSlackRoutes);
 app.use('/api/inventory',   inventoryRoutes);
 app.use('/api/projects',    projectRoutes);
+app.use('/api/app/sync',    appSyncRoutes);
 
 app.get('/api/health', (_, res) => res.json({ status: 'ok' }));
 

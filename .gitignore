@@ -23,5 +23,8 @@ Thumbs.db
 .vscode/
 .idea/
 
+# Android — contains SDK path and secrets, never commit
+local.properties
+
 # Misc
 *.pem

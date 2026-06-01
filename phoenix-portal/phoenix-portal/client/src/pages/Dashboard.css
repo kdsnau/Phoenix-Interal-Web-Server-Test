@@ -1,0 +1,136 @@
+.dash-alerts {
+    margin-top: 32px;
+}
+
+.dash-section-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 14px;
+}
+
+.dash-alerts-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+}
+
+@media (max-width: 800px) {
+    .dash-alerts-grid { grid-template-columns: 1fr; }
+}
+
+.dash-alert-panel {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+}
+
+.dash-alert-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-hi);
+    margin-bottom: 12px;
+    letter-spacing: 0.01em;
+}
+
+.dash-alert-clear {
+    font-size: 12px;
+    color: var(--green);
+    opacity: 0.8;
+}
+
+.dash-alert-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.dash-alert-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.dash-alert-name {
+    font-size: 13px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+}
+
+.dash-session {
+    margin-top: 32px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--text-dim);
+}
+
+.dash-session strong {
+    color: var(--text-hi);
+}
+
+.dash-session-role {
+    font-family: var(--font-mono);
+    color: var(--accent);
+    font-size: 12px;
+}
+
+.dash-session-email {
+    color: var(--text-dim);
+}
+
+/* Billing table in Admin */
+.billing-table-wrap {
+    margin-top: 8px;
+}
+
+.billing-search {
+    margin-bottom: 16px;
+    width: 280px;
+}
+
+.billing-save-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.billing-dirty-count {
+    font-size: 12px;
+    font-family: var(--font-mono);
+    color: var(--text-dim);
+}
+
+.billing-input {
+    width: 110px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+}
+
+.billing-row--dirty td {
+    background: rgba(255, 136, 77, 0.05);
+}
+
+/* Permit report in Alarms */
+.permit-report {
+    margin-top: 8px;
+}
+
+.permit-table th,
+.permit-table td {
+    vertical-align: middle;
+}
+
+.permit-none {
+    color: var(--text-dim);
+    font-style: italic;
+    font-size: 13px;
+}

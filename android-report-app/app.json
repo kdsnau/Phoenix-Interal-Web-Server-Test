@@ -27,8 +27,7 @@
           "defaultChannel": "report-reminders"
         }
       ],
-      "expo-sqlite",
-      [
+[
         "expo-image-picker",
         {
           "photosPermission": "Allow PHX Field Reports to attach photos to reports.",

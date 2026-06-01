@@ -4,6 +4,10 @@ const { authenticate, requireRole } = require('../middleware/requireRole');
 
 const router = express.Router();
 
+/* Add permit columns to clients if not already present */
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS permit_number  TEXT`).catch(() => {});
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS permit_expires DATE`).catch(() => {});
+
 /* GET /api/clients?service=&vendor=&search= */
 router.get('/', authenticate, async (req, res) => {
     const { service, vendor, search } = req.query;
@@ -21,6 +25,26 @@ router.get('/', authenticate, async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Failed to fetch clients.' });
+    }
+});
+
+/* GET /api/clients/permits — all clients with permit info, sorted by expiry */
+router.get('/permits', requireRole('admin', 'accounting'), async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT id, name, customer_id, permit_number, permit_expires, services,
+                   CASE WHEN permit_expires IS NOT NULL
+                        THEN (permit_expires::date - CURRENT_DATE)::int
+                        ELSE NULL END AS days_until
+            FROM clients
+            ORDER BY
+                CASE WHEN permit_expires IS NULL THEN 1 ELSE 0 END,
+                permit_expires ASC
+        `);
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch permits.' });
     }
 });
 
@@ -51,16 +75,41 @@ router.get('/:id', authenticate, async (req, res) => {
     }
 });
 
+/* PATCH /api/clients/billing/bulk — admin/accounting */
+router.patch('/billing/bulk', requireRole('admin', 'accounting'), async (req, res) => {
+    const { updates } = req.body;
+    if (!Array.isArray(updates))
+        return res.status(400).json({ error: 'updates must be an array.' });
+    try {
+        for (const { id, billing_amount } of updates) {
+            const val = billing_amount !== '' && billing_amount != null ? Number(billing_amount) : null;
+            await pool.query('UPDATE clients SET billing_amount = $1 WHERE id = $2', [val, id]);
+        }
+        res.json({ updated: updates.length });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to update billing.' });
+    }
+});
+
 /* PATCH /api/clients/:id */
 router.patch('/:id', authenticate, async (req, res) => {
-    const { notes, billing_amount } = req.body;
+    const { notes, billing_amount, permit_number, permit_expires } = req.body;
     try {
+        const sets = []; const params = [];
+        const add = (col, val) => { params.push(val); sets.push(`${col} = $${params.length}`); };
+
+        if (notes          !== undefined) add('notes',          notes);
+        if ('billing_amount' in req.body) add('billing_amount', billing_amount ?? null);
+        if (permit_number  !== undefined) add('permit_number',  permit_number  || null);
+        if (permit_expires !== undefined) add('permit_expires', permit_expires || null);
+
+        if (sets.length === 0) return res.json({ message: 'Nothing to update.' });
+
+        params.push(req.params.id);
         const result = await pool.query(
-            `UPDATE clients SET
-                notes          = COALESCE($1, notes),
-                billing_amount = COALESCE($2, billing_amount)
-             WHERE id = $3 RETURNING *`,
-            [notes, billing_amount, req.params.id]
+            `UPDATE clients SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
+            params
         );
         if (result.rowCount === 0) return res.status(404).json({ error: 'Client not found.' });
         res.json(result.rows[0]);

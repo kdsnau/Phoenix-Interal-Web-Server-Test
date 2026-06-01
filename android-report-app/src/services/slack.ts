@@ -1,5 +1,6 @@
 // Replace this with the real Incoming Webhook URL from api.slack.com/apps
-const WEBHOOK_URL = 'https://hooks.slack.com/services/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';
+// Set via app.config.js extra or environment variable — never hardcode here
+const WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL ?? '';
 
 export interface ReportPayload {
   jobName:     string;

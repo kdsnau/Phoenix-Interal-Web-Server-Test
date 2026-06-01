@@ -1,90 +1,73 @@
-import { getDb } from './database';
+import {
+  getClients, getJobs, addJob, addClients,
+  getAllReports, appendReport, patchReport,
+  StoredReport,
+} from './database';
 
 export interface Suggestion {
-  id: number;
+  id:   number;
   name: string;
   kind: 'client' | 'job';
 }
 
 export async function searchSuggestions(query: string): Promise<Suggestion[]> {
   if (!query.trim()) return [];
-  const db = getDb();
-  const pattern = `%${query.trim()}%`;
+  const q = query.trim().toLowerCase();
 
-  return db.getAllAsync<Suggestion>(`
-    SELECT id, name, 'client' AS kind FROM clients WHERE name LIKE ? COLLATE NOCASE
-    UNION
-    SELECT id, name, 'job'    AS kind FROM jobs    WHERE name LIKE ? COLLATE NOCASE
-    ORDER BY name
-    LIMIT 12
-  `, [pattern, pattern]);
+  const [clients, jobs] = await Promise.all([getClients(), getJobs()]);
+
+  const jobMatches = jobs
+    .filter(j => j.name.toLowerCase().includes(q))
+    .map((j, i) => ({ id: i, name: j.name, kind: 'job' as const }));
+
+  const clientMatches = clients
+    .filter(c => c.name.toLowerCase().includes(q))
+    .map((c, i) => ({ id: i + 10000, name: c.name, kind: 'client' as const }));
+
+  return [...jobMatches, ...clientMatches].slice(0, 12);
 }
 
 export async function upsertJob(name: string, client?: string): Promise<void> {
-  const db = getDb();
-  await db.runAsync(
-    'INSERT OR IGNORE INTO jobs (name, client) VALUES (?, ?)',
-    [name.trim(), client ?? null]
-  );
+  await addJob(name, client);
 }
 
 export async function upsertClients(names: string[]): Promise<void> {
-  const db = getDb();
-  for (const name of names) {
-    await db.runAsync('INSERT OR IGNORE INTO clients (name) VALUES (?)', [name.trim()]);
-  }
+  await addClients(names);
 }
 
 export async function saveReport(report: {
-  jobName: string;
-  rfq: string;
+  jobName:     string;
+  rfq:         string;
   technicians: string;
-  arrival: string;
-  work: string;
-  parts: string;
-  returnTrip: boolean;
-  photoCount: number;
-  slackSent: boolean;
+  arrival:     string;
+  work:        string;
+  parts:       string;
+  returnTrip:  boolean;
+  photoCount:  number;
+  slackSent:   boolean;
 }): Promise<number> {
-  const db = getDb();
-  const result = await db.runAsync(`
-    INSERT INTO reports
-      (job_name, rfq, technicians, arrival, work, parts, return_trip, photo_count, submitted_at, slack_sent)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `, [
-    report.jobName,
-    report.rfq,
-    report.technicians,
-    report.arrival,
-    report.work,
-    report.parts,
-    report.returnTrip ? 1 : 0,
-    report.photoCount,
-    Date.now(),
-    report.slackSent ? 1 : 0,
-  ]);
-  return result.lastInsertRowId;
+  const id = Date.now();
+  await appendReport({
+    id,
+    job_name:     report.jobName,
+    rfq:          report.rfq,
+    technicians:  report.technicians,
+    arrival:      report.arrival,
+    work:         report.work,
+    parts:        report.parts,
+    return_trip:  report.returnTrip ? 1 : 0,
+    photo_count:  report.photoCount,
+    submitted_at: id,
+    slack_sent:   report.slackSent,
+  });
+  return id;
 }
 
 export async function markReportSent(id: number): Promise<void> {
-  const db = getDb();
-  await db.runAsync('UPDATE reports SET slack_sent = 1 WHERE id = ?', [id]);
+  await patchReport(id, { slack_sent: true });
 }
 
-export async function getUnsentReports(): Promise<Array<{
-  id: number;
-  job_name: string;
-  rfq: string;
-  technicians: string;
-  arrival: string;
-  work: string;
-  parts: string;
-  return_trip: number;
-  photo_count: number;
-  submitted_at: number;
-}>> {
-  const db = getDb();
-  return db.getAllAsync(`
-    SELECT * FROM reports WHERE slack_sent = 0 ORDER BY submitted_at ASC
-  `);
+export async function getUnsentReports(): Promise<StoredReport[]> {
+  const reports = await getAllReports();
+  return reports.filter(r => !r.slack_sent);
 }

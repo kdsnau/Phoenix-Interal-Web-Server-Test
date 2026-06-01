@@ -6,13 +6,19 @@ const { sendServiceReminder, sendTagsReminder } = require('../config/mailer');
 const router = express.Router();
 router.use(authenticate);
 
+/* Add resolution columns to vehicle_notes if not already present */
+pool.query(`ALTER TABLE vehicle_notes ADD COLUMN IF NOT EXISTS resolved    BOOLEAN   NOT NULL DEFAULT FALSE`).catch(() => {});
+pool.query(`ALTER TABLE vehicle_notes ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP`).catch(() => {});
+
 router.get('/', async (req, res) => {
     try {
         const result = await pool.query(
             `SELECT v.*,
                     sn.enabled AS service_notify_enabled,
                     sn.last_sent_at,
-                    sn.next_due_at
+                    sn.next_due_at,
+                    (SELECT COUNT(*) FROM vehicle_notes
+                     WHERE vehicle_id = v.id AND resolved = FALSE) AS open_issues
              FROM vehicles v
              LEFT JOIN vehicle_service_notifications sn ON sn.vehicle_id = v.id
              ORDER BY v.id ASC`
@@ -95,6 +101,25 @@ router.delete('/:id/notes/:noteId', async (req, res) => {
     try {
         await pool.query('DELETE FROM vehicle_notes WHERE id = $1 AND vehicle_id = $2', [req.params.noteId, req.params.id]);
         return res.json({ message: 'Note deleted.' });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'Server error.' });
+    }
+});
+
+router.patch('/:id/notes/:noteId', async (req, res) => {
+    const { resolved } = req.body;
+    try {
+        const result = await pool.query(
+            `UPDATE vehicle_notes
+             SET resolved    = $1,
+                 resolved_at = CASE WHEN $1 THEN NOW() ELSE NULL END
+             WHERE id = $2 AND vehicle_id = $3
+             RETURNING *`,
+            [!!resolved, req.params.noteId, req.params.id]
+        );
+        if (result.rowCount === 0) return res.status(404).json({ error: 'Note not found.' });
+        return res.json(result.rows[0]);
     } catch (err) {
         console.error(err);
         return res.status(500).json({ error: 'Server error.' });

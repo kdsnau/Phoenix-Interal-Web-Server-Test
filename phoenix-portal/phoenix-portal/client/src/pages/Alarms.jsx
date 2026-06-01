@@ -12,7 +12,7 @@ const STATUS_CLASS = {
     return_necessary: 'tag-red',
 };
 
-const SERVICE_TABS = ['all', 'alarm', 'fire', 'access_control'];
+const SERVICE_TABS = ['all', 'alarm', 'fire', 'access_control', 'permits'];
 
 /* -----------------------------------------------------------------------
    Alarm Slack feed panel
@@ -63,8 +63,10 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
     const canBilling = user.role === 'admin' || user.role === 'accounting';
 
     const [tab, setTab]           = useState('system');
-    const [notes, setNotes]       = useState(client.notes || '');
-    const [billing, setBilling]   = useState(client.billing_amount || '');
+    const [notes, setNotes]         = useState(client.notes || '');
+    const [billing, setBilling]     = useState(client.billing_amount || '');
+    const [permitNum, setPermitNum] = useState(client.permit_number || '');
+    const [permitExp, setPermitExp] = useState(client.permit_expires ? client.permit_expires.slice(0, 10) : '');
     const [savingNotes, setSavingNotes] = useState(false);
     const [transactions, setTransactions] = useState([]);
     const [txLoading, setTxLoading]       = useState(false);
@@ -85,7 +87,12 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
 
     async function saveNotes() {
         setSavingNotes(true);
-        await api.patch(`/clients/${client.id}`, { notes, billing_amount: billing || null });
+        await api.patch(`/clients/${client.id}`, {
+            notes,
+            billing_amount: billing || null,
+            permit_number:  permitNum || null,
+            permit_expires: permitExp || null,
+        });
         setSavingNotes(false);
         onRefresh();
     }
@@ -179,6 +186,26 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                                             </span>
                                         )}
                                     </div>
+                                </div>
+                            </div>
+                            <div className="alarm-grid" style={{ marginTop: 16 }}>
+                                <div className="alarm-field">
+                                    <div className="alarm-label">Permit #</div>
+                                    <input
+                                        className="alarm-input"
+                                        value={permitNum}
+                                        onChange={e => setPermitNum(e.target.value)}
+                                        placeholder="e.g. P-12345"
+                                    />
+                                </div>
+                                <div className="alarm-field">
+                                    <div className="alarm-label">Permit Expires</div>
+                                    <input
+                                        className="alarm-input"
+                                        type="date"
+                                        value={permitExp}
+                                        onChange={e => setPermitExp(e.target.value)}
+                                    />
                                 </div>
                             </div>
                             <div className="alarm-notes-section">
@@ -336,6 +363,8 @@ export default function Alarms() {
     const [search, setSearch]         = useState('');
     const [technicians, setTechnicians] = useState([]);
     const [loading, setLoading]       = useState(true);
+    const [permits, setPermits]       = useState([]);
+    const [permitsLoading, setPermitsLoading] = useState(false);
 
     function fetchClients() {
         setLoading(true);
@@ -351,7 +380,17 @@ export default function Alarms() {
         api.get('/admin/technicians').then(r => setTechnicians(r.data)).catch(() => {});
     }, []);
 
-    useEffect(() => { fetchClients(); }, [serviceTab, search]);
+    useEffect(() => {
+        if (serviceTab === 'permits') {
+            setPermitsLoading(true);
+            api.get('/clients/permits')
+                .then(r => setPermits(r.data))
+                .catch(() => setPermits([]))
+                .finally(() => setPermitsLoading(false));
+        } else {
+            fetchClients();
+        }
+    }, [serviceTab, search]);
 
     async function openClient(c) {
         const r = await api.get(`/clients/${c.id}`);
@@ -385,17 +424,66 @@ export default function Alarms() {
                             className={`alarm-tab ${serviceTab === t ? 'active' : ''}`}
                             onClick={() => setServiceTab(t)}
                         >
-                            {t === 'all' ? 'All' : t === 'access_control' ? 'Access Control' : t.charAt(0).toUpperCase() + t.slice(1)}
-                            <span className="alarm-tab-count">
-                                {t === 'all' ? clients.length : clients.filter(c => (c.services || []).includes(t)).length}
-                            </span>
+                            {t === 'all' ? 'All' : t === 'access_control' ? 'Access Control' : t === 'permits' ? 'Permits' : t.charAt(0).toUpperCase() + t.slice(1)}
+                            {t !== 'permits' && (
+                                <span className="alarm-tab-count">
+                                    {t === 'all' ? clients.length : clients.filter(c => (c.services || []).includes(t)).length}
+                                </span>
+                            )}
                         </button>
                     ))}
                 </div>
 
-                {loading ? (
+                {/* Permit report view */}
+                {serviceTab === 'permits' && (
+                    <div className="permit-report">
+                        {permitsLoading ? (
+                            <div className="alarm-empty">Loading…</div>
+                        ) : (
+                            <div className="table-card">
+                                <table className="data-table permit-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Client</th>
+                                            <th>ID</th>
+                                            <th>Permit #</th>
+                                            <th>Expiry</th>
+                                            <th>Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {permits.length === 0 && (
+                                            <tr><td colSpan={5} className="alarm-empty">No permit data on file.</td></tr>
+                                        )}
+                                        {permits.map(c => {
+                                            const days = c.days_until != null ? Number(c.days_until) : null;
+                                            let statusTag = null;
+                                            if (days === null) statusTag = <span className="tag tag-dim">No expiry set</span>;
+                                            else if (days < 0)   statusTag = <span className="tag tag-red">EXPIRED {Math.abs(days)}d ago</span>;
+                                            else if (days <= 60) statusTag = <span className="tag tag-yellow">Expires in {days}d</span>;
+                                            else                 statusTag = <span className="tag tag-green">Valid ({days}d)</span>;
+                                            return (
+                                                <tr key={c.id} style={{ cursor: 'pointer' }} onClick={() => openClient(c)}>
+                                                    <td style={{ fontWeight: 500, color: 'var(--text-hi)' }}>{c.name}</td>
+                                                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>{c.customer_id}</td>
+                                                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{c.permit_number || <span className="permit-none">—</span>}</td>
+                                                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                                                        {c.permit_expires ? new Date(c.permit_expires).toLocaleDateString() : <span className="permit-none">—</span>}
+                                                    </td>
+                                                    <td>{statusTag}</td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {serviceTab !== 'permits' && loading ? (
                     <div className="alarm-empty">Loading…</div>
-                ) : (
+                ) : serviceTab !== 'permits' && (
                     <div className="alarm-client-grid">
                         {clients.length === 0 && <div className="alarm-empty">No clients found.</div>}
                         {clients.map(c => (
@@ -407,6 +495,11 @@ export default function Alarms() {
                                         <span key={s} className={`${s === 'fire' ? 'tag-red' : s === 'access_control' ? 'tag-blue' : 'tag-yellow'}`}>{s}</span>
                                     ))}
                                     {c.monitoring_enabled && <span className="tag-green">monitored</span>}
+                                    {c.permit_expires && (() => {
+                                        const days = Math.ceil((new Date(c.permit_expires) - new Date()) / 86400000);
+                                        if (days > 60) return null;
+                                        return <span className={`tag ${days < 0 ? 'tag-red' : 'tag-yellow'}`}>Permit {days < 0 ? 'EXPIRED' : `exp. ${days}d`}</span>;
+                                    })()}
                                 </div>
                             </div>
                         ))}

@@ -24,6 +24,7 @@ function VehicleCard({ vehicle, onClick }) {
     const daysUntilTags = vehicle.tags_renewal
         ? Math.ceil((new Date(vehicle.tags_renewal) - new Date()) / 86400000)
         : null;
+    const openIssues = Number(vehicle.open_issues) || 0;
 
     return (
         <div className="vehicle-card" onClick={() => onClick(vehicle)}>
@@ -39,6 +40,11 @@ function VehicleCard({ vehicle, onClick }) {
                 <div className="vehicle-card-sub">{vehicle.year} {vehicle.make} {vehicle.model}</div>
                 <div className="vehicle-card-meta">
                     <span>{Number(vehicle.mileage).toLocaleString()} mi</span>
+                    {openIssues > 0 && (
+                        <span className={`tag ${openIssues >= 4 ? 'tag-red' : 'tag-yellow'}`}>
+                            {openIssues} open issue{openIssues !== 1 ? 's' : ''}
+                        </span>
+                    )}
                     {daysUntilTags !== null && (
                         <span className={`tag ${daysUntilTags < 0 ? 'tag-red' : daysUntilTags < 30 ? 'tag-yellow' : 'tag-green'}`}>
                             Tags: {daysUntilTags < 0 ? 'EXPIRED' : `${daysUntilTags}d`}
@@ -108,6 +114,7 @@ function VehicleDetail({ vehicleId, onClose }) {
     const [addingInv, setAddingInv]         = useState(false);
     const [sending, setSending]             = useState('');
     const [msg, setMsg]                     = useState('');
+    const [showResolved, setShowResolved]   = useState(false);
 
     const load = async () => {
         try {
@@ -154,6 +161,11 @@ function VehicleDetail({ vehicleId, onClose }) {
     const deleteNote = async (noteId) => {
         await api.delete(`/fleet/${vehicleId}/notes/${noteId}`);
         setV(prev => ({ ...prev, notes: prev.notes.filter(n => n.id !== noteId) }));
+    };
+
+    const resolveNote = async (noteId, resolved) => {
+        const { data } = await api.patch(`/fleet/${vehicleId}/notes/${noteId}`, { resolved });
+        setV(prev => ({ ...prev, notes: prev.notes.map(n => n.id === noteId ? data : n) }));
     };
 
     const addInvoice = async (e) => {
@@ -314,7 +326,23 @@ function VehicleDetail({ vehicleId, onClose }) {
                     </section>
 
                     <section className="fleet-section">
-                        <div className="fleet-section-title">Notes</div>
+                        <div className="fleet-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span>
+                                Notes
+                                {v.notes.filter(n => !n.resolved).length > 0 && (
+                                    <span style={{ marginLeft: 8, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--yellow)', fontWeight: 400 }}>
+                                        {v.notes.filter(n => !n.resolved).length} open
+                                    </span>
+                                )}
+                            </span>
+                            <button
+                                className="btn btn-ghost"
+                                style={{ fontSize: 11, padding: '3px 10px' }}
+                                onClick={() => setShowResolved(s => !s)}
+                            >
+                                {showResolved ? 'Hide resolved' : 'Show resolved'}
+                            </button>
+                        </div>
                         <form onSubmit={addNote} style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
                             <select value={noteCategory} onChange={e => setNoteCategory(e.target.value)} style={{ width: 'auto', flexShrink: 0 }}>
                                 <option value="service">Service</option>
@@ -333,17 +361,36 @@ function VehicleDetail({ vehicleId, onClose }) {
                             </button>
                         </form>
                         <div className="fleet-notes-list">
-                            {v.notes.length === 0 && <div style={{ color: 'var(--text-dim)', fontSize: 13 }}>No notes yet.</div>}
-                            {v.notes.map(n => (
-                                <div key={n.id} className="fleet-note">
+                            {v.notes.filter(n => showResolved || !n.resolved).length === 0 && (
+                                <div style={{ color: 'var(--text-dim)', fontSize: 13 }}>
+                                    {v.notes.length === 0 ? 'No notes yet.' : 'All issues resolved.'}
+                                </div>
+                            )}
+                            {v.notes.filter(n => showResolved || !n.resolved).map(n => (
+                                <div key={n.id} className={`fleet-note ${n.resolved ? 'fleet-note--resolved' : ''}`}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                                        <span className={`tag ${NOTE_TAG[n.category]}`}>{n.category}</span>
+                                        <span className={`tag ${n.resolved ? 'tag-green' : NOTE_TAG[n.category]}`}>
+                                            {n.resolved ? '✓ resolved' : n.category}
+                                        </span>
                                         <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
                                             {new Date(n.created_at).toLocaleDateString()}
                                         </span>
-                                        <button onClick={() => deleteNote(n.id)} style={{ marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: 12, cursor: 'pointer', padding: '0 4px' }}>✕</button>
+                                        {n.resolved && n.resolved_at && (
+                                            <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                                                → {new Date(n.resolved_at).toLocaleDateString()}
+                                            </span>
+                                        )}
+                                        <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+                                            <button
+                                                onClick={() => resolveNote(n.id, !n.resolved)}
+                                                style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: n.resolved ? 'var(--text-dim)' : 'var(--green)', fontSize: 11, cursor: 'pointer', padding: '1px 8px' }}
+                                            >
+                                                {n.resolved ? 'Reopen' : 'Resolve'}
+                                            </button>
+                                            <button onClick={() => deleteNote(n.id)} style={{ background: 'none', border: 'none', color: 'var(--text-dim)', fontSize: 12, cursor: 'pointer', padding: '0 4px' }}>✕</button>
+                                        </div>
                                     </div>
-                                    <div style={{ fontSize: 13, color: 'var(--text)' }}>{n.content}</div>
+                                    <div style={{ fontSize: 13, color: n.resolved ? 'var(--text-dim)' : 'var(--text)', textDecoration: n.resolved ? 'line-through' : 'none' }}>{n.content}</div>
                                 </div>
                             ))}
                         </div>

@@ -74,6 +74,9 @@ export default function Layout({ children }) {
 
             <main className="main-content">
                 {children}
+                <div className="data-disclaimer">
+                    Portal data is aggregated from connected systems — always verify critical information from primary sources before acting on it.
+                </div>
             </main>
         </div>
     );

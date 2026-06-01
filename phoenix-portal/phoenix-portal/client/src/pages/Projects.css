@@ -136,3 +136,9 @@
     padding: 6px 14px;
     flex-shrink: 0;
 }
+
+/* Source job name shown on merged visits */
+.proj-source-name {
+    font-style: italic;
+    opacity: 0.7;
+}

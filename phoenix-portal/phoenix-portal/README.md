@@ -2,7 +2,7 @@
 
 Role-gated internal web portal for Phoenix Security & Technology.  
 Covers fleet management, service tickets, financials, client monitoring, inventory, and project tracking — all in one place.  
-Self-hosted on a local server rack, served over the company LAN.
+Self-hosted on a dedicated Ubuntu server on the company LAN, accessible at `http://phxportal.internal` from any device on the office Wi-Fi.
 
 ---
 
@@ -10,403 +10,292 @@ Self-hosted on a local server rack, served over the company LAN.
 
 1. [Roles & Access](#roles--access)
 2. [Stack](#stack)
-3. [Part 1 — Install System Dependencies (start here if setting up a fresh machine)](#part-1--install-system-dependencies)
-4. [Part 2 — Set Up the Database](#part-2--set-up-the-database)
-5. [Part 3 — Configure the Server](#part-3--configure-the-server)
-6. [Part 4 — Install & Build the App](#part-4--install--build-the-app)
-7. [Part 5 — Run the App](#part-5--run-the-app)
-8. [Part 6 — Allow Other Devices on the Network to Connect](#part-6--allow-other-devices-on-the-network-to-connect)
-9. [Part 7 — First Login & Initial Data Setup](#part-7--first-login--initial-data-setup)
-10. [Part 8 — Slack Integration Setup](#part-8--slack-integration-setup)
-11. [Development Mode (for making changes)](#development-mode-for-making-changes)
-12. [API Reference](#api-reference)
-13. [Troubleshooting](#troubleshooting)
+3. [Features](#features)
+4. [Project Structure](#project-structure)
+5. [Local Development](#local-development)
+6. [Production Server](#production-server)
+7. [Deploy Workflow](#deploy-workflow)
+8. [Environment Variables](#environment-variables)
+9. [Database Setup](#database-setup)
+10. [Slack Integration Setup](#slack-integration-setup)
+11. [API Reference](#api-reference)
+12. [Troubleshooting](#troubleshooting)
 
 ---
 
 ## Roles & Access
 
-| Page        | Technician               | Accounting           | Admin     |
-|-------------|--------------------------|----------------------|-----------|
-| Dashboard   | ✅ own stats             | ✅ financial summary | ✅ full   |
-| Tickets     | ✅ own/assigned          | ❌                   | ✅ all    |
-| Financials  | ❌                       | ✅                   | ✅        |
-| Alarms      | ✅ system/tickets/slack  | ✅ + billing         | ✅ all    |
-| Fleet       | ✅                       | ✅                   | ✅        |
-| Inventory   | ✅ adjust qty            | ✅ add/edit          | ✅ full   |
-| Projects    | ✅                       | ✅                   | ✅        |
-| Admin       | ❌                       | ❌                   | ✅        |
+| Page        | Technician                       | Accounting              | Admin       |
+|-------------|----------------------------------|-------------------------|-------------|
+| Dashboard   | ✅ own tickets + alerts          | ✅ financials + alerts  | ✅ full     |
+| Tickets     | ✅ own / assigned                | ❌                      | ✅ all      |
+| Financials  | ❌                               | ✅                      | ✅          |
+| Alarms      | ✅ system / tickets / slack      | ✅ + billing / permits  | ✅ all      |
+| Fleet       | ✅                               | ✅                      | ✅          |
+| Inventory   | ✅ adjust qty                    | ✅ add / edit           | ✅ full     |
+| Projects    | ✅                               | ✅                      | ✅          |
+| Admin       | ❌                               | ❌                      | ✅          |
 
 ---
 
 ## Stack
 
-| Layer       | Technology                                       |
-|-------------|--------------------------------------------------|
-| Frontend    | React 19 + Vite (build served by Express)        |
-| Backend     | Node.js + Express                                |
-| Database    | PostgreSQL                                       |
-| Auth        | JWT + bcryptjs                                   |
-| Email       | Nodemailer (Gmail SMTP or any SMTP provider)     |
-| Slack       | @slack/web-api (fleet check-ins, alarms, projects) |
-| Scheduling  | node-cron (weekly monitoring emails)             |
-| Web server  | nginx (reverse proxy → port 5000, LAN access)   |
+| Layer        | Technology                                              |
+|--------------|---------------------------------------------------------|
+| Frontend     | React 19 + Vite 8 (build served by Express)             |
+| Backend      | Node.js + Express 5                                     |
+| Database     | PostgreSQL                                              |
+| Auth         | JWT + bcryptjs                                          |
+| Email        | Nodemailer (Gmail SMTP)                                 |
+| Slack        | @slack/web-api (fleet check-ins, alarms, projects)      |
+| Scheduling   | node-cron (weekly monitoring emails, daily at 8 AM)     |
+| Process mgr  | PM2                                                     |
+| Reverse proxy| nginx                                                   |
+
+> **Node.js version requirement:** Vite 8 requires Node.js **20.19+ or 22.12+**. The production server runs Node 22.x. Always build from an environment that meets this requirement.
 
 ---
 
-## Part 1 — Install System Dependencies
+## Features
 
-> **This section is for a brand-new machine with nothing installed.**  
-> If Node.js, PostgreSQL, and Git are already installed, skip to [Part 2](#part-2--set-up-the-database).
+### Dashboard
+Role-specific overview with three live alert panels visible to all roles:
+- **Open vehicle maintenance issues** — lists each vehicle with unresolved notes and issue count
+- **Permits expiring within 60 days** — color-coded by urgency (yellow → red → expired)
+- **Vehicle tags expiring within 30 days**
+- MRR stat card for admin and accounting roles
 
-This server runs on **Windows + WSL2** (Windows Subsystem for Linux). All app code runs inside the WSL2 Linux environment.
+### Alarms
+Full client monitoring management:
+- Client list filterable by service type (alarm, fire, access control)
+- **Permits tab** — tabular report of all clients sorted by permit expiry date, color-coded by status (valid / expiring / expired / no data)
+- Per-client detail panel with tabs:
+  - **System** — system type, vendor, serial, connection, carrier, monitoring toggle, permit number & expiry, notes
+  - **Tickets** — create and view service tickets for the client
+  - **Slack** — alarm dispatch feed filtered to this client's account number
+  - **Billing** *(accounting / admin)* — set monthly billing amount
+  - **Transactions** *(accounting / admin)* — invoice / payment / expense ledger
+- Monitoring toggle applies instantly (optimistic UI, syncs in background)
+- Permit expiry warnings appear on client cards automatically within 60 days
+
+### Fleet
+Vehicle management for the active fleet:
+- Vehicle cards show open maintenance issue count and tags renewal status
+- Per-vehicle detail panel:
+  - **Vehicle Info** — editable mileage, registration, tags renewal date
+  - **Notifications** — send service reminder or tags renewal emails to admin + accounting
+  - **Insurance** — document viewer (upload to `server/uploads/` to display)
+  - **Notes** — maintenance notes with category (service / repair / misc), resolve/reopen with timestamp, "Show resolved" toggle, open issue count in section header
+  - **Invoices** — repair/maintenance invoice log with running total
+  - **Slack Feed** — messages from the fleet channel mentioning this vehicle
+
+### Projects
+Pulls project visit reports from the designated Slack channel:
+- **Fuzzy name merging** — projects with similar names (e.g. "The Pharm", "PHARM DC", "The Pharm DC") collapse into one card with all visit history combined
+- Each merged visit shows **"Reported as"** — the original job name written in the Slack post
+- Completion status driven by the most recent Slack entry (not any historical entry)
+- Manual complete / reopen override stored in DB, persists across Slack changes
+- In-progress projects sort before completed; related projects group together
+
+### Financials *(accounting / admin)*
+- MRR calculated live from client billing amounts
+- Monthly income / expense / fleet spend chart (12-month rolling window)
+- Client transaction ledger
+- Fleet invoice totals
+
+### Tickets
+- Create and assign service tickets to technicians
+- Status workflow: open → in_progress → resolved → closed
+- Can be created from within a client's Alarms detail panel
+
+### Inventory
+Inventory record management with quantity tracking.
+
+### Admin *(admin only)*
+- **Users tab** — create accounts, change roles, delete users
+- **Billing tab** — inline editable billing amount for every monitoring client in one table; only changed rows are sent on save; supports bulk import when updated billing data arrives
 
 ---
 
-### Step 1 — Enable WSL2
+## Project Structure
 
-Open **PowerShell as Administrator** (search "PowerShell" in the Start menu → right-click → *Run as administrator*) and run:
-
-```powershell
-wsl --install
+```
+phoenix-portal/
+├── client/                    # React SPA (Vite)
+│   ├── src/
+│   │   ├── pages/             # Dashboard, Alarms, Fleet, Projects, Financials,
+│   │   │                      # Tickets, Inventory, Admin, Login
+│   │   ├── components/        # Layout (sidebar + nav), shared UI
+│   │   ├── context/           # AuthContext — JWT decode + refresh
+│   │   └── api/               # Axios client (attaches JWT, base URL)
+│   └── dist/                  # Production build output (git-ignored)
+│
+└── server/                    # Express API
+    ├── routes/                # One file per domain:
+    │   ├── auth.js            #   login / register
+    │   ├── admin.js           #   users, stats, dashboard alerts
+    │   ├── clients.js         #   alarms clients, billing, transactions, permits
+    │   ├── fleet.js           #   vehicles, notes, invoices, emails
+    │   ├── projects.js        #   Slack project reports + completion overrides
+    │   ├── financials.js      #   records, MRR, monthly chart
+    │   ├── tickets.js         #   service tickets
+    │   ├── inventory.js       #   inventory items
+    │   ├── slack.js           #   vehicle Slack feed
+    │   └── alarmSlack.js      #   alarm dispatch Slack feed
+    ├── db/
+    │   ├── pool.js            #   PostgreSQL connection pool
+    │   ├── schema.sql         #   core tables (users, tickets, financials)
+    │   ├── clients_schema.sql #   clients, monitoring, transactions
+    │   ├── fleet_schema.sql   #   vehicles, notes, invoices, notifications
+    │   └── inventory_schema.sql
+    ├── services/
+    │   └── monitoringScheduler.js   # cron job — weekly monitoring emails
+    ├── config/
+    │   └── mailer.js          #   Nodemailer SMTP config
+    └── index.js               #   Express entry point
 ```
 
-Restart your PC when it prompts you. After the restart, an Ubuntu terminal will open automatically and ask you to set a Linux username and password. Choose something simple — you'll need to type this password whenever you use `sudo`.
-
-> Already have WSL2? Run `wsl --update` to make sure it's current.
-
 ---
 
-### Step 2 — Open the WSL2 terminal
+## Local Development
 
-All remaining commands in Part 1 run inside **WSL2/Ubuntu**, not PowerShell.  
-Open it by searching **"Ubuntu"** in the Start menu.
+### Requirements
+- Node.js **20.19+ or 22.12+**
+- PostgreSQL
 
----
-
-### Step 3 — Install Node.js (v20)
-
-```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
-```
-
-Check it worked:
-```bash
-node -v    # should show v20.x.x or higher
-npm -v
-```
-
----
-
-### Step 4 — Install PostgreSQL
-
-```bash
-sudo apt-get update
-sudo apt-get install -y postgresql postgresql-contrib
-sudo service postgresql start
-```
-
-Make Postgres start automatically every time you open a WSL2 terminal:
-```bash
-echo 'sudo service postgresql start > /dev/null 2>&1' >> ~/.bashrc
-```
-
----
-
-### Step 5 — Install nginx
-
-```bash
-sudo apt-get install -y nginx
-```
-
-nginx is used to serve the app on port 80 so other devices on the network can reach it. It's not required if you only need to access the portal from the server machine itself.
-
----
-
-### Step 6 — Install Git
-
-```bash
-sudo apt-get install -y git
-```
-
----
-
-## Part 2 — Set Up the Database
-
-All commands in this section run inside WSL2.
-
-### Step 1 — Create the database and user
+### 1 — Database
 
 ```bash
 sudo -u postgres psql
 ```
 
-You are now inside the `psql` prompt. Run these SQL commands:
-
 ```sql
-CREATE DATABASE phoenix_portal;
-CREATE USER phoenix WITH PASSWORD 'choose_a_strong_password_here';
-GRANT ALL PRIVILEGES ON DATABASE phoenix_portal TO phoenix;
+CREATE USER portaluser WITH PASSWORD 'your_password';
+CREATE DATABASE phoenix_portal OWNER portaluser;
+GRANT ALL PRIVILEGES ON DATABASE phoenix_portal TO portaluser;
 \q
 ```
 
-Write down the password you chose — you'll need it in Part 3.
-
----
-
-### Step 2 — Clone the repository
+Run the schema files in order:
 
 ```bash
-cd ~
-git clone https://github.com/kdsnau/Phoenix-Interal-Web-Server-Test.git phoenix-portal
-cd phoenix-portal
+cd server
+psql -U portaluser -d phoenix_portal -f db/schema.sql
+psql -U portaluser -d phoenix_portal -f db/clients_schema.sql
+psql -U portaluser -d phoenix_portal -f db/fleet_schema.sql
+psql -U portaluser -d phoenix_portal -f db/inventory_schema.sql
 ```
 
----
+### 2 — Environment
 
-### Step 3 — Run the schema files
+Create `server/.env` — see [Environment Variables](#environment-variables) below.
 
-This creates all the database tables. Run each file in order:
+### 3 — Run
 
 ```bash
-cd ~/phoenix-portal/server
+# Terminal 1 — API (hot reload)
+cd server && npm install && npm run dev
 
-PGPASSWORD=your_password psql -U phoenix -d phoenix_portal -f db/schema.sql
-PGPASSWORD=your_password psql -U phoenix -d phoenix_portal -f db/fleet_schema.sql
-PGPASSWORD=your_password psql -U phoenix -d phoenix_portal -f db/clients_schema.sql
-PGPASSWORD=your_password psql -U phoenix -d phoenix_portal -f db/inventory_schema.sql
+# Terminal 2 — Vite dev server
+cd client && npm install && npm run dev
 ```
 
-Replace `your_password` with what you set in Step 1 above.
+App: `http://localhost:5173` — Vite proxies `/api` calls to Express on port 5000.
 
-Each command should print something like `CREATE TABLE` with no errors. If you see `ERROR:` something went wrong — double-check the password and database name.
+> **WSL note:** Always run `npm run build` from WSL (not Windows Git Bash). The build target is Linux; running it from Windows installs Windows-native binaries that break on the server.
 
 ---
 
-## Part 3 — Configure the Server
+## Production Server
 
-### Step 1 — Create the .env file
+The portal runs on a dedicated Ubuntu 20.04 machine on the office LAN.
+
+| | |
+|---|---|
+| **Hostname** | SATURN |
+| **LAN IP** | `192.168.10.10` |
+| **URL** | `http://phxportal.internal` (resolved by UniFi DNS — available on office Wi-Fi automatically) |
+| **App path** | `/home/saturn/Documents/PHXSECTEST/Phoenix-Interal-Web-Server-Test-main(1)/Phoenix-Interal-Web-Server-Test-main/` |
+| **Process manager** | PM2 — auto-restarts on crash and on server reboot |
+| **Reverse proxy** | nginx — serves `client/dist/` and proxies `/api/` to Express on port 5000 |
+
+### Useful server commands
+
+| Task | Command |
+|---|---|
+| View live logs | `pm2 logs phoenix-portal` |
+| Restart app | `pm2 restart phoenix-portal` |
+| Check process status | `pm2 status` |
+| nginx errors | `sudo tail -f /var/log/nginx/error.log` |
+| Connect to DB | `sudo -u postgres psql -d phoenix_portal` |
+
+---
+
+## Deploy Workflow
 
 ```bash
-cd ~/phoenix-portal/server
-cp .env.example .env
-nano .env
+# 1. On your laptop — commit and push
+git add -A
+git commit -m "your message"
+git push
+
+# 2. SSH or RustDesk into the server, then:
+cd "/home/saturn/Documents/PHXSECTEST/Phoenix-Interal-Web-Server-Test-main(1)/Phoenix-Interal-Web-Server-Test-main"
+git pull
+cd phoenix-portal/phoenix-portal/client && npm run build
+pm2 restart phoenix-portal
 ```
 
-Fill in every value using the table below. Save and close with `Ctrl+O → Enter → Ctrl+X`.
+If only server-side files changed (no client changes), skip `npm run build` and just restart PM2.
 
 ---
 
-### Environment Variables
+## Environment Variables
+
+Create `server/.env`:
 
 ```env
 # ── Server ────────────────────────────────────────────────────────────────────
 PORT=5000
 
-# Comma-separated list of origins allowed to call the API.
-# Add your server's LAN IP so phones and other computers can log in.
-# Example: http://localhost:5173,http://192.168.1.50
-CLIENT_ORIGIN=http://localhost:5173,http://YOUR_LAN_IP
-
 # ── PostgreSQL ────────────────────────────────────────────────────────────────
 DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=phoenix_portal
-DB_USER=phoenix
-DB_PASSWORD=the_password_you_set_in_part_2
+DB_USER=portaluser
+DB_PASSWORD=your_db_password
 
 # ── JWT ───────────────────────────────────────────────────────────────────────
-# A long random string used to sign login tokens.
-# Generate one by running:  node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
-JWT_SECRET=paste_output_here
+# Generate: node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
+JWT_SECRET=64_char_random_hex_string
 
 # ── Email (SMTP) ──────────────────────────────────────────────────────────────
-# Gmail example. See Part 3 Step 2 for how to get an App Password.
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your_gmail@gmail.com
-SMTP_PASS=xxxx_xxxx_xxxx_xxxx
+SMTP_PASS=xxxx_xxxx_xxxx_xxxx     # Gmail App Password (not your login password)
+SMTP_FROM=Phoenix SecTech Portal <your_gmail@gmail.com>
 
 # ── Slack ─────────────────────────────────────────────────────────────────────
-# See Part 8 for how to get these values.
-SLACK_TOKEN=xoxb-your-bot-token
-SLACK_CHANNEL_ID=CXXXXXXXXXX
-ALARM_SLACK_CHANNEL_ID=CXXXXXXXXXX
-PROJECT_SLACK_CHANNEL_ID=CXXXXXXXXXX
+SLACK_TOKEN=xoxb-...
+SLACK_CHANNEL_ID=           # Fleet / general channel
+ALARM_SLACK_CHANNEL_ID=     # Alarm dispatch channel
+PROJECT_SLACK_CHANNEL_ID=   # Project reports channel
 ```
+
+**Gmail App Password:** Go to [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) → Create → copy the 16-character password into `SMTP_PASS`.
+
+> **Do NOT set `VITE_API_URL`** in `client/.env`. Leaving it unset means all API calls use a relative `/api` path, which works correctly regardless of which hostname or IP is used to access the app.
 
 ---
 
-### Step 2 — Generate a JWT secret
+## Database Setup
 
-Run this command and copy the output into `JWT_SECRET`:
+Column migrations for newer features run automatically at server startup via `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`. No manual migration scripts are needed for:
+- `vehicle_notes.resolved` / `resolved_at` (maintenance resolution)
+- `clients.permit_number` / `permit_expires` (permit tracking)
 
-```bash
-node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
-```
-
----
-
-### Step 3 — Find your LAN IP
-
-```bash
-ip route | grep default | awk '{print $9}'
-```
-
-This is the IP address other devices on your network use to reach the server. Add it to `CLIENT_ORIGIN` in your `.env`.
-
----
-
-### Step 4 — Set up a Gmail App Password (for email notifications)
-
-Regular Gmail passwords won't work. You need an **App Password**:
-
-1. Make sure 2-Step Verification is turned on at [myaccount.google.com/security](https://myaccount.google.com/security)
-2. Go to [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
-3. Click **Create** → name it "Phoenix Portal" → copy the 16-character password shown
-4. Paste it into `SMTP_PASS` in your `.env`
-
-> **Important:** If you regenerate an App Password later, you must restart the server manually — it doesn't pick up `.env` changes automatically.
-
----
-
-## Part 4 — Install & Build the App
-
-### Install server packages
-
-```bash
-cd ~/phoenix-portal/server
-npm install
-```
-
-### Install and build the frontend
-
-```bash
-cd ~/phoenix-portal/client
-npm install
-npm run build
-```
-
-The build output goes into `client/dist/`. The Express server serves this folder automatically — no separate web server needed.
-
-> **Do NOT set `VITE_API_URL`** in `client/.env`. Leaving it unset means all API calls use a relative `/api` path, which works correctly from any device. Setting it to `localhost` would break logins from phones and other computers.
-
----
-
-## Part 5 — Run the App
-
-```bash
-cd ~/phoenix-portal/server
-npm start
-```
-
-Open a browser on the server machine and go to:
-```
-http://localhost:5000
-```
-
-The login screen should appear. See [Part 7](#part-7--first-login--initial-data-setup) for the default login credentials.
-
-> To keep the server running and auto-restart on file changes, use `npm run dev` instead of `npm start`.
-
----
-
-## Part 6 — Allow Other Devices on the Network to Connect
-
-WSL2 runs in its own private virtual network by default. Without extra setup, phones and other computers on the same Wi-Fi can't reach it even though the server machine can. These steps fix that.
-
----
-
-### Option A — Mirrored Networking (Windows 11 — recommended, permanent)
-
-This makes WSL2 share the Windows network interface. No port forwarding needed, and it survives reboots.
-
-1. Open Notepad and create (or edit) `C:\Users\YourWindowsUsername\.wslconfig`
-2. Add these lines:
-   ```ini
-   [wsl2]
-   networkingMode=mirrored
-   ```
-3. Save the file, then restart WSL from PowerShell:
-   ```powershell
-   wsl --shutdown
-   ```
-4. Reopen your WSL2 terminal — you're done. Your LAN IP now works directly.
-
----
-
-### Option B — Port Forwarding (Windows 10 or if Option A doesn't work)
-
-WSL2 has an internal IP that changes on every reboot. This script forwards your Windows LAN port 80 into WSL2.
-
-Open **PowerShell as Administrator** on Windows (not WSL) and run:
-
-```powershell
-$wslIp = (wsl hostname -I).Trim().Split(' ')[0]
-netsh interface portproxy add v4tov4 listenport=80 listenaddress=0.0.0.0 connectport=80 connectaddress=$wslIp
-New-NetFirewallRule -DisplayName "WSL2 Phoenix Portal" -Direction Inbound -Protocol TCP -LocalPort 80 -Action Allow -ErrorAction SilentlyContinue
-Write-Host "Forwarding port 80 to WSL2 at $wslIp"
-```
-
-> **This must be re-run after every reboot** because WSL2's internal IP changes.  
-> To automate it, save the script as `C:\phoenix-port-forward.ps1` and add it to Task Scheduler to run at startup as Administrator.
-
----
-
-### Step — Configure nginx
-
-Regardless of which option above you used, nginx must be configured to forward incoming requests to the Node.js app.
-
-Create the config file:
-```bash
-sudo nano /etc/nginx/sites-available/phoenix-portal
-```
-
-Paste this (replace `192.168.1.50` with your actual LAN IP):
-```nginx
-server {
-    listen 80;
-    server_name 192.168.1.50 phoenix.local _;
-
-    location / {
-        proxy_pass         http://127.0.0.1:5000;
-        proxy_http_version 1.1;
-        proxy_set_header   Upgrade    $http_upgrade;
-        proxy_set_header   Connection 'upgrade';
-        proxy_set_header   Host       $host;
-        proxy_set_header   X-Real-IP  $remote_addr;
-        proxy_cache_bypass $http_upgrade;
-    }
-}
-```
-
-Enable it:
-```bash
-sudo ln -sf /etc/nginx/sites-available/phoenix-portal /etc/nginx/sites-enabled/
-sudo nginx -t          # must say "syntax is ok"
-sudo service nginx start
-```
-
-Make nginx start automatically:
-```bash
-echo 'sudo service nginx start > /dev/null 2>&1' >> ~/.bashrc
-```
-
----
-
-### Verify from another device
-
-On a phone or another computer connected to the same Wi-Fi, open a browser and go to:
-```
-http://YOUR_LAN_IP
-```
-
-The login screen should appear.
-
----
-
-## Part 7 — First Login & Initial Data Setup
+If setting up a fresh database, run the four schema files in [Local Development → Database](#1--database) above.
 
 ### Default admin account
 
@@ -415,175 +304,109 @@ The login screen should appear.
 | Email    | `admin@phoenixsectech.com` |
 | Password | `Admin1234!`               |
 
-**Change this password immediately** after your first login (Admin panel → Users).
+**Change this password immediately** after first login (Admin → Users).
 
 ---
 
-### Add your vehicles
-
-Vehicles must be added directly to the database. Connect to psql:
-
-```bash
-PGPASSWORD=your_password psql -U phoenix -d phoenix_portal
-```
-
-Then insert your vehicles:
-```sql
-INSERT INTO vehicles (vehicle_id, name, make, model, year, mileage)
-VALUES
-  ('VH-001', 'Unit 01', 'Nissan', 'NV200',           2019, 0),
-  ('VH-002', 'Unit 02', 'Nissan', 'NV2500',          2020, 0),
-  ('VH-003', 'Unit 03', 'Nissan', 'NV200 Cargo Van', 2021, 0),
-  ('VH-004', 'Unit 04', 'Nissan', 'Frontier',        2022, 0),
-  ('VH-005', 'Unit 05', 'Tesla',  'Model Y',         2023, 0);
-\q
-```
-
-Adjust the values to match your actual fleet.
-
----
-
-### Set each vehicle's Slack name
-
-The Slack feed matches messages to vehicles using the exact name that appears in the Slack channel's **Vehicle** field (e.g. `"NV200 #1"`, `"Tesla #2"`, `"Nissan NV-2500"`). These names often don't match the database names, so you set them once using the migration script:
-
-```bash
-cd ~/phoenix-portal/server
-node migrate-slack-names.js
-```
-
-The script will print what it set for each vehicle. If any show `⚠ No rows matched`, open `migrate-slack-names.js`, edit the `updates` array to match your actual vehicle IDs, and re-run.
-
----
-
-## Part 8 — Slack Integration Setup
+## Slack Integration Setup
 
 The portal reads from three Slack channels:
 
-| Channel purpose       | `.env` variable              |
+| Purpose               | `.env` key                   |
 |-----------------------|------------------------------|
-| Vehicle check-ins     | `SLACK_CHANNEL_ID`           |
-| Alarm service logs    | `ALARM_SLACK_CHANNEL_ID`     |
-| Project/work orders   | `PROJECT_SLACK_CHANNEL_ID`   |
+| Fleet vehicle check-ins | `SLACK_CHANNEL_ID`         |
+| Alarm dispatch logs   | `ALARM_SLACK_CHANNEL_ID`     |
+| Project / work orders | `PROJECT_SLACK_CHANNEL_ID`   |
 
 ### Create a Slack bot
 
 1. Go to [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → **From scratch**
-2. Give it a name (e.g. `Phoenix Portal`) and select your workspace
-3. In the left sidebar go to **OAuth & Permissions**
-4. Under **Bot Token Scopes**, click **Add an OAuth Scope** and add:
+2. Under **OAuth & Permissions → Bot Token Scopes**, add:
    - `channels:history`
    - `channels:read`
    - `files:read`
    - `users:read`
-5. Scroll up and click **Install to Workspace** → **Allow**
-6. Copy the **Bot User OAuth Token** (starts with `xoxb-`) — this is your `SLACK_TOKEN`
+3. **Install to Workspace** → copy the `xoxb-...` Bot User OAuth Token → paste into `SLACK_TOKEN`
 
 ### Invite the bot to each channel
 
-In Slack, open each channel the bot needs to read, then type:
+In Slack, open each channel and type:
 ```
 /invite @YourBotName
 ```
 
 ### Find channel IDs
 
-Right-click a channel name → **Copy link**.  
-The URL looks like: `https://yourworkspace.slack.com/archives/C0123456789`  
-The last part (`C0123456789`) is the channel ID. Paste each into your `.env`.
-
-After updating `.env`, restart the server:
-```bash
-# stop with Ctrl+C, then:
-npm start
-```
-
----
-
-## Development Mode (for making changes)
-
-Run the backend and frontend as separate processes with hot reload.
-
-**Terminal 1 — API server:**
-```bash
-cd ~/phoenix-portal/server
-npm run dev
-```
-
-**Terminal 2 — Frontend dev server:**
-```bash
-cd ~/phoenix-portal/client
-npm run dev
-```
-
-Open [http://localhost:5173](http://localhost:5173).  
-Vite automatically forwards `/api` requests to `localhost:5000` — no extra config needed.
-
-> You do **not** need to run `npm run build` while developing. Run it only when you're ready to deploy changes to production.
+Right-click a channel → **Copy link**.  
+The URL ends with the channel ID: `https://workspace.slack.com/archives/C0123456789`
 
 ---
 
 ## API Reference
 
 ### Auth
-| Method | Endpoint            | Access |
-|--------|---------------------|--------|
-| POST   | /api/auth/login     | Public |
-| POST   | /api/auth/register  | Public |
-
-### Tickets
-| Method | Endpoint          | Access            |
-|--------|-------------------|-------------------|
-| GET    | /api/tickets      | Technician, Admin |
-| POST   | /api/tickets      | Technician, Admin |
-| PATCH  | /api/tickets/:id  | Technician, Admin |
-| DELETE | /api/tickets/:id  | Admin             |
-
-### Financials
-| Method | Endpoint                             | Access            |
-|--------|--------------------------------------|-------------------|
-| GET    | /api/financials                      | Accounting, Admin |
-| GET    | /api/financials/summary              | Accounting, Admin |
-| GET    | /api/financials/monthly              | Accounting, Admin |
-| GET    | /api/financials/fleet                | Accounting, Admin |
-| GET    | /api/financials/client-transactions  | Accounting, Admin |
-| POST   | /api/financials                      | Accounting, Admin |
-| DELETE | /api/financials/:id                  | Admin             |
+| Method | Endpoint           | Access |
+|--------|--------------------|--------|
+| POST   | /api/auth/login    | Public |
+| POST   | /api/auth/register | Public |
 
 ### Admin
-| Method | Endpoint                  | Access |
-|--------|---------------------------|--------|
-| GET    | /api/admin/users          | Admin  |
-| GET    | /api/admin/stats          | Admin  |
-| GET    | /api/admin/technicians    | Admin  |
-| PATCH  | /api/admin/users/:id/role | Admin  |
-| DELETE | /api/admin/users/:id      | Admin  |
-
-### Fleet
-| Method | Endpoint                            | Access |
-|--------|-------------------------------------|--------|
-| GET    | /api/fleet                          | All    |
-| GET    | /api/fleet/:id                      | All    |
-| PATCH  | /api/fleet/:id                      | All    |
-| POST   | /api/fleet/:id/notes                | All    |
-| DELETE | /api/fleet/:id/notes/:noteId        | All    |
-| POST   | /api/fleet/:id/invoices             | All    |
-| DELETE | /api/fleet/:id/invoices/:invId      | All    |
-| POST   | /api/fleet/:id/send-service-email   | All    |
-| POST   | /api/fleet/:id/send-tags-email      | All    |
+| Method | Endpoint                   | Access |
+|--------|----------------------------|--------|
+| GET    | /api/admin/alerts          | All    |
+| GET    | /api/admin/stats           | Admin  |
+| GET    | /api/admin/technicians     | Admin, Technician |
+| GET    | /api/admin/users           | Admin  |
+| PATCH  | /api/admin/users/:id/role  | Admin  |
+| DELETE | /api/admin/users/:id       | Admin  |
 
 ### Clients (Alarms)
-| Method | Endpoint                            | Access            |
-|--------|-------------------------------------|-------------------|
-| GET    | /api/clients                        | All               |
-| GET    | /api/clients/:id                    | All               |
-| PATCH  | /api/clients/:id                    | All               |
-| POST   | /api/clients/:id/monitoring         | Accounting, Admin |
-| POST   | /api/clients/:id/tickets            | All               |
-| PATCH  | /api/clients/tickets/:ticketId      | All               |
-| GET    | /api/clients/:id/transactions       | Accounting, Admin |
-| POST   | /api/clients/:id/transactions       | Accounting, Admin |
-| DELETE | /api/clients/:id/transactions/:txId | Accounting, Admin |
+| Method | Endpoint                              | Access              |
+|--------|---------------------------------------|---------------------|
+| GET    | /api/clients                          | All                 |
+| GET    | /api/clients/permits                  | Accounting, Admin   |
+| GET    | /api/clients/:id                      | All                 |
+| PATCH  | /api/clients/:id                      | All                 |
+| PATCH  | /api/clients/billing/bulk             | Accounting, Admin   |
+| POST   | /api/clients/:id/monitoring           | Accounting, Admin   |
+| POST   | /api/clients/:id/tickets              | All                 |
+| PATCH  | /api/clients/tickets/:ticketId        | All                 |
+| GET    | /api/clients/:id/transactions         | Accounting, Admin   |
+| POST   | /api/clients/:id/transactions         | Accounting, Admin   |
+| DELETE | /api/clients/:id/transactions/:txId   | Accounting, Admin   |
+
+### Fleet
+| Method | Endpoint                              | Access |
+|--------|---------------------------------------|--------|
+| GET    | /api/fleet                            | All    |
+| GET    | /api/fleet/:id                        | All    |
+| PATCH  | /api/fleet/:id                        | All    |
+| POST   | /api/fleet/:id/notes                  | All    |
+| PATCH  | /api/fleet/:id/notes/:noteId          | All    |
+| DELETE | /api/fleet/:id/notes/:noteId          | All    |
+| POST   | /api/fleet/:id/invoices               | All    |
+| DELETE | /api/fleet/:id/invoices/:invId        | All    |
+| POST   | /api/fleet/:id/send-service-email     | All    |
+| POST   | /api/fleet/:id/send-tags-email        | All    |
+
+### Financials
+| Method | Endpoint                              | Access              |
+|--------|---------------------------------------|---------------------|
+| GET    | /api/financials                       | Accounting, Admin   |
+| GET    | /api/financials/summary               | Accounting, Admin   |
+| GET    | /api/financials/monthly               | Accounting, Admin   |
+| GET    | /api/financials/fleet                 | Accounting, Admin   |
+| GET    | /api/financials/client-transactions   | Accounting, Admin   |
+| POST   | /api/financials                       | Accounting, Admin   |
+| DELETE | /api/financials/:id                   | Admin               |
+
+### Tickets
+| Method | Endpoint          | Access              |
+|--------|-------------------|---------------------|
+| GET    | /api/tickets      | Technician, Admin   |
+| POST   | /api/tickets      | Technician, Admin   |
+| PATCH  | /api/tickets/:id  | Technician, Admin   |
+| DELETE | /api/tickets/:id  | Admin               |
 
 ### Inventory
 | Method | Endpoint           | Access                                        |
@@ -593,55 +416,45 @@ Vite automatically forwards `/api` requests to `localhost:5000` — no extra con
 | PATCH  | /api/inventory/:id | All (technician: qty only; admin: full edit)  |
 | DELETE | /api/inventory/:id | Admin                                         |
 
+### Projects
+| Method | Endpoint                    | Access |
+|--------|-----------------------------|--------|
+| GET    | /api/projects               | All    |
+| GET    | /api/projects/image/:fileId | All    |
+| PATCH  | /api/projects/:name/complete| All    |
+
 ### Slack
 | Method | Endpoint                          | Access |
 |--------|-----------------------------------|--------|
 | GET    | /api/slack/vehicle/:vehicleId     | All    |
 | GET    | /api/alarm-slack/client/:clientId | All    |
 
-### Projects
-| Method | Endpoint                    | Access |
-|--------|-----------------------------|--------|
-| GET    | /api/projects               | All    |
-| GET    | /api/projects/image/:fileId | All    |
-
 ---
 
 ## Troubleshooting
 
 ### "Cannot connect to database" on startup
-- Make sure PostgreSQL is running: `sudo service postgresql status`
-- Start it: `sudo service postgresql start`
-- Verify `DB_USER`, `DB_PASSWORD`, and `DB_NAME` match what you set in Part 2
+- Verify PostgreSQL is running: `sudo systemctl status postgresql`
+- Confirm `DB_USER`, `DB_PASSWORD`, and `DB_NAME` in `.env` match what was created
 
-### Login works on the server PC but fails on phones / other computers
-- Complete [Part 6](#part-6--allow-other-devices-on-the-network-to-connect)
-- The phone and server must be on the same Wi-Fi network
-- `CLIENT_ORIGIN` in `server/.env` must include your LAN IP
-- After any `.env` change, restart the server manually (`Ctrl+C` → `npm start`) — nodemon does not watch `.env`
+### Build fails with "cannot execute binary file" or Rollup error
+- Make sure you're building from WSL (Linux), not Windows Git Bash
+- Node.js must be 20.19+ or 22.12+ — check with `node -v`
+
+### Login works on the server but fails on other devices
+- Both devices must be on the same office Wi-Fi
+- The portal is only reachable at `http://phxportal.internal` on the office network
 
 ### Emails not sending — "535 Auth Error"
 - You need a Gmail **App Password**, not your regular Gmail password
-- Generate one at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
-- Paste it into `SMTP_PASS` and restart the server
+- Generate at [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+- Paste into `SMTP_PASS` and restart the server
 
 ### Slack feed shows no messages for a vehicle
-- Confirm the bot was invited to the channel with `/invite @YourBotName`
-- Confirm `SLACK_TOKEN` and `SLACK_CHANNEL_ID` are correct in `.env`
-- Run `node migrate-slack-names.js` — each vehicle needs a `slack_name` that matches the exact text in the Slack channel's Vehicle field (e.g. `NV200 #1`)
+- Confirm the bot was invited to the channel: `/invite @YourBotName`
+- Confirm channel IDs in `.env` are correct
+- Each vehicle needs a `slack_name` matching the exact text used in the Slack channel
 
-### NV200 #1 and NV200 #2 showing the same messages (or wrong vehicle's feed)
-- The two vehicles must have different `slack_name` values in the database
-- Run `node migrate-slack-names.js` and confirm the output shows distinct names per vehicle
-
-### Port 80 forwarding stops working after a reboot (Windows 10)
-- WSL2's internal IP changes on each boot — re-run the PowerShell port-forwarding script from Part 6
-- Or switch to **mirrored networking** (Windows 11, Part 6 Option A) so this never happens
-
-### Changes to the frontend aren't showing up
-- You must rebuild after any client-side change: `cd client && npm run build`
-- Hard-refresh the browser (`Ctrl+Shift+R`) to clear any cached files
-
-### `npm run build` fails
-- Make sure you're in the `client/` directory, not `server/`
-- Run `npm install` first if you haven't yet or if packages changed
+### Frontend changes not showing after deploy
+- Always run `npm run build` after client-side changes before restarting PM2
+- Hard-refresh the browser (`Ctrl+Shift+R`) to clear cached files

@@ -121,11 +121,14 @@ router.get('/', async (req, res) => {
             const key = normalizeKey(jobName);
 
             if (!map[key]) {
-                map[key] = { name: jobName, rfq, slackCompleted: false, lastVisit: m.ts, visits: [] };
+                /* First (most recent) entry for this job — its status is authoritative */
+                map[key] = { name: jobName, rfq, slackCompleted, lastVisit: m.ts, visits: [] };
+            } else if (Number(m.ts) > Number(map[key].lastVisit)) {
+                /* Newer entry found — update status and timestamp */
+                map[key].lastVisit = m.ts;
+                map[key].slackCompleted = slackCompleted;
             }
             map[key].visits.push(visit);
-            if (m.ts > map[key].lastVisit) map[key].lastVisit = m.ts;
-            if (slackCompleted) map[key].slackCompleted = true;
         }
 
         const projects = Object.values(map)

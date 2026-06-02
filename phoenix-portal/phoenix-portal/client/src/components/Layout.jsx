@@ -11,6 +11,7 @@ const NAV = {
         { path: '/inventory', label: 'Inventory' },
         { path: '/projects',  label: 'Projects'  },
         { path: '/ai',        label: 'AI'        },
+        { path: '/feedback',  label: 'Feedback'  },
     ],
     accounting: [
         { path: '/dashboard',  label: 'Dashboard'  },
@@ -20,6 +21,7 @@ const NAV = {
         { path: '/inventory',  label: 'Inventory'  },
         { path: '/projects',   label: 'Projects'   },
         { path: '/ai',         label: 'AI'         },
+        { path: '/feedback',   label: 'Feedback'   },
     ],
     admin: [
         { path: '/dashboard',  label: 'Dashboard'  },
@@ -31,6 +33,7 @@ const NAV = {
         { path: '/projects',   label: 'Projects'   },
         { path: '/admin',      label: 'Admin'      },
         { path: '/ai',         label: 'AI'         },
+        { path: '/feedback',   label: 'Feedback'   },
     ],
 };
 

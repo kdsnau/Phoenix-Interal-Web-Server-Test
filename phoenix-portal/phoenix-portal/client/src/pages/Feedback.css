@@ -1,0 +1,124 @@
+.fb-subtitle {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin: -8px 0 24px;
+}
+
+/* Category selector */
+.fb-category-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 24px;
+}
+
+@media (max-width: 700px) {
+    .fb-category-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+.fb-category-card {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px 14px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+}
+
+.fb-category-card input[type="radio"] {
+    display: none;
+}
+
+.fb-category-card:hover {
+    border-color: var(--accent);
+}
+
+.fb-category-card.selected {
+    border-color: var(--accent);
+    background: rgba(232, 93, 38, 0.06);
+}
+
+.fb-cat-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-hi);
+}
+
+.fb-cat-desc {
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.4;
+}
+
+/* Textarea */
+.fb-textarea {
+    width: 100%;
+    resize: vertical;
+    min-height: 130px;
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+/* Sender info strip */
+.fb-from {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-top: 4px;
+}
+
+.fb-from strong {
+    color: var(--text-hi);
+}
+
+.fb-from-role {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent);
+    background: rgba(232, 93, 38, 0.08);
+    padding: 1px 6px;
+    border-radius: 3px;
+}
+
+.fb-from-email {
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 11px;
+}
+
+/* Success banner */
+.fb-success {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(45, 181, 109, 0.08);
+    border: 1px solid rgba(45, 181, 109, 0.25);
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    font-size: 14px;
+    color: var(--text);
+    margin-bottom: 16px;
+}
+
+.fb-success-icon {
+    color: var(--green);
+    font-size: 16px;
+    font-weight: 700;
+}
+
+/* Error */
+.fb-error {
+    color: var(--red);
+    font-size: 13px;
+    margin-top: 10px;
+    background: rgba(255, 80, 80, 0.06);
+    border: 1px solid rgba(255, 80, 80, 0.2);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+}

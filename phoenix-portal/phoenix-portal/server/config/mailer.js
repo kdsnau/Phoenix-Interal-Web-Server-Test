@@ -153,4 +153,26 @@ async function sendNewUser(to, user) {
     await sendMail(to, subject, text, html);
 }
 
-module.exports = { sendMail, sendServiceReminder, sendTagsReminder, sendNewTicket, sendNewFinancialRecord, sendNewUser };
+const CATEGORY_BADGE = {
+    bug:         'badge-orange',
+    feature:     'badge-green',
+    improvement: 'badge-yellow',
+    general:     'badge-yellow',
+};
+
+async function sendFeedback(to, { category, subject, message, fromName, fromEmail, fromRole }) {
+    const emailSubject = `[Portal Feedback] ${subject}`;
+    const text = `Feedback submitted via the Phoenix SecTech portal.\n\nFrom: ${fromName} (${fromEmail}) — ${fromRole}\nCategory: ${category}\nSubject: ${subject}\n\n${message}`;
+    const badge = CATEGORY_BADGE[category] || 'badge-yellow';
+    const html = htmlWrap('Portal Feedback', `
+        <div class="field"><div class="field-label">From</div><div class="field-value hi">${fromName} <span style="color:#5c6e82">&lt;${fromEmail}&gt;</span></div></div>
+        <div class="field"><div class="field-label">Role</div><div class="field-value"><span class="badge badge-orange">${fromRole}</span></div></div>
+        <div class="field"><div class="field-label">Category</div><div class="field-value"><span class="badge ${badge}">${category}</span></div></div>
+        <hr class="divider"/>
+        <div class="field"><div class="field-label">Subject</div><div class="field-value hi">${subject}</div></div>
+        <div class="field"><div class="field-label">Message</div><div class="field-value" style="white-space:pre-wrap;line-height:1.6">${message}</div></div>
+    `);
+    await sendMail(to, emailSubject, text, html);
+}
+
+module.exports = { sendMail, sendServiceReminder, sendTagsReminder, sendNewTicket, sendNewFinancialRecord, sendNewUser, sendFeedback };

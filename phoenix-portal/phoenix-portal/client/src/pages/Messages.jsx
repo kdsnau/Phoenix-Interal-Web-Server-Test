@@ -42,32 +42,34 @@ export default function Messages() {
     const composeRef                  = useRef(null);
 
     /* ---- initial load -------------------------------------------------- */
-    useEffect(() => {
-        api.get('/messages/users').then(r => setAllUsers(r.data)).catch(() => {});
-        refreshInbox();
+    const refreshInbox = useCallback(async () => {
+        const r = await api.get('/messages/inbox').catch(() => ({ data: [] }));
+        if (Array.isArray(r.data)) setInbox(r.data);
     }, []);
 
-    const refreshInbox = async () => {
-        const r = await api.get('/messages/inbox').catch(() => ({ data: [] }));
-        setInbox(r.data);
-    };
+    useEffect(() => {
+        api.get('/messages/users')
+            .then(r => { if (Array.isArray(r.data)) setAllUsers(r.data); })
+            .catch(() => {});
+        refreshInbox();
+    }, [refreshInbox]);
 
     /* ---- thread load + polling ----------------------------------------- */
     const loadThread = useCallback(async () => {
         if (!active) return;
         const r = await api.get(`/messages/thread/${active.id}`).catch(() => ({ data: [] }));
-        setThread(r.data);
+        if (Array.isArray(r.data)) setThread(r.data);
         api.patch(`/messages/read/${active.id}`).catch(() => {});
         refreshInbox();
-    }, [active]);
+    }, [active, refreshInbox]);
 
     useEffect(() => {
-        if (!active) { setThread([]); return; }
+        if (!active) return;
         loadThread();
         clearInterval(pollRef.current);
         pollRef.current = setInterval(loadThread, 5000);
         return () => clearInterval(pollRef.current);
-    }, [active]);                                    // eslint-disable-line
+    }, [active, loadThread]);
 
     /* ---- auto-scroll on new message ------------------------------------ */
     useEffect(() => {

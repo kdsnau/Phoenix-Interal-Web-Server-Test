@@ -5,10 +5,10 @@ import './AI.css';
 
 const QUICK = [
     'Give me a full status summary of the company.',
-    'Which clients have services due or no billing set?',
+    'Summarize recent project activity from Slack.',
     'Which vehicles have open maintenance issues?',
     'What does the financial picture look like right now?',
-    'List all active (incomplete) projects.',
+    'Which clients have no billing amount set?',
 ];
 
 export default function AI() {

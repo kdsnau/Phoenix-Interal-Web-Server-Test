@@ -136,10 +136,31 @@ router.post('/query', authenticate, async (req, res) => {
     const fin = finance.rows[0] || {};
     const net = Number(fin.total_income || 0) - Number(fin.total_expenses || 0);
 
+    /* Pre-compute exact figures so the model never has to count */
+    const totalClients     = clients.rows.length;
+    const totalVehicles    = vehicles.rows.length;
+    const vehiclesWithIssues = vehicles.rows.filter(v => v.open_issues > 0).length;
+    const totalOpenIssues  = vehicles.rows.reduce((s, v) => s + (v.open_issues || 0), 0);
+    const ticketMap        = Object.fromEntries(tickets.rows.map(t => [t.status, t.count]));
+    const openTickets      = (ticketMap.open || 0) + (ticketMap.in_progress || 0);
+    const totalProjects    = Object.keys(
+        slackProjects.reduce((m, p) => { m[p.job] = 1; return m; }, {})
+    ).length;
+    const activeProjects   = slackProjects.filter(p => !p.done).length > 0
+        ? [...new Set(slackProjects.filter(p => !p.done).map(p => p.job))].length : 0;
+    const clientsNoBilling = clients.rows.filter(c => !c.billing_amount).length;
+
     const lines = [
         `You are a knowledgeable assistant for Phoenix SecTech, a fire alarm and access control security company.`,
         `You have been given a real-time read-only snapshot of their operations. Answer clearly and professionally.`,
         `If data is missing or incomplete, say so. Today is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.`,
+        ``,
+        `════ KEY FACTS (use these exact numbers — do not recount) ════`,
+        `  • Clients: ${totalClients} total, ${clientsNoBilling} without billing set`,
+        `  • Fleet: ${totalVehicles} vehicles, ${vehiclesWithIssues} with open issues (${totalOpenIssues} open issues total)`,
+        `  • Service tickets: ${openTickets} open/in-progress`,
+        `  • Projects in Slack: ${totalProjects} unique jobs, ${activeProjects} still active`,
+        `  • Monthly recurring revenue: $${Number(fin.total_income || 0).toLocaleString()} income / $${Number(fin.total_expenses || 0).toLocaleString()} expenses`,
         ``,
         `════ CLIENTS (${clients.rows.length} total) ════`,
         ...clients.rows.map(c => {

@@ -1,0 +1,125 @@
+.ai-subtitle {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin: -8px 0 20px;
+}
+
+.ai-quick-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 20px;
+}
+
+.ai-chip {
+    font-size: 12px;
+    padding: 5px 12px;
+    border-radius: 999px;
+    white-space: nowrap;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ai-input-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    margin-bottom: 16px;
+}
+
+.ai-textarea {
+    flex: 1;
+    resize: vertical;
+    min-height: 52px;
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.ai-submit {
+    flex-shrink: 0;
+    align-self: stretch;
+}
+
+/* Loading indicator */
+.ai-loading {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-dim);
+    font-size: 13px;
+    margin-bottom: 16px;
+}
+
+.ai-spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: ai-spin 0.8s linear infinite;
+    flex-shrink: 0;
+}
+
+@keyframes ai-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Error */
+.ai-error {
+    color: var(--red);
+    font-size: 13px;
+    margin-bottom: 16px;
+    background: rgba(255, 80, 80, 0.06);
+    border: 1px solid rgba(255, 80, 80, 0.2);
+    border-radius: var(--radius);
+    padding: 10px 14px;
+}
+
+/* Answer card */
+.ai-answer {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+}
+
+.ai-answer-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 14px;
+}
+
+.ai-elapsed {
+    background: var(--bg-3, var(--bg));
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 10px;
+    color: var(--text-dim);
+}
+
+.ai-answer-body {
+    font-size: 14px;
+    line-height: 1.75;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.ai-clear {
+    margin-top: 16px;
+    font-size: 12px;
+    padding: 4px 12px;
+    opacity: 0.7;
+}
+
+.ai-clear:hover { opacity: 1; }

@@ -10,6 +10,7 @@ const NAV = {
         { path: '/fleet',     label: 'Fleet'     },
         { path: '/inventory', label: 'Inventory' },
         { path: '/projects',  label: 'Projects'  },
+        { path: '/ai',        label: 'AI'        },
     ],
     accounting: [
         { path: '/dashboard',  label: 'Dashboard'  },
@@ -18,6 +19,7 @@ const NAV = {
         { path: '/fleet',      label: 'Fleet'      },
         { path: '/inventory',  label: 'Inventory'  },
         { path: '/projects',   label: 'Projects'   },
+        { path: '/ai',         label: 'AI'         },
     ],
     admin: [
         { path: '/dashboard',  label: 'Dashboard'  },
@@ -28,6 +30,7 @@ const NAV = {
         { path: '/inventory',  label: 'Inventory'  },
         { path: '/projects',   label: 'Projects'   },
         { path: '/admin',      label: 'Admin'      },
+        { path: '/ai',         label: 'AI'         },
     ],
 };
 

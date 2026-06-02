@@ -9,6 +9,7 @@ import Fleet      from './pages/Fleet';
 import Alarms     from './pages/Alarms';
 import Inventory  from './pages/Inventory';
 import Projects   from './pages/Projects';
+import AI        from './pages/AI';
 
 function PrivateRoute({ children, roles }) {
     const { user } = useAuth();
@@ -30,6 +31,7 @@ function AppRoutes() {
             <Route path="/alarms"     element={<PrivateRoute><Alarms /></PrivateRoute>} />
             <Route path="/inventory"  element={<PrivateRoute><Inventory /></PrivateRoute>} />
             <Route path="/projects"   element={<PrivateRoute><Projects /></PrivateRoute>} />
+            <Route path="/ai"         element={<PrivateRoute><AI /></PrivateRoute>} />
             <Route path="*"           element={<Navigate to={user ? '/dashboard' : '/login'} />} />
         </Routes>
     );

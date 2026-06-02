@@ -17,26 +17,28 @@ router.post('/query', authenticate, async (req, res) => {
     /* ---- 1. Pull a read-only snapshot ---------------------------------- */
     const [clients, vehicles, vehicleNotes, tickets, finance, projects] = await Promise.all([
         pool.query(`
-            SELECT name, customer_id, services, billing_amount, notes
+            SELECT name, customer_id, services, billing_amount
             FROM clients
             ORDER BY name
+            LIMIT 40
         `).catch(() => ({ rows: [] })),
 
         pool.query(`
-            SELECT v.name, v.vehicle_id, v.status, v.mileage,
+            SELECT v.name, v.vehicle_id, v.status,
                    COUNT(vn.id) FILTER (WHERE vn.resolved = FALSE)::int AS open_issues
             FROM vehicles v
             LEFT JOIN vehicle_notes vn ON vn.vehicle_id = v.id
-            GROUP BY v.id, v.name, v.vehicle_id, v.status, v.mileage
+            GROUP BY v.id, v.name, v.vehicle_id, v.status
             ORDER BY v.name
         `).catch(() => ({ rows: [] })),
 
         pool.query(`
-            SELECT v.name AS vehicle_name, vn.content, vn.created_at
+            SELECT v.name AS vehicle_name, LEFT(vn.content, 80) AS content
             FROM vehicle_notes vn
             JOIN vehicles v ON v.id = vn.vehicle_id
             WHERE vn.resolved = FALSE
             ORDER BY vn.created_at DESC
+            LIMIT 10
         `).catch(() => ({ rows: [] })),
 
         pool.query(`
@@ -54,10 +56,10 @@ router.post('/query', authenticate, async (req, res) => {
 
         pool.query(`
             SELECT DISTINCT ON (job_name)
-                job_name, completed, rfq, ts
+                job_name, completed, rfq
             FROM slack_messages
             ORDER BY job_name, ts DESC
-            LIMIT 60
+            LIMIT 30
         `).catch(() => ({ rows: [] })),
     ]);
 
@@ -127,7 +129,7 @@ router.post('/query', authenticate, async (req, res) => {
                 stream: false,
                 options: {
                     temperature: 0.3,   /* lower = more factual */
-                    num_predict: 512,
+                    num_predict: 300,
                 },
             }),
         });

@@ -11,6 +11,7 @@ import Inventory  from './pages/Inventory';
 import Projects   from './pages/Projects';
 import AI        from './pages/AI';
 import Feedback  from './pages/Feedback';
+import Messages  from './pages/Messages';
 
 function PrivateRoute({ children, roles }) {
     const { user } = useAuth();
@@ -34,6 +35,7 @@ function AppRoutes() {
             <Route path="/projects"   element={<PrivateRoute><Projects /></PrivateRoute>} />
             <Route path="/ai"         element={<PrivateRoute><AI /></PrivateRoute>} />
             <Route path="/feedback"   element={<PrivateRoute><Feedback /></PrivateRoute>} />
+            <Route path="/messages"   element={<PrivateRoute><Messages /></PrivateRoute>} />
             <Route path="*"           element={<Navigate to={user ? '/dashboard' : '/login'} />} />
         </Routes>
     );

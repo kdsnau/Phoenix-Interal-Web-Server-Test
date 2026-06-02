@@ -18,6 +18,7 @@ const projectRoutes    = require('./routes/projects');
 const appSyncRoutes    = require('./routes/appSync');
 const aiRoutes         = require('./routes/ai');
 const feedbackRoutes   = require('./routes/feedback');
+const messageRoutes    = require('./routes/messages');
 const { startScheduler } = require('./services/monitoringScheduler');
 
 const app  = express();
@@ -49,6 +50,7 @@ app.use('/api/projects',    projectRoutes);
 app.use('/api/app/sync',    appSyncRoutes);
 app.use('/api/ai',          aiRoutes);
 app.use('/api/feedback',    feedbackRoutes);
+app.use('/api/messages',    messageRoutes);
 
 app.get('/api/health', (_, res) => res.json({ status: 'ok' }));
 

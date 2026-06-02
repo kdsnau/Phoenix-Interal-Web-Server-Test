@@ -96,7 +96,7 @@ router.post('/query', authenticate, async (req, res) => {
     const [clients, vehicles, vehicleNotes, tickets, finance, slackProjects] = await Promise.all([
         pool.query(`
             SELECT name, customer_id, services, billing_amount
-            FROM clients ORDER BY name LIMIT 40
+            FROM clients ORDER BY name
         `).catch(() => ({ rows: [] })),
 
         pool.query(`
@@ -141,7 +141,7 @@ router.post('/query', authenticate, async (req, res) => {
         `You have been given a real-time read-only snapshot of their operations. Answer clearly and professionally.`,
         `If data is missing or incomplete, say so. Today is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.`,
         ``,
-        `════ CLIENTS (${clients.rows.length}) ════`,
+        `════ CLIENTS (${clients.rows.length} total) ════`,
         ...clients.rows.map(c => {
             const p = [`${c.name} [${c.customer_id}]`];
             if (c.services?.length) p.push(`services: ${c.services.join(', ')}`);

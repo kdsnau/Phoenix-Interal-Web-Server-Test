@@ -115,6 +115,9 @@ export default function Messages() {
     /* ---- render -------------------------------------------------------- */
     return (
         <Layout>
+            <div className="page-header">
+                <h1 className="page-title">Messages</h1>
+            </div>
             <div className="msg-shell">
 
                 {/* ══ Left sidebar ══════════════════════════════════════ */}

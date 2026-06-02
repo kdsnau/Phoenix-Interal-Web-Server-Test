@@ -4,8 +4,8 @@
 
 .msg-shell {
     display: flex;
-    height: calc(100vh - 120px);
-    min-height: 400px;
+    height: calc(100vh - 220px);
+    min-height: 480px;
     background: var(--bg-2);
     border: 1px solid var(--border);
     border-radius: var(--radius);

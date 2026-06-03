@@ -265,7 +265,7 @@ export default function Calendar() {
                         /* ── Google embed ──────────────────────────────── */
                         <div className="cal-embed-wrap">
                             <iframe
-                                src="https://calendar.google.com/calendar/embed?src=phxcalender%40gmail.com&ctz=America%2FPhoenix&showTitle=0&showNav=1&showDate=1&showPrint=0&showTabs=1&showCalendars=0&mode=MONTH"
+                                src="https://calendar.google.com/calendar/embed?src=phxcalender%40gmail.com&ctz=America%2FPhoenix"
                                 className="cal-embed-frame"
                                 frameBorder="0"
                                 scrolling="no"

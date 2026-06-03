@@ -162,9 +162,22 @@ export default function Calendar() {
                 </div>
             </div>
 
-            {unconfigured && <SetupGuide />}
+            {/* Google embed never needs an API key — always available */}
+            {view === 'embed' && (
+                <div className="cal-embed-wrap">
+                    <iframe
+                        src="https://calendar.google.com/calendar/embed?src=phxcalender%40gmail.com&ctz=America%2FPhoenix"
+                        className="cal-embed-frame"
+                        frameBorder="0"
+                        scrolling="no"
+                        title="Phoenix SecTech Calendar"
+                    />
+                </div>
+            )}
 
-            {!unconfigured && (
+            {unconfigured && view !== 'embed' && <SetupGuide />}
+
+            {!unconfigured && view !== 'embed' && (
                 <>
                     {/* Month navigation bar */}
                     <div className="cal-nav">
@@ -252,7 +265,7 @@ export default function Calendar() {
                                 </div>
                             )}
                         </>
-                    ) : view === 'list' ? (
+                    ) : (
                         /* ── Upcoming list ─────────────────────────────── */
                         <div className="cal-list">
                             {upcoming.length === 0 ? (
@@ -260,17 +273,6 @@ export default function Calendar() {
                             ) : (
                                 upcoming.map(e => <EventRow key={e.id} event={e} showDate />)
                             )}
-                        </div>
-                    ) : (
-                        /* ── Google embed ──────────────────────────────── */
-                        <div className="cal-embed-wrap">
-                            <iframe
-                                src="https://calendar.google.com/calendar/embed?src=phxcalender%40gmail.com&ctz=America%2FPhoenix"
-                                className="cal-embed-frame"
-                                frameBorder="0"
-                                scrolling="no"
-                                title="Phoenix SecTech Calendar"
-                            />
                         </div>
                     )}
                 </>

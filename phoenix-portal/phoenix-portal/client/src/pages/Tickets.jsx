@@ -148,8 +148,16 @@ export default function Tickets() {
                                 <tr key={t.id}>
                                     <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', fontSize: 12 }}>#{t.id}</td>
                                     <td>
-                                        <div style={{ fontWeight: 500, color: 'var(--text-hi)' }}>{t.title}</div>
-                                        {t.description && <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>{t.description.slice(0,60)}{t.description.length > 60 ? '…' : ''}</div>}
+                                        <div style={{ fontWeight: 500, color: 'var(--text-hi)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                            {t.source === 'calendar' && <span title="Synced from Google Calendar">📅</span>}
+                                            {t.title}
+                                        </div>
+                                        {t.event_start && (
+                                            <div style={{ fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--accent)', marginTop: 2 }}>
+                                                {new Date(t.event_start).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                                            </div>
+                                        )}
+                                        {t.description && !t.event_start && <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 2 }}>{t.description.slice(0,60)}{t.description.length > 60 ? '…' : ''}</div>}
                                     </td>
                                     <td>
                                         <span className={`tag ${STATUS_TAG[t.status]}`}>{t.status.replace('_', ' ')}</span>

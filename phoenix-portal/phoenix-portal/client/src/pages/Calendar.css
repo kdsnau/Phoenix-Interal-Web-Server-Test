@@ -332,6 +332,25 @@
     color: var(--text);
 }
 
+/* ── Google embed view ───────────────────────────────────────────────── */
+.cal-embed-wrap {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: #fff;
+}
+
+.cal-embed-frame {
+    width: 100%;
+    height: 700px;
+    border: none;
+    display: block;
+}
+
+@media (max-width: 768px) {
+    .cal-embed-frame { height: 500px; }
+}
+
 /* ── Responsive ──────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
     /* Shrink cells, hide pills, show dots instead */

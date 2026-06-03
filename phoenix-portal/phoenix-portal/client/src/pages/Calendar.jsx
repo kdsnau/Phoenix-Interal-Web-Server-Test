@@ -103,7 +103,7 @@ export default function Calendar() {
     const [loading,  setLoading]  = useState(true);
     const [error,    setError]    = useState('');
     const [unconfigured, setUnconfigured] = useState(false);
-    const [view,     setView]     = useState('month');  /* 'month' | 'list' */
+    const [view,     setView]     = useState('month');  /* 'month' | 'list' | 'embed' */
     const [selected, setSelected] = useState(null);     /* Date object */
 
     useEffect(() => {
@@ -158,6 +158,7 @@ export default function Calendar() {
                 <div style={{ display: 'flex', gap: 8 }}>
                     <button className={`alarm-tab ${view === 'month' ? 'active' : ''}`} onClick={() => setView('month')}>Month</button>
                     <button className={`alarm-tab ${view === 'list'  ? 'active' : ''}`} onClick={() => setView('list')}>Upcoming</button>
+                    <button className={`alarm-tab ${view === 'embed' ? 'active' : ''}`} onClick={() => setView('embed')}>Google View</button>
                 </div>
             </div>
 
@@ -251,7 +252,7 @@ export default function Calendar() {
                                 </div>
                             )}
                         </>
-                    ) : (
+                    ) : view === 'list' ? (
                         /* ── Upcoming list ─────────────────────────────── */
                         <div className="cal-list">
                             {upcoming.length === 0 ? (
@@ -259,6 +260,17 @@ export default function Calendar() {
                             ) : (
                                 upcoming.map(e => <EventRow key={e.id} event={e} showDate />)
                             )}
+                        </div>
+                    ) : (
+                        /* ── Google embed ──────────────────────────────── */
+                        <div className="cal-embed-wrap">
+                            <iframe
+                                src="https://calendar.google.com/calendar/embed?src=phxcalender%40gmail.com&ctz=America%2FPhoenix&showTitle=0&showNav=1&showDate=1&showPrint=0&showTabs=1&showCalendars=0&mode=MONTH"
+                                className="cal-embed-frame"
+                                frameBorder="0"
+                                scrolling="no"
+                                title="Phoenix SecTech Calendar"
+                            />
                         </div>
                     )}
                 </>

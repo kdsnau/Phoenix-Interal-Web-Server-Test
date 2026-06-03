@@ -46,7 +46,8 @@ export default function Calendar() {
         setLoading(true);
         try {
             const { data } = await api.get('/tickets');
-            setTickets(Array.isArray(data) ? data.filter(t => t.source === 'calendar') : []);
+            /* Show any ticket that has a scheduled date, regardless of source */
+            setTickets(Array.isArray(data) ? data.filter(t => t.event_start) : []);
         } catch {
             setTickets([]);
         } finally {
@@ -167,8 +168,15 @@ export default function Calendar() {
                                                     )}
                                                 </td>
                                                 <td>
-                                                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>
-                                                        {formatEventDate(t.event_start) || '—'}
+                                                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.7 }}>
+                                                        <div style={{ color: 'var(--accent)' }}>
+                                                            ▶ {formatEventDate(t.event_start) || '—'}
+                                                        </div>
+                                                        {t.event_end && (
+                                                            <div style={{ color: 'var(--text-dim)' }}>
+                                                                ■ {new Date(t.event_end).toLocaleString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                                                            </div>
+                                                        )}
                                                     </div>
                                                     {due && <span className={`tag ${due.cls}`} style={{ marginTop: 4, display: 'inline-block' }}>{due.label}</span>}
                                                 </td>

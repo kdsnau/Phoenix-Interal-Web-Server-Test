@@ -6,10 +6,11 @@ const { authenticate, requireRole } = require('../middleware/requireRole');
 const GCAL = 'https://www.googleapis.com/calendar/v3/calendars';
 
 /* ── Schema migrations ────────────────────────────────────────────────── */
-pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS source         TEXT      DEFAULT 'manual'`).catch(() => {});
+pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS source          TEXT      DEFAULT 'manual'`).catch(() => {});
 pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS google_event_id TEXT`).catch(() => {});
-pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS event_start     TIMESTAMP`).catch(() => {});
-pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS event_location  TEXT`).catch(() => {});
+pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS event_start      TIMESTAMP`).catch(() => {});
+pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS event_end        TIMESTAMP`).catch(() => {});
+pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS event_location   TEXT`).catch(() => {});
 /* Unique index on google_event_id (ignoring NULLs so manual tickets don't conflict) */
 pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uix_tickets_google_event_id
             ON service_tickets(google_event_id)
@@ -18,6 +19,11 @@ pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uix_tickets_google_event_id
 /* ── Helpers ──────────────────────────────────────────────────────────── */
 function parseEventStart(e) {
     const raw = e.start?.dateTime || e.start?.date;
+    return raw ? new Date(raw) : null;
+}
+
+function parseEventEnd(e) {
+    const raw = e.end?.dateTime || e.end?.date;
     return raw ? new Date(raw) : null;
 }
 
@@ -97,6 +103,7 @@ router.post('/sync', requireRole('admin', 'technician'), async (req, res) => {
         const title    = e.summary;
         const desc     = buildDescription(e);
         const start    = parseEventStart(e);
+        const end      = parseEventEnd(e);
         const location = e.location || null;
 
         /* Check for existing ticket */
@@ -109,18 +116,18 @@ router.post('/sync', requireRole('admin', 'technician'), async (req, res) => {
             /* Update title / description / timing — never touch status */
             await pool.query(
                 `UPDATE service_tickets
-                 SET title = $1, description = $2, event_start = $3, event_location = $4
-                 WHERE google_event_id = $5`,
-                [title, desc, start, location, e.id]
+                 SET title = $1, description = $2, event_start = $3, event_end = $4, event_location = $5
+                 WHERE google_event_id = $6`,
+                [title, desc, start, end, location, e.id]
             );
             updated++;
         } else {
             /* Create new ticket */
             await pool.query(
                 `INSERT INTO service_tickets
-                 (title, description, created_by, source, google_event_id, event_start, event_location, status)
-                 VALUES ($1, $2, $3, 'calendar', $4, $5, $6, 'open')`,
-                [title, desc, req.user.id, e.id, start, location]
+                 (title, description, created_by, source, google_event_id, event_start, event_end, event_location, status)
+                 VALUES ($1, $2, $3, 'calendar', $4, $5, $6, $7, 'open')`,
+                [title, desc, req.user.id, e.id, start, end, location]
             );
             created++;
         }

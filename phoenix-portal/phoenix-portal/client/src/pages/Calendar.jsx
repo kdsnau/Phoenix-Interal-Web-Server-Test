@@ -108,7 +108,7 @@ export default function Calendar() {
                     {tickets.length > 0 && <span className="alarm-tab-count">{tickets.filter(t => !['resolved','closed'].includes(t.status)).length}</span>}
                 </button>
                 <button className={`alarm-tab ${tab === 'embed' ? 'active' : ''}`} onClick={() => setTab('embed')}>
-                    Google Calendar
+                    Official Calendar
                 </button>
             </div>
 
@@ -225,7 +225,7 @@ export default function Calendar() {
                             className="cal-embed-frame"
                             frameBorder="0"
                             scrolling="no"
-                            title="Phoenix SecTech Calendar"
+                            title="Official Phoenix SecTech Calendar"
                         />
                     </div>
                 </>

@@ -35,6 +35,15 @@
 }
 
 /* ── Google embed ────────────────────────────────────────────────────── */
+.cal-embed-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
 .cal-embed-wrap {
     border: 1px solid var(--border);
     border-radius: var(--radius);

@@ -204,15 +204,31 @@ export default function Calendar() {
 
             {/* ── Google embed tab ────────────────────────────────────── */}
             {tab === 'embed' && (
-                <div className="cal-embed-wrap">
-                    <iframe
-                        src="https://calendar.google.com/calendar/embed?src=phxcalender%40gmail.com&ctz=America%2FPhoenix"
-                        className="cal-embed-frame"
-                        frameBorder="0"
-                        scrolling="no"
-                        title="Phoenix SecTech Calendar"
-                    />
-                </div>
+                <>
+                    <div className="cal-embed-header">
+                        <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>
+                            Read-only preview — click events to view details.
+                        </span>
+                        <a
+                            href="https://calendar.google.com/calendar/r"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="btn btn-primary"
+                            style={{ textDecoration: 'none', fontSize: 13 }}
+                        >
+                            ↗ Open &amp; Edit in Google Calendar
+                        </a>
+                    </div>
+                    <div className="cal-embed-wrap">
+                        <iframe
+                            src="https://calendar.google.com/calendar/embed?src=373788a8166fa961d12c98fa0de8c524aca490728f9bfe4d8161928702ed5dc2%40group.calendar.google.com&ctz=America%2FPhoenix&showTitle=0&showNav=1&showDate=1&showPrint=0&showTabs=1&showCalendars=0&mode=MONTH"
+                            className="cal-embed-frame"
+                            frameBorder="0"
+                            scrolling="no"
+                            title="Phoenix SecTech Calendar"
+                        />
+                    </div>
+                </>
             )}
         </Layout>
     );

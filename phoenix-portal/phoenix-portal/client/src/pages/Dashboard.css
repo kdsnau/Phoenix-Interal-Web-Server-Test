@@ -21,6 +21,12 @@
     .dash-alerts-grid { grid-template-columns: 1fr; }
 }
 
+@media (max-width: 768px) {
+    .billing-save-bar { flex-wrap: wrap; }
+    .billing-search   { width: 100%; margin-bottom: 8px; }
+    .billing-input    { width: 90px; }
+}
+
 .dash-alert-panel {
     background: var(--bg-2);
     border: 1px solid var(--border);

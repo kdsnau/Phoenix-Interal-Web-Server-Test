@@ -21,6 +21,13 @@
     text-overflow: ellipsis;
 }
 
+@media (max-width: 768px) {
+    .ai-quick-row  { gap: 6px; }
+    .ai-chip       { font-size: 11px; padding: 4px 10px; max-width: 180px; }
+    .ai-input-row  { flex-direction: column; }
+    .ai-submit     { width: 100%; }
+}
+
 .ai-input-row {
     display: flex;
     gap: 10px;

@@ -330,6 +330,51 @@
 }
 
 /* Responsive */
-@media (max-width: 600px) {
-    .msg-sidebar { width: 200px; }
+@media (max-width: 768px) {
+    .msg-shell {
+        flex-direction: column;
+        height: auto;
+        min-height: 0;
+    }
+
+    /* Sidebar becomes a horizontal contact strip at the top */
+    .msg-sidebar {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        max-height: 220px;
+    }
+
+    /* Hide the sidebar once a thread is active (show only the thread) */
+    .msg-shell.thread-active .msg-sidebar {
+        display: none;
+    }
+
+    .msg-shell.thread-active .msg-main {
+        min-height: 60vh;
+    }
+
+    /* Thread fills remaining viewport */
+    .msg-thread {
+        min-height: 300px;
+    }
+
+    /* Back button visible on mobile thread view */
+    .msg-back-btn {
+        display: flex;
+    }
 }
+
+.msg-back-btn {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 13px;
+    cursor: pointer;
+    padding: 0 4px;
+    margin-right: 8px;
+}
+.msg-back-btn:hover { color: var(--text-hi); }

@@ -323,3 +323,158 @@
     font-style: italic;
     letter-spacing: 0.01em;
 }
+
+/* ── Mobile top bar (hidden on desktop) ────────────────────────────── */
+.mobile-topbar {
+    display: none;
+}
+
+/* ── Sidebar close button (hidden on desktop) ──────────────────────── */
+.sidebar-close-btn {
+    display: none;
+}
+
+/* ── Hamburger button ───────────────────────────────────────────────── */
+.hamburger {
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 6px 4px;
+    flex-shrink: 0;
+}
+.hamburger span {
+    display: block;
+    width: 22px;
+    height: 2px;
+    background: var(--text);
+    border-radius: 2px;
+    transition: background 0.15s;
+}
+.hamburger:hover span { background: var(--text-hi); }
+
+/* ── Sidebar overlay (mobile only) ─────────────────────────────────── */
+.sidebar-overlay {
+    display: none;
+}
+
+/* ── Responsive breakpoint ──────────────────────────────────────────── */
+@media (max-width: 768px) {
+
+    /* Layout becomes single column */
+    .layout {
+        flex-direction: column;
+    }
+
+    /* Sidebar slides in as a fixed overlay */
+    .sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 100vh;
+        z-index: 300;
+        transform: translateX(-100%);
+        transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        box-shadow: none;
+        width: 240px;
+        min-width: 240px;
+    }
+
+    .sidebar--open {
+        transform: translateX(0);
+        box-shadow: 4px 0 24px rgba(0, 0, 0, 0.5);
+    }
+
+    /* Dark overlay behind open sidebar */
+    .sidebar-overlay {
+        display: block;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        z-index: 299;
+        backdrop-filter: blur(2px);
+    }
+
+    /* Close button visible inside sidebar on mobile */
+    .sidebar-close-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-left: auto;
+        background: none;
+        border: none;
+        color: var(--text-dim);
+        font-size: 16px;
+        cursor: pointer;
+        padding: 4px 6px;
+        border-radius: var(--radius);
+        transition: color 0.15s;
+        flex-shrink: 0;
+    }
+    .sidebar-close-btn:hover { color: var(--text-hi); }
+
+    /* Main content fills full width */
+    .main-content {
+        padding: 0 16px 24px;
+        max-width: 100%;
+        min-height: 100vh;
+    }
+
+    /* Mobile top bar */
+    .mobile-topbar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 0 16px;
+        border-bottom: 1px solid var(--border);
+        margin-bottom: 20px;
+        position: sticky;
+        top: 0;
+        background: var(--bg-1, var(--bg));
+        z-index: 10;
+    }
+
+    .hamburger {
+        display: flex;
+    }
+
+    .mobile-brand-mark {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        font-weight: 700;
+        background: var(--accent);
+        color: #fff;
+        padding: 4px 7px;
+        border-radius: var(--radius);
+        letter-spacing: 0.06em;
+    }
+
+    .mobile-brand-name {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-hi);
+    }
+
+    /* Page titles scale down */
+    .page-title { font-size: 18px; }
+
+    /* Stat cards: 2 columns on mobile */
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+    }
+    .stat-value { font-size: 22px; }
+
+    /* All data tables scroll horizontally rather than squish */
+    .table-card {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* Modals fill screen on mobile */
+    .modal-overlay { padding: 12px; }
+    .modal { max-width: 100%; }
+}

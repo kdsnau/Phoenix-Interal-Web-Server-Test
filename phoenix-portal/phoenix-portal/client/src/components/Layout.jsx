@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import './Layout.css';
@@ -41,22 +42,39 @@ const NAV = {
 };
 
 export default function Layout({ children }) {
-    const { user, logout } = useAuth();
-    const navigate = useNavigate();
-    const location = useLocation();
+    const { user, logout }      = useAuth();
+    const navigate              = useNavigate();
+    const location              = useLocation();
+    const [open, setOpen]       = useState(false);
+
+    /* Close sidebar whenever the route changes (user tapped a link) */
+    useEffect(() => { setOpen(false); }, [location.pathname]);
+
+    /* Prevent body scroll while sidebar overlay is open */
+    useEffect(() => {
+        document.body.style.overflow = open ? 'hidden' : '';
+        return () => { document.body.style.overflow = ''; };
+    }, [open]);
 
     const handleLogout = () => { logout(); navigate('/login'); };
     const links = NAV[user?.role] || [];
 
     return (
         <div className="layout">
-            <aside className="sidebar">
+
+            {/* ── Mobile overlay (tap to close) ───────────────────── */}
+            {open && <div className="sidebar-overlay" onClick={() => setOpen(false)} />}
+
+            {/* ── Sidebar ─────────────────────────────────────────── */}
+            <aside className={`sidebar ${open ? 'sidebar--open' : ''}`}>
                 <div className="sidebar-brand">
                     <span className="brand-mark">PST</span>
                     <div>
                         <div className="brand-name">Phoenix</div>
                         <div className="brand-sub">Security &amp; Technology</div>
                     </div>
+                    {/* ✕ close button — only visible on mobile */}
+                    <button className="sidebar-close-btn" onClick={() => setOpen(false)} aria-label="Close menu">✕</button>
                 </div>
 
                 <nav className="sidebar-nav">
@@ -81,8 +99,19 @@ export default function Layout({ children }) {
                 </div>
             </aside>
 
+            {/* ── Main content ────────────────────────────────────── */}
             <main className="main-content">
+                {/* Mobile top bar — hidden on desktop */}
+                <div className="mobile-topbar">
+                    <button className="hamburger" onClick={() => setOpen(true)} aria-label="Open menu">
+                        <span /><span /><span />
+                    </button>
+                    <span className="mobile-brand-mark">PST</span>
+                    <span className="mobile-brand-name">Phoenix SecTech</span>
+                </div>
+
                 {children}
+
                 <div className="data-disclaimer">
                     Portal data is aggregated from connected systems — always verify critical information from primary sources before acting on it.
                 </div>

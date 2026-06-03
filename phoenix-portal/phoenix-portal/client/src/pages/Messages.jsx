@@ -120,7 +120,7 @@ export default function Messages() {
             <div className="page-header">
                 <h1 className="page-title">Messages</h1>
             </div>
-            <div className="msg-shell">
+            <div className={`msg-shell ${active ? 'thread-active' : ''}`}>
 
                 {/* ══ Left sidebar ══════════════════════════════════════ */}
                 <div className="msg-sidebar">
@@ -207,6 +207,10 @@ export default function Messages() {
                         <>
                             {/* Thread header */}
                             <div className="msg-thread-header">
+                                {/* Back button — mobile only */}
+                                <button className="msg-back-btn" onClick={() => setActive(null)}>
+                                    ← Back
+                                </button>
                                 <Avatar name={active.name} size={36} />
                                 <div>
                                     <div className="msg-thread-name">{active.name}</div>

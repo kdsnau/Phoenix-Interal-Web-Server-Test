@@ -12,6 +12,7 @@ const NAV = {
         { path: '/inventory', label: 'Inventory' },
         { path: '/projects',  label: 'Projects'  },
         { path: '/ai',        label: 'AI'        },
+        { path: '/calendar',  label: 'Calendar'  },
         { path: '/messages',  label: 'Messages'  },
         { path: '/feedback',  label: 'Feedback'  },
     ],

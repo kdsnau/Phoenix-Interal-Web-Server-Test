@@ -282,19 +282,18 @@ export default function Projects() {
         }
     };
 
-    /* Filter raw projects first, then merge similar ones for display */
-    const visible = groupAndMerge(
-        projects.filter(p => {
-            if (filter === 'in_progress' && p.completed)  return false;
-            if (filter === 'completed'   && !p.completed) return false;
-            if (search) {
-                const q = search.toLowerCase();
-                return p.name.toLowerCase().includes(q)
-                    || (p.rfq || '').toLowerCase().includes(q);
-            }
-            return true;
-        })
-    );
+    /* Merge all projects for counts, then filter for display */
+    const allMerged = groupAndMerge(projects);
+    const visible   = allMerged.filter(p => {
+        if (filter === 'in_progress' && p.completed)  return false;
+        if (filter === 'completed'   && !p.completed) return false;
+        if (search) {
+            const q = search.toLowerCase();
+            return (p.names || [p.name]).some(n => n.toLowerCase().includes(q))
+                || (p.rfq || '').toLowerCase().includes(q);
+        }
+        return true;
+    });
 
     return (
         <Layout>
@@ -309,9 +308,6 @@ export default function Projects() {
                     />
                 </div>
 
-                {(() => {
-                    const allMerged = groupAndMerge(projects);
-                    return (
                 <div className="alarm-service-tabs" style={{ marginBottom: '24px' }}>
                     {FILTER_TABS.map(t => (
                         <button
@@ -328,8 +324,6 @@ export default function Projects() {
                         </button>
                     ))}
                 </div>
-                    );
-                })()}
                 </div>
 
                 {loading ? (

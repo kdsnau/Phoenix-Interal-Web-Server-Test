@@ -106,6 +106,147 @@ function AdjustModal({ item, onClose, onSave }) {
 }
 
 /* -----------------------------------------------------------------------
+   Assign to vehicle modal
+   ----------------------------------------------------------------------- */
+function AssignVehicleModal({ item, onClose, onAssigned }) {
+    const [vehicles,     setVehicles]     = useState([]);
+    const [assignments,  setAssignments]  = useState([]);
+    const [vehicleInput, setVehicleInput] = useState('');
+    const [selectedVId,  setSelectedVId]  = useState('');
+    const [quantity,     setQuantity]     = useState(1);
+    const [notes,        setNotes]        = useState('');
+    const [saving,       setSaving]       = useState(false);
+
+    useEffect(() => {
+        api.get('/inventory/vehicles').then(r => setVehicles(Array.isArray(r.data) ? r.data : [])).catch(() => {});
+        api.get(`/inventory/${item.id}/assignments`).then(r => setAssignments(Array.isArray(r.data) ? r.data : [])).catch(() => {});
+    }, [item.id]);
+
+    /* When the user types a vehicle name, try to find a matching vehicle */
+    const handleVehicleInput = (val) => {
+        setVehicleInput(val);
+        const match = vehicles.find(v => v.name.toLowerCase() === val.toLowerCase());
+        setSelectedVId(match ? String(match.id) : '');
+    };
+
+    const handleAssign = async (e) => {
+        e.preventDefault();
+        if (!selectedVId) return;
+        setSaving(true);
+        try {
+            const { data } = await api.post(`/inventory/${item.id}/assign`, {
+                vehicle_id: Number(selectedVId),
+                quantity,
+                notes: notes || null,
+            });
+            setAssignments(prev => {
+                const exists = prev.findIndex(a => a.id === data.id);
+                return exists >= 0 ? prev.map((a, i) => i === exists ? data : a) : [...prev, data];
+            });
+            setVehicleInput('');
+            setSelectedVId('');
+            setQuantity(1);
+            setNotes('');
+            if (onAssigned) onAssigned();
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleRemove = async (assignId) => {
+        await api.delete(`/inventory/assignments/${assignId}`);
+        setAssignments(prev => prev.filter(a => a.id !== assignId));
+        if (onAssigned) onAssigned();
+    };
+
+    const handleAdjust = async (assignId, qty) => {
+        const { data } = await api.patch(`/inventory/assignments/${assignId}`, { quantity: qty });
+        setAssignments(prev => prev.map(a => a.id === assignId ? data : a));
+    };
+
+    return (
+        <div className="inv-modal-overlay" onClick={onClose}>
+            <div className="inv-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
+                <div className="inv-modal-header">
+                    <h2>Vehicle Assignments — {item.name}</h2>
+                    <button className="inv-modal-close" onClick={onClose}>✕</button>
+                </div>
+
+                {/* Current assignments */}
+                {assignments.length > 0 && (
+                    <div style={{ marginBottom: 16 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
+                            Currently Assigned
+                        </div>
+                        {assignments.map(a => (
+                            <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
+                                <span style={{ flex: 1, fontSize: 13, color: 'var(--text-hi)', fontWeight: 500 }}>
+                                    🚗 {a.vehicle_name}
+                                </span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    <button onClick={() => handleAdjust(a.id, Math.max(0, a.quantity - 1))}
+                                        style={{ background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text)', width: 22, height: 22, cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>−</button>
+                                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, minWidth: 28, textAlign: 'center' }}>{a.quantity}</span>
+                                    <button onClick={() => handleAdjust(a.id, a.quantity + 1)}
+                                        style={{ background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text)', width: 22, height: 22, cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>+</button>
+                                </div>
+                                {a.notes && <span style={{ fontSize: 11, color: 'var(--text-dim)', maxWidth: 100, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.notes}</span>}
+                                <button onClick={() => handleRemove(a.id)}
+                                    style={{ background: 'none', border: 'none', color: 'var(--red)', fontSize: 13, cursor: 'pointer', padding: '0 4px' }}>✕</button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {/* Add new assignment */}
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
+                    Assign to Vehicle
+                </div>
+                <form onSubmit={handleAssign}>
+                    <div className="inv-form-row2" style={{ marginBottom: 10 }}>
+                        <label style={{ position: 'relative' }}>
+                            Vehicle Name
+                            <input
+                                className="inv-input"
+                                list="inv-vehicle-list"
+                                placeholder="Type vehicle name…"
+                                value={vehicleInput}
+                                onChange={e => handleVehicleInput(e.target.value)}
+                                autoComplete="off"
+                            />
+                            <datalist id="inv-vehicle-list">
+                                {vehicles.map(v => (
+                                    <option key={v.id} value={v.name}>{v.year} {v.make} {v.model}</option>
+                                ))}
+                            </datalist>
+                        </label>
+                        <label>
+                            Quantity
+                            <input className="inv-input" type="number" min="1" value={quantity} onChange={e => setQuantity(Number(e.target.value))} />
+                        </label>
+                    </div>
+                    <label style={{ marginBottom: 12, display: 'block' }}>
+                        Notes (optional)
+                        <input className="inv-input" value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. stored in rear compartment" />
+                    </label>
+                    {vehicleInput && !selectedVId && (
+                        <div style={{ fontSize: 12, color: 'var(--yellow)', marginBottom: 8 }}>
+                            ⚠ Select a vehicle from the list
+                        </div>
+                    )}
+                    <div className="inv-modal-footer">
+                        <button type="button" className="btn btn-ghost" onClick={onClose}>Done</button>
+                        <button type="submit" className="btn btn-primary" disabled={!selectedVId || saving}>
+                            {saving ? 'Assigning…' : 'Assign'}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+}
+
+/* -----------------------------------------------------------------------
    Main Inventory page
    ----------------------------------------------------------------------- */
 export default function Inventory() {
@@ -113,13 +254,14 @@ export default function Inventory() {
     const canEdit   = user.role === 'admin' || user.role === 'accounting';
     const canDelete = user.role === 'admin';
 
-    const [items, setItems]       = useState([]);
-    const [loading, setLoading]   = useState(true);
-    const [catTab, setCatTab]     = useState('all');
-    const [search, setSearch]     = useState('');
-    const [showAdd, setShowAdd]   = useState(false);
-    const [editItem, setEditItem] = useState(null);
-    const [adjItem, setAdjItem]   = useState(null);
+    const [items, setItems]           = useState([]);
+    const [loading, setLoading]       = useState(true);
+    const [catTab, setCatTab]         = useState('all');
+    const [search, setSearch]         = useState('');
+    const [showAdd, setShowAdd]       = useState(false);
+    const [editItem, setEditItem]     = useState(null);
+    const [adjItem, setAdjItem]       = useState(null);
+    const [assignItem, setAssignItem] = useState(null);
 
     function fetchItems() {
         setLoading(true);
@@ -215,12 +357,13 @@ export default function Inventory() {
                                     <th>Qty</th>
                                     <th>Unit</th>
                                     <th>Location</th>
+                                    <th>Vehicles</th>
                                     <th>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {items.length === 0 && (
-                                    <tr><td colSpan={7} className="alarm-empty">No items found.</td></tr>
+                                    <tr><td colSpan={8} className="alarm-empty">No items found.</td></tr>
                                 )}
                                 {items.map(item => {
                                     const isOut = item.quantity === 0;
@@ -237,6 +380,15 @@ export default function Inventory() {
                                             </td>
                                             <td className="inv-dim">{item.unit}</td>
                                             <td className="inv-dim">{item.location || '—'}</td>
+                                            <td>
+                                                <button
+                                                    className="inv-btn-sm"
+                                                    style={{ color: item.vehicle_count > 0 ? 'var(--accent)' : undefined }}
+                                                    onClick={() => setAssignItem(item)}
+                                                >
+                                                    🚗 {item.vehicle_count > 0 ? item.vehicle_count : 'Assign'}
+                                                </button>
+                                            </td>
                                             <td className="inv-actions">
                                                 <button className="inv-btn-sm" onClick={() => setAdjItem(item)}>Adjust</button>
                                                 {canEdit && <button className="inv-btn-sm" onClick={() => setEditItem(item)}>Edit</button>}
@@ -250,9 +402,16 @@ export default function Inventory() {
                     </div>
                 )}
 
-                {showAdd   && <ItemModal onClose={() => setShowAdd(false)} onSave={handleAdd} />}
-                {editItem  && <ItemModal item={editItem} onClose={() => setEditItem(null)} onSave={handleEdit} />}
-                {adjItem   && <AdjustModal item={adjItem} onClose={() => setAdjItem(null)} onSave={handleAdjust} />}
+                {showAdd    && <ItemModal onClose={() => setShowAdd(false)} onSave={handleAdd} />}
+                {editItem   && <ItemModal item={editItem} onClose={() => setEditItem(null)} onSave={handleEdit} />}
+                {adjItem    && <AdjustModal item={adjItem} onClose={() => setAdjItem(null)} onSave={handleAdjust} />}
+                {assignItem && (
+                    <AssignVehicleModal
+                        item={assignItem}
+                        onClose={() => setAssignItem(null)}
+                        onAssigned={fetchItems}
+                    />
+                )}
             </div>
         </Layout>
     );

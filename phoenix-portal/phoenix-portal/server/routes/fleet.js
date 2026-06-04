@@ -32,7 +32,7 @@ router.get('/', async (req, res) => {
 
 router.get('/:id', async (req, res) => {
     try {
-        const [vehicle, notes, invoices] = await Promise.all([
+        const [vehicle, notes, invoices, inventory] = await Promise.all([
             pool.query(
                 `SELECT v.*,
                         sn.enabled AS service_notify_enabled,
@@ -52,9 +52,17 @@ router.get('/:id', async (req, res) => {
                 'SELECT * FROM vehicle_invoices WHERE vehicle_id = $1 ORDER BY invoice_date DESC',
                 [req.params.id]
             ),
+            pool.query(
+                `SELECT vi.*, ii.name AS item_name, ii.sku, ii.category, ii.unit, ii.min_threshold
+                 FROM vehicle_inventory vi
+                 JOIN inventory_items ii ON ii.id = vi.inventory_item_id
+                 WHERE vi.vehicle_id = $1
+                 ORDER BY ii.category, ii.name`,
+                [req.params.id]
+            ).catch(() => ({ rows: [] })),
         ]);
         if (vehicle.rowCount === 0) return res.status(404).json({ error: 'Vehicle not found.' });
-        return res.json({ ...vehicle.rows[0], notes: notes.rows, invoices: invoices.rows });
+        return res.json({ ...vehicle.rows[0], notes: notes.rows, invoices: invoices.rows, inventory: inventory.rows });
     } catch (err) {
         console.error(err);
         return res.status(500).json({ error: 'Server error.' });
@@ -148,6 +156,73 @@ router.delete('/:id/invoices/:invoiceId', async (req, res) => {
     } catch (err) {
         console.error(err);
         return res.status(500).json({ error: 'Server error.' });
+    }
+});
+
+/* ── Vehicle inventory endpoints ──────────────────────────────────────── */
+router.post('/:id/inventory', async (req, res) => {
+    const { inventory_item_id, quantity, notes } = req.body;
+    if (!inventory_item_id) return res.status(400).json({ error: 'inventory_item_id is required.' });
+    try {
+        const r = await pool.query(
+            `INSERT INTO vehicle_inventory (vehicle_id, inventory_item_id, quantity, notes)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (vehicle_id, inventory_item_id)
+             DO UPDATE SET quantity = EXCLUDED.quantity,
+                           notes    = COALESCE(EXCLUDED.notes, vehicle_inventory.notes)
+             RETURNING *`,
+            [req.params.id, inventory_item_id, quantity ?? 1, notes ?? null]
+        );
+        const full = await pool.query(
+            `SELECT vi.*, ii.name AS item_name, ii.sku, ii.category, ii.unit, ii.min_threshold
+             FROM vehicle_inventory vi
+             JOIN inventory_items ii ON ii.id = vi.inventory_item_id
+             WHERE vi.id = $1`,
+            [r.rows[0].id]
+        );
+        return res.status(201).json(full.rows[0]);
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'Failed to add inventory item.' });
+    }
+});
+
+router.patch('/:id/inventory/:assignId', async (req, res) => {
+    const { quantity, notes } = req.body;
+    try {
+        await pool.query(
+            `UPDATE vehicle_inventory
+             SET quantity = COALESCE($1, quantity),
+                 notes    = COALESCE($2, notes)
+             WHERE id = $3 AND vehicle_id = $4`,
+            [quantity ?? null, notes !== undefined ? notes : null, req.params.assignId, req.params.id]
+        );
+        const full = await pool.query(
+            `SELECT vi.*, ii.name AS item_name, ii.sku, ii.category, ii.unit, ii.min_threshold
+             FROM vehicle_inventory vi
+             JOIN inventory_items ii ON ii.id = vi.inventory_item_id
+             WHERE vi.id = $1`,
+            [req.params.assignId]
+        );
+        if (full.rowCount === 0) return res.status(404).json({ error: 'Assignment not found.' });
+        return res.json(full.rows[0]);
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'Failed to update inventory item.' });
+    }
+});
+
+router.delete('/:id/inventory/:assignId', async (req, res) => {
+    try {
+        const r = await pool.query(
+            'DELETE FROM vehicle_inventory WHERE id = $1 AND vehicle_id = $2 RETURNING id',
+            [req.params.assignId, req.params.id]
+        );
+        if (r.rowCount === 0) return res.status(404).json({ error: 'Assignment not found.' });
+        return res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'Failed to remove inventory item.' });
     }
 });
 

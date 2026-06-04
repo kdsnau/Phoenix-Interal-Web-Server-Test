@@ -136,4 +136,65 @@ router.post('/sync', requireRole('admin', 'technician'), async (req, res) => {
     res.json({ created, updated, total: gEvents.length });
 });
 
+/* ── GET /api/calendar/oauth/start — visit once in browser to authorize ── */
+router.get('/oauth/start', requireRole('admin'), (req, res) => {
+    const clientId    = process.env.GOOGLE_CLIENT_ID;
+    const redirectUri = process.env.GOOGLE_OAUTH_REDIRECT_URI;
+    if (!clientId)    return res.status(503).send('Set GOOGLE_CLIENT_ID in server .env first.');
+    if (!redirectUri) return res.status(503).send('Set GOOGLE_OAUTH_REDIRECT_URI in server .env first.');
+
+    const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+    url.searchParams.set('client_id',     clientId);
+    url.searchParams.set('redirect_uri',  redirectUri);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('scope',         'https://www.googleapis.com/auth/calendar');
+    url.searchParams.set('access_type',   'offline');
+    url.searchParams.set('prompt',        'consent'); /* force refresh_token to be issued */
+    res.redirect(url.toString());
+});
+
+/* ── GET /api/calendar/oauth/callback — Google redirects here with code ─ */
+router.get('/oauth/callback', async (req, res) => {
+    const { code, error } = req.query;
+    if (error) return res.status(400).send(`Google denied access: ${error}`);
+    if (!code)  return res.status(400).send('No authorization code received.');
+
+    const clientId     = process.env.GOOGLE_CLIENT_ID;
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+    const redirectUri  = process.env.GOOGLE_OAUTH_REDIRECT_URI;
+
+    try {
+        const resp = await fetch('https://oauth2.googleapis.com/token', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body:    new URLSearchParams({
+                code,
+                client_id:     clientId,
+                client_secret: clientSecret,
+                redirect_uri:  redirectUri,
+                grant_type:    'authorization_code',
+            }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) return res.status(400).send(`Token exchange failed: ${data.error_description || data.error}`);
+        if (!data.refresh_token) return res.status(400).send('No refresh token returned — re-visit /api/calendar/oauth/start to retry.');
+
+        res.send(`<!DOCTYPE html><html><head><title>Google Calendar Connected</title>
+<style>body{font-family:sans-serif;background:#0d0d0d;color:#e0e0e0;padding:40px;max-width:640px;margin:auto}
+pre{background:#111;border:1px solid #333;padding:16px;border-radius:8px;color:#4ade80;font-size:13px;word-break:break-all;white-space:pre-wrap}
+h2{color:#4ade80}code{background:#1a1a1a;padding:2px 6px;border-radius:4px}</style></head>
+<body>
+<h2>✅ Google Calendar connected!</h2>
+<p>Add this line to your server <code>.env</code> file:</p>
+<pre>GOOGLE_REFRESH_TOKEN=${data.refresh_token}</pre>
+<p>Then restart the server:</p>
+<pre>pm2 restart phoenix-portal</pre>
+<p style="color:#666;font-size:12px">Keep this token private — it grants write access to your Google Calendar.</p>
+</body></html>`);
+    } catch (err) {
+        console.error('OAuth callback error:', err);
+        res.status(500).send('OAuth callback failed — check server logs.');
+    }
+});
+
 module.exports = router;

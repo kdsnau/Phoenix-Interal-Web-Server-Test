@@ -97,6 +97,101 @@ function SlackFeed({ vehicleId, name, make, model, slackName }) {
     );
 }
 
+/* ── Add inventory item to vehicle modal ──────────────────────────────── */
+function AddVehicleInvModal({ vehicleId, onClose, onAdd }) {
+    const [allItems, setAllItems]   = useState([]);
+    const [search, setSearch]       = useState('');
+    const [selectedId, setSelectedId] = useState('');
+    const [quantity, setQuantity]   = useState(1);
+    const [notes, setNotes]         = useState('');
+    const [loading, setLoading]     = useState(false);
+
+    useEffect(() => {
+        api.get('/inventory').then(r => setAllItems(Array.isArray(r.data) ? r.data : [])).catch(() => {});
+    }, []);
+
+    const filtered = allItems.filter(i =>
+        !search || i.name.toLowerCase().includes(search.toLowerCase()) || (i.sku || '').toLowerCase().includes(search.toLowerCase())
+    );
+
+    const selected = allItems.find(i => i.id === Number(selectedId));
+
+    const submit = async (e) => {
+        e.preventDefault();
+        if (!selectedId) return;
+        setLoading(true);
+        try {
+            await onAdd(Number(selectedId), quantity, notes || null);
+            onClose();
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 440 }}>
+                <div className="modal-title">Add Inventory to Vehicle</div>
+                <form onSubmit={submit}>
+                    <div className="form-group">
+                        <label className="form-label">Search Item</label>
+                        <input
+                            placeholder="Filter by name or SKU…"
+                            value={search}
+                            onChange={e => { setSearch(e.target.value); setSelectedId(''); }}
+                            autoFocus
+                        />
+                    </div>
+                    {search && (
+                        <div style={{ maxHeight: 160, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 'var(--radius)', marginBottom: 12 }}>
+                            {filtered.length === 0 && (
+                                <div style={{ padding: '10px 14px', fontSize: 13, color: 'var(--text-dim)' }}>No items found.</div>
+                            )}
+                            {filtered.map(i => (
+                                <div
+                                    key={i.id}
+                                    onClick={() => { setSelectedId(String(i.id)); setSearch(i.name); }}
+                                    style={{
+                                        padding: '8px 14px', cursor: 'pointer', fontSize: 13,
+                                        background: selectedId === String(i.id) ? 'var(--bg-3)' : 'transparent',
+                                        color: 'var(--text-hi)',
+                                        borderBottom: '1px solid var(--border)',
+                                    }}
+                                >
+                                    <strong>{i.name}</strong>
+                                    {i.sku && <span style={{ color: 'var(--text-dim)', marginLeft: 8, fontSize: 11 }}>{i.sku}</span>}
+                                    <span style={{ float: 'right', fontSize: 11, color: 'var(--text-dim)' }}>{i.category}</span>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {selected && (
+                        <div style={{ fontSize: 12, color: 'var(--accent)', marginBottom: 10, fontFamily: 'var(--font-mono)' }}>
+                            ✓ Selected: {selected.name} (stock: {selected.quantity} {selected.unit})
+                        </div>
+                    )}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10 }}>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Qty on Vehicle</label>
+                            <input type="number" min="0" value={quantity} onChange={e => setQuantity(Number(e.target.value))} required />
+                        </div>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Notes (optional)</label>
+                            <input value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. stored in rear cabinet" />
+                        </div>
+                    </div>
+                    <div className="modal-actions">
+                        <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                        <button type="submit" className="btn btn-primary" disabled={!selectedId || loading}>
+                            {loading ? 'Adding…' : 'Add to Vehicle'}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+}
+
 function VehicleDetail({ vehicleId, onClose }) {
     const [v, setV]                         = useState(null);
     const [loading, setLoading]             = useState(true);
@@ -115,6 +210,7 @@ function VehicleDetail({ vehicleId, onClose }) {
     const [sending, setSending]             = useState('');
     const [msg, setMsg]                     = useState('');
     const [showResolved, setShowResolved]   = useState(false);
+    const [showInvModal, setShowInvModal]   = useState(false);
 
     const load = async () => {
         try {
@@ -166,6 +262,26 @@ function VehicleDetail({ vehicleId, onClose }) {
     const resolveNote = async (noteId, resolved) => {
         const { data } = await api.patch(`/fleet/${vehicleId}/notes/${noteId}`, { resolved });
         setV(prev => ({ ...prev, notes: prev.notes.map(n => n.id === noteId ? data : n) }));
+    };
+
+    const addVehicleInv = async (itemId, quantity, notes) => {
+        const { data } = await api.post(`/fleet/${vehicleId}/inventory`, { inventory_item_id: itemId, quantity, notes });
+        setV(prev => ({
+            ...prev,
+            inventory: prev.inventory.some(i => i.id === data.id)
+                ? prev.inventory.map(i => i.id === data.id ? data : i)
+                : [...prev.inventory, data],
+        }));
+    };
+
+    const adjustVehicleInv = async (assignId, quantity) => {
+        const { data } = await api.patch(`/fleet/${vehicleId}/inventory/${assignId}`, { quantity });
+        setV(prev => ({ ...prev, inventory: prev.inventory.map(i => i.id === assignId ? data : i) }));
+    };
+
+    const removeVehicleInv = async (assignId) => {
+        await api.delete(`/fleet/${vehicleId}/inventory/${assignId}`);
+        setV(prev => ({ ...prev, inventory: prev.inventory.filter(i => i.id !== assignId) }));
     };
 
     const addInvoice = async (e) => {
@@ -443,10 +559,91 @@ function VehicleDetail({ vehicleId, onClose }) {
                             </table>
                         </div>
                     </section>
+                    {/* ── Vehicle Inventory ── */}
+                    <section className="fleet-section">
+                        <div className="fleet-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span>
+                                Inventory
+                                {(v.inventory || []).length > 0 && (
+                                    <span style={{ marginLeft: 8, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)', fontWeight: 400 }}>
+                                        {(v.inventory || []).length} item{(v.inventory || []).length !== 1 ? 's' : ''}
+                                    </span>
+                                )}
+                            </span>
+                            <button className="btn btn-primary" style={{ fontSize: 12, padding: '4px 12px' }} onClick={() => setShowInvModal(true)}>
+                                + Add Item
+                            </button>
+                        </div>
+
+                        {(v.inventory || []).length === 0 ? (
+                            <div style={{ color: 'var(--text-dim)', fontSize: 13 }}>No inventory assigned to this vehicle yet.</div>
+                        ) : (
+                            <div className="table-card">
+                                <table className="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Item</th>
+                                            <th>Category</th>
+                                            <th>Qty on Vehicle</th>
+                                            <th>Notes</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {(v.inventory || []).map(item => (
+                                            <tr key={item.id}>
+                                                <td>
+                                                    <div style={{ fontWeight: 500, color: 'var(--text-hi)' }}>{item.item_name}</div>
+                                                    {item.sku && <div style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>{item.sku}</div>}
+                                                </td>
+                                                <td><span className="tag tag-dim">{item.category}</span></td>
+                                                <td>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                        <button
+                                                            onClick={() => adjustVehicleInv(item.id, Math.max(0, item.quantity - 1))}
+                                                            style={{ background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text)', width: 24, height: 24, cursor: 'pointer', fontSize: 14, lineHeight: 1 }}
+                                                        >−</button>
+                                                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 13, minWidth: 24, textAlign: 'center' }}>
+                                                            {item.quantity}
+                                                        </span>
+                                                        <button
+                                                            onClick={() => adjustVehicleInv(item.id, item.quantity + 1)}
+                                                            style={{ background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text)', width: 24, height: 24, cursor: 'pointer', fontSize: 14, lineHeight: 1 }}
+                                                        >+</button>
+                                                        <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{item.unit}</span>
+                                                    </div>
+                                                </td>
+                                                <td style={{ fontSize: 12, color: 'var(--text-dim)' }}>{item.notes || '—'}</td>
+                                                <td>
+                                                    <button
+                                                        className="btn btn-danger"
+                                                        style={{ padding: '3px 8px', fontSize: 11 }}
+                                                        onClick={() => removeVehicleInv(item.id)}
+                                                    >
+                                                        Remove
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </section>
+
                     <SlackFeed vehicleId={v.vehicle_id} name={v.name} make={v.make} model={v.model} slackName={v.slack_name} />
                 </div>
             </div>
         </div>
+
+        {showInvModal && (
+            <AddVehicleInvModal
+                vehicleId={vehicleId}
+                onClose={() => setShowInvModal(false)}
+                onAdd={addVehicleInv}
+            />
+        )}
+    </div>
     );
 }
 

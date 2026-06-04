@@ -108,6 +108,9 @@ export default function Calendar() {
                     Scheduled Tickets
                     {tickets.length > 0 && <span className="alarm-tab-count">{tickets.filter(t => !['resolved','closed'].includes(t.status)).length}</span>}
                 </button>
+                <button className={`alarm-tab ${tab === 'ticket-cal' ? 'active' : ''}`} onClick={() => setTab('ticket-cal')}>
+                    Ticket Calendar
+                </button>
                 <button className={`alarm-tab ${tab === 'embed' ? 'active' : ''}`} onClick={() => setTab('embed')}>
                     Official Calendar
                 </button>
@@ -210,7 +213,36 @@ export default function Calendar() {
                 </>
             )}
 
-            {/* ── Google embed tab ────────────────────────────────────── */}
+            {/* ── Ticket Calendar tab ─────────────────────────────────── */}
+            {tab === 'ticket-cal' && (
+                <>
+                    <div className="cal-embed-header">
+                        <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>
+                            Live view of the calendar tickets are synced to.
+                        </span>
+                        <a
+                            href="https://calendar.google.com/calendar/r"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="btn btn-primary"
+                            style={{ textDecoration: 'none', fontSize: 13 }}
+                        >
+                            ↗ Open in Google Calendar
+                        </a>
+                    </div>
+                    <div className="cal-embed-wrap">
+                        <iframe
+                            src="https://calendar.google.com/calendar/embed?src=373788a8166fa961d12c98fa0de8c524aca490728f9bfe4d8161928702ed5dc2%40group.calendar.google.com&ctz=America%2FPhoenix"
+                            className="cal-embed-frame"
+                            frameBorder="0"
+                            scrolling="no"
+                            title="Ticket Calendar"
+                        />
+                    </div>
+                </>
+            )}
+
+            {/* ── Official Calendar embed tab ──────────────────────────── */}
             {tab === 'embed' && (
                 <>
                     <div className="cal-embed-header">

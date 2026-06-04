@@ -179,19 +179,16 @@ function groupAndMerge(list) {
     function find(x) { return parent[x] === x ? x : (parent[x] = find(parent[x])); }
     function union(x, y) { parent[find(x)] = find(y); }
 
-    /* Map token → indices */
-    const tokenMap = {};
-    list.forEach((p, i) => {
-        getTokens(p.name).forEach(t => {
-            if (!tokenMap[t]) tokenMap[t] = [];
-            tokenMap[t].push(i);
-        });
-    });
+    /* Pre-compute token sets for each project */
+    const tokenSets = list.map(p => new Set(getTokens(p.name)));
 
-    /* Union projects that share at least one token */
-    Object.values(tokenMap).forEach(indices => {
-        for (let i = 1; i < indices.length; i++) union(indices[0], indices[i]);
-    });
+    /* Only merge projects that share 2+ meaningful tokens */
+    for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+            const shared = [...tokenSets[i]].filter(t => tokenSets[j].has(t)).length;
+            if (shared >= 2) union(i, j);
+        }
+    }
 
     /* Collect groups */
     const groupMap = {};
@@ -221,7 +218,8 @@ function groupAndMerge(list) {
             names:     group.map(p => p.name),
             visits:    allVisits,
             lastVisit: Math.max(...group.map(p => p.lastVisit)),
-            completed: primary.completed,  /* most-recent activity is authoritative */
+            /* Most recent visit across the whole group is authoritative */
+            completed: allVisits[0]?.completed ?? primary.completed,
             rfq:       rfqs || primary.rfq,
         };
     });
@@ -311,6 +309,9 @@ export default function Projects() {
                     />
                 </div>
 
+                {(() => {
+                    const allMerged = groupAndMerge(projects);
+                    return (
                 <div className="alarm-service-tabs" style={{ marginBottom: '24px' }}>
                     {FILTER_TABS.map(t => (
                         <button
@@ -320,12 +321,15 @@ export default function Projects() {
                         >
                             {t === 'all' ? 'All' : t === 'in_progress' ? 'In Progress' : 'Completed'}
                             <span className="alarm-tab-count">
-                                {t === 'all'         ? projects.length :
-                                 t === 'in_progress' ? projects.filter(p => !p.completed).length :
-                                                       projects.filter(p =>  p.completed).length}
+                                {t === 'all'         ? allMerged.length :
+                                 t === 'in_progress' ? allMerged.filter(p => !p.completed).length :
+                                                       allMerged.filter(p =>  p.completed).length}
                             </span>
                         </button>
                     ))}
+                </div>
+                    );
+                })()}
                 </div>
 
                 {loading ? (

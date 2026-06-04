@@ -221,7 +221,7 @@ function groupAndMerge(list) {
             names:     group.map(p => p.name),
             visits:    allVisits,
             lastVisit: Math.max(...group.map(p => p.lastVisit)),
-            completed: group.every(p => p.completed),
+            completed: primary.completed,  /* most-recent activity is authoritative */
             rfq:       rfqs || primary.rfq,
         };
     });

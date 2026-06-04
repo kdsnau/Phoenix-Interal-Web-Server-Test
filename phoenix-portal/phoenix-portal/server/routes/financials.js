@@ -136,6 +136,41 @@ router.get('/client-transactions', requireRole('accounting', 'admin'), async (re
     }
 });
 
+/* GET /api/financials/inventory
+   Returns stock-on-hand totals at cost and at sale price,
+   broken down by category — only active items with qty > 0. */
+router.get('/inventory', requireRole('accounting', 'admin'), async (req, res) => {
+    try {
+        const [summaryRes, catRes] = await Promise.all([
+            pool.query(`
+                SELECT
+                    COUNT(*)::int                                              AS total_items,
+                    COALESCE(SUM(quantity), 0)::int                           AS total_units,
+                    COALESCE(SUM(quantity * COALESCE(cost,  0)), 0)::numeric  AS cost_value,
+                    COALESCE(SUM(quantity * COALESCE(price, 0)), 0)::numeric  AS sale_value
+                FROM inventory_items
+                WHERE active = TRUE AND quantity > 0
+            `).catch(() => ({ rows: [{ total_items: 0, total_units: 0, cost_value: 0, sale_value: 0 }] })),
+            pool.query(`
+                SELECT
+                    category,
+                    COUNT(*)::int                                              AS item_count,
+                    COALESCE(SUM(quantity), 0)::int                           AS total_units,
+                    COALESCE(SUM(quantity * COALESCE(cost,  0)), 0)::numeric  AS cost_value,
+                    COALESCE(SUM(quantity * COALESCE(price, 0)), 0)::numeric  AS sale_value
+                FROM inventory_items
+                WHERE active = TRUE AND quantity > 0
+                GROUP BY category
+                ORDER BY cost_value DESC
+            `).catch(() => ({ rows: [] })),
+        ]);
+        return res.json({ summary: summaryRes.rows[0], by_category: catRes.rows });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'Server error.' });
+    }
+});
+
 /* POST /api/financials */
 router.post('/', requireRole('accounting', 'admin'), async (req, res) => {
     const { description, amount, type } = req.body;

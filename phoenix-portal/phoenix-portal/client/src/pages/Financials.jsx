@@ -248,6 +248,103 @@ function ClientTransactionsTable({ transactions }) {
 }
 
 /* -----------------------------------------------------------------------
+   Inventory asset breakdown table
+   ----------------------------------------------------------------------- */
+function InventoryTable({ data }) {
+    if (!data) return <div className="fin-empty">No inventory data available.</div>;
+    const { summary, by_category } = data;
+    if (!summary) return <div className="fin-empty">No inventory data available.</div>;
+
+    const markup = summary.cost_value > 0
+        ? (((summary.sale_value - summary.cost_value) / summary.cost_value) * 100).toFixed(1)
+        : null;
+
+    return (
+        <>
+            <div className="stats-grid" style={{ marginBottom: 24 }}>
+                <div className="stat-card">
+                    <div className="stat-label">Items on Hand</div>
+                    <div className="stat-value">{Number(summary.total_items).toLocaleString()}</div>
+                </div>
+                <div className="stat-card">
+                    <div className="stat-label">Total Units</div>
+                    <div className="stat-value">{Number(summary.total_units).toLocaleString()}</div>
+                </div>
+                <div className="stat-card">
+                    <div className="stat-label">Stock at Cost</div>
+                    <div className="stat-value">${Number(summary.cost_value).toLocaleString('en-US', { maximumFractionDigits: 0 })}</div>
+                </div>
+                <div className="stat-card">
+                    <div className="stat-label">At Sale Price</div>
+                    <div className="stat-value" style={{ color: 'var(--green)' }}>
+                        ${Number(summary.sale_value).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                    </div>
+                </div>
+                {markup && (
+                    <div className="stat-card">
+                        <div className="stat-label">Avg Markup</div>
+                        <div className="stat-value" style={{ color: 'var(--accent)' }}>{markup}%</div>
+                    </div>
+                )}
+            </div>
+
+            <div className="fin-table-wrap">
+                <table className="fin-table">
+                    <thead>
+                        <tr>
+                            <th>Category</th>
+                            <th style={{ textAlign: 'right' }}>SKUs w/ Stock</th>
+                            <th style={{ textAlign: 'right' }}>Units</th>
+                            <th style={{ textAlign: 'right' }}>Cost Value</th>
+                            <th style={{ textAlign: 'right' }}>Sale Value</th>
+                            <th style={{ textAlign: 'right' }}>Markup</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {by_category.map(row => {
+                            const mu = row.cost_value > 0
+                                ? (((row.sale_value - row.cost_value) / row.cost_value) * 100).toFixed(1)
+                                : null;
+                            return (
+                                <tr key={row.category}>
+                                    <td className="fin-name" style={{ textTransform: 'capitalize' }}>
+                                        {row.category.replace(/_/g, ' ')}
+                                    </td>
+                                    <td style={{ textAlign: 'right', color: 'var(--text-dim)' }}>{row.item_count}</td>
+                                    <td style={{ textAlign: 'right', color: 'var(--text-dim)' }}>{row.total_units}</td>
+                                    <td className="fin-mono" style={{ textAlign: 'right' }}>
+                                        ${Number(row.cost_value).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                                    </td>
+                                    <td className="fin-amount-income fin-mono" style={{ textAlign: 'right' }}>
+                                        ${Number(row.sale_value).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                                    </td>
+                                    <td className="fin-mono" style={{ textAlign: 'right', color: 'var(--accent)' }}>
+                                        {mu ? `${mu}%` : '—'}
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                        {/* Totals row */}
+                        <tr style={{ borderTop: '1px solid var(--border)', fontWeight: 600 }}>
+                            <td colSpan={3} style={{ color: 'var(--text-dim)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Total</td>
+                            <td className="fin-mono" style={{ textAlign: 'right' }}>
+                                ${Number(summary.cost_value).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                            </td>
+                            <td className="fin-amount-income fin-mono" style={{ textAlign: 'right' }}>
+                                ${Number(summary.sale_value).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                            </td>
+                            <td className="fin-mono" style={{ textAlign: 'right', color: 'var(--accent)' }}>
+                                {markup ? `${markup}%` : '—'}
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </>
+    );
+}
+
+/* -----------------------------------------------------------------------
    Fleet expenses table
    ----------------------------------------------------------------------- */
 function FleetTable({ invoices }) {
@@ -308,6 +405,7 @@ export default function Financials() {
     const [monthly,      setMonthly]      = useState(null);
     const [fleet,        setFleet]        = useState([]);
     const [clientTx,     setClientTx]     = useState([]);
+    const [inventory,    setInventory]    = useState(null);
     const [loading,      setLoading]      = useState(true);
     const [tab,          setTab]          = useState('records');
     const [showModal,    setShowModal]    = useState(false);
@@ -315,18 +413,20 @@ export default function Financials() {
     async function load() {
         setLoading(true);
         try {
-            const [recs, sum, mon, fl, ctx] = await Promise.all([
+            const [recs, sum, mon, fl, ctx, inv] = await Promise.all([
                 api.get('/financials'),
                 api.get('/financials/summary'),
                 api.get('/financials/monthly').catch(() => null),
                 api.get('/financials/fleet').catch(() => ({ data: [] })),
                 api.get('/financials/client-transactions').catch(() => ({ data: [] })),
+                api.get('/financials/inventory').catch(() => ({ data: null })),
             ]);
             setRecords(recs.data);
             setSummary(sum.data);
             if (mon) setMonthly(mon.data);
             setFleet(fl.data);
             setClientTx(ctx.data);
+            setInventory(inv.data);
         } finally {
             setLoading(false);
         }
@@ -388,6 +488,22 @@ export default function Financials() {
                                 ${mrr.toLocaleString()}
                             </div>
                         </div>
+                        {inventory?.summary && (
+                            <>
+                                <div className="stat-card">
+                                    <div className="stat-label">Stock at Cost</div>
+                                    <div className="stat-value">
+                                        ${Number(inventory.summary.cost_value).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                                    </div>
+                                </div>
+                                <div className="stat-card">
+                                    <div className="stat-label">At Sale Price</div>
+                                    <div className="stat-value" style={{ color: 'var(--green)' }}>
+                                        ${Number(inventory.summary.sale_value).toLocaleString('en-US', { maximumFractionDigits: 0 })}
+                                    </div>
+                                </div>
+                            </>
+                        )}
                     </div>
                 )}
 
@@ -413,6 +529,13 @@ export default function Financials() {
                         Client Billing
                         <span className="fin-tab-count">{clientTx.length}</span>
                     </button>
+                    <button className={`fin-tab ${tab === 'inventory' ? 'active' : ''}`}
+                            onClick={() => setTab('inventory')}>
+                        Inventory Assets
+                        {inventory?.by_category?.length > 0 && (
+                            <span className="fin-tab-count">{inventory.by_category.length}</span>
+                        )}
+                    </button>
                 </div>
 
                 {loading ? (
@@ -421,6 +544,8 @@ export default function Financials() {
                     <RecordsTable records={records} isAdmin={isAdmin} onDelete={handleDelete} />
                 ) : tab === 'fleet' ? (
                     <FleetTable invoices={fleet} />
+                ) : tab === 'inventory' ? (
+                    <InventoryTable data={inventory} />
                 ) : (
                     <ClientTransactionsTable transactions={clientTx} />
                 )}

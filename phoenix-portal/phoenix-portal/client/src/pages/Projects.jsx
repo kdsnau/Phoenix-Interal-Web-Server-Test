@@ -324,7 +324,6 @@ export default function Projects() {
                         </button>
                     ))}
                 </div>
-                </div>
 
                 {loading ? (
                     <div className="alarm-empty">Loading project reports…</div>

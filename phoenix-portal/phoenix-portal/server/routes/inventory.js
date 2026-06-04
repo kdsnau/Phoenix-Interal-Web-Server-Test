@@ -4,7 +4,16 @@ const { authenticate, requireRole } = require('../middleware/requireRole');
 
 const router = express.Router();
 
-/* ── Schema migration ─────────────────────────────────────────────────── */
+/* ── Schema migrations ────────────────────────────────────────────────── */
+/* New columns imported from QuickBooks */
+pool.query(`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS cost   NUMERIC(10,2)`).catch(() => {});
+pool.query(`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS price  NUMERIC(10,2)`).catch(() => {});
+pool.query(`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS vendor TEXT`).catch(() => {});
+pool.query(`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS mpn    TEXT`).catch(() => {});
+pool.query(`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE`).catch(() => {});
+/* Unique index on sku enables ON CONFLICT upserts */
+pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_inv_sku ON inventory_items(sku) WHERE sku IS NOT NULL`).catch(() => {});
+
 pool.query(`
     CREATE TABLE IF NOT EXISTS vehicle_inventory (
         id                SERIAL PRIMARY KEY,
@@ -96,14 +105,17 @@ router.delete('/assignments/:id', requireRole('admin', 'accounting'), async (req
 
 /* ── POST /api/inventory — create item ───────────────────────────────── */
 router.post('/', requireRole('admin', 'accounting'), async (req, res) => {
-    const { name, sku, category, quantity, min_threshold, unit, location, notes } = req.body;
+    const { name, sku, category, quantity, min_threshold, unit, location, notes,
+            cost, price, vendor, mpn } = req.body;
     if (!name) return res.status(400).json({ error: 'Name is required.' });
     try {
         const result = await pool.query(
-            `INSERT INTO inventory_items (name, sku, category, quantity, min_threshold, unit, location, notes)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+            `INSERT INTO inventory_items
+                (name, sku, category, quantity, min_threshold, unit, location, notes, cost, price, vendor, mpn)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
             [name, sku || null, category || 'equipment', quantity ?? 0,
-             min_threshold ?? 0, unit || 'ea', location || null, notes || null]
+             min_threshold ?? 0, unit || 'ea', location || null, notes || null,
+             cost ?? null, price ?? null, vendor || null, mpn || null]
         );
         res.status(201).json({ ...result.rows[0], vehicle_count: 0 });
     } catch (err) {
@@ -127,7 +139,8 @@ router.patch('/:id', authenticate, async (req, res) => {
                 [quantity, id]
             );
         } else {
-            const { name, sku, category, quantity, min_threshold, unit, location, notes } = req.body;
+            const { name, sku, category, quantity, min_threshold, unit,
+                    location, notes, cost, price, vendor, mpn, active } = req.body;
             result = await pool.query(
                 `UPDATE inventory_items SET
                     name          = COALESCE($1,  name),
@@ -138,9 +151,15 @@ router.patch('/:id', authenticate, async (req, res) => {
                     unit          = COALESCE($6,  unit),
                     location      = COALESCE($7,  location),
                     notes         = COALESCE($8,  notes),
+                    cost          = COALESCE($9,  cost),
+                    price         = COALESCE($10, price),
+                    vendor        = COALESCE($11, vendor),
+                    mpn           = COALESCE($12, mpn),
+                    active        = COALESCE($13, active),
                     updated_at    = NOW()
-                 WHERE id = $9 RETURNING *`,
-                [name, sku, category, quantity, min_threshold, unit, location, notes, id]
+                 WHERE id = $14 RETURNING *`,
+                [name, sku, category, quantity, min_threshold, unit, location, notes,
+                 cost, price, vendor, mpn, active, id]
             );
         }
         if (result.rowCount === 0) return res.status(404).json({ error: 'Item not found.' });

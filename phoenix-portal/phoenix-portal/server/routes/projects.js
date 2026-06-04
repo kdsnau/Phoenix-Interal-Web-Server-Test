@@ -100,8 +100,10 @@ router.get('/', async (req, res) => {
             const parts    = get(fields, ['What parts and supplies were used', 'Parts', 'Parts used', 'Supplies']) || '';
             const arrival  = get(fields, ['Site arrival and departure times', 'Arrival', 'Times', 'Time']) || '';
             const techs    = get(fields, ['Technician', 'Technicians', 'Tech', 'Name', 'Who']) || '';
-            const doneRaw  = get(fields, ['Is a return trip required', 'Return trip', 'Complete', 'Completed']) || '';
-            const slackCompleted = doneRaw.toLowerCase().includes('no') || doneRaw.toLowerCase().includes('complete');
+            const doneRaw    = get(fields, ['Is a return trip required', 'Return trip', 'Complete', 'Completed', 'Status']) || '';
+            const slackCompleted = doneRaw.toLowerCase().includes('no')
+                || doneRaw.toLowerCase().includes('complete')
+                || doneRaw.toLowerCase() === 'done';
 
             const images = (m.files || [])
                 .filter(f => f.mimetype && f.mimetype.startsWith('image/'))

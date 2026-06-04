@@ -68,6 +68,24 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
     const [permitNum, setPermitNum] = useState(client.permit_number || '');
     const [permitExp, setPermitExp] = useState(client.permit_expires ? client.permit_expires.slice(0, 10) : '');
     const [savingNotes, setSavingNotes] = useState(false);
+
+    /* Site & contact */
+    const [siteAddress,   setSiteAddress]   = useState(client.site_address   || '');
+    const [contactName,   setContactName]   = useState(client.contact_name   || '');
+    const [contactPhone,  setContactPhone]  = useState(client.contact_phone  || '');
+    const [contactEmail,  setContactEmail]  = useState(client.contact_email  || '');
+    /* Equipment */
+    const [panelBrand,    setPanelBrand]    = useState(client.panel_brand    || '');
+    const [panelModel,    setPanelModel]    = useState(client.panel_model    || '');
+    const [cameraCount,   setCameraCount]   = useState(client.camera_count   ?? '');
+    const [zoneCount,     setZoneCount]     = useState(client.zone_count     ?? '');
+    /* Contract */
+    const [contractType,  setContractType]  = useState(client.contract_type  || '');
+    const [contractStart, setContractStart] = useState(client.contract_start ? client.contract_start.slice(0, 10) : '');
+    const [contractEnd,   setContractEnd]   = useState(client.contract_end   ? client.contract_end.slice(0, 10)   : '');
+    const [lastInsp,      setLastInsp]      = useState(client.last_inspection ? client.last_inspection.slice(0, 10) : '');
+    const [nextInsp,      setNextInsp]      = useState(client.next_inspection ? client.next_inspection.slice(0, 10) : '');
+    const [savingContract, setSavingContract] = useState(false);
     const [transactions, setTransactions] = useState([]);
     const [txLoading, setTxLoading]       = useState(false);
     const [txForm, setTxForm]     = useState({ description: '', amount: '', type: 'invoice', date: '' });
@@ -89,11 +107,32 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
         setSavingNotes(true);
         await api.patch(`/clients/${client.id}`, {
             notes,
-            billing_amount: billing || null,
+            billing_amount: billing   || null,
             permit_number:  permitNum || null,
             permit_expires: permitExp || null,
+            site_address:   siteAddress   || null,
+            contact_name:   contactName   || null,
+            contact_phone:  contactPhone  || null,
+            contact_email:  contactEmail  || null,
+            panel_brand:    panelBrand    || null,
+            panel_model:    panelModel    || null,
+            camera_count:   cameraCount !== '' ? Number(cameraCount) : null,
+            zone_count:     zoneCount   !== '' ? Number(zoneCount)   : null,
         });
         setSavingNotes(false);
+        onRefresh();
+    }
+
+    async function saveContract() {
+        setSavingContract(true);
+        await api.patch(`/clients/${client.id}`, {
+            contract_type:   contractType  || null,
+            contract_start:  contractStart || null,
+            contract_end:    contractEnd   || null,
+            last_inspection: lastInsp      || null,
+            next_inspection: nextInsp      || null,
+        });
+        setSavingContract(false);
         onRefresh();
     }
 
@@ -151,7 +190,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                 </div>
 
                 <div className="alarm-tabs">
-                    {['system', 'tickets', 'slack', ...(canBilling ? ['billing', 'transactions'] : [])].map(t => (
+                    {['system', 'contract', 'tickets', 'slack', ...(canBilling ? ['billing', 'transactions'] : [])].map(t => (
                         <button key={t} className={`alarm-tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
                             {t.charAt(0).toUpperCase() + t.slice(1)}
                         </button>
@@ -162,12 +201,51 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                     {/* SYSTEM TAB */}
                     {tab === 'system' && (
                         <div className="alarm-section">
-                            <div className="alarm-grid">
+                            {/* Site & Contact */}
+                            <div className="alarm-label" style={{ marginBottom: 8, fontWeight: 600 }}>Site & Contact</div>
+                            <div className="alarm-grid" style={{ marginBottom: 12 }}>
+                                <div className="alarm-field" style={{ gridColumn: 'span 2' }}>
+                                    <div className="alarm-label">Site Address</div>
+                                    <input className="alarm-input" value={siteAddress} onChange={e => setSiteAddress(e.target.value)} placeholder="123 Main St, Phoenix AZ 85001" />
+                                </div>
+                                <div className="alarm-field">
+                                    <div className="alarm-label">Contact Name</div>
+                                    <input className="alarm-input" value={contactName} onChange={e => setContactName(e.target.value)} placeholder="John Smith" />
+                                </div>
+                                <div className="alarm-field">
+                                    <div className="alarm-label">Contact Phone</div>
+                                    <input className="alarm-input" value={contactPhone} onChange={e => setContactPhone(e.target.value)} placeholder="(602) 555-0100" />
+                                </div>
+                                <div className="alarm-field">
+                                    <div className="alarm-label">Contact Email</div>
+                                    <input className="alarm-input" value={contactEmail} onChange={e => setContactEmail(e.target.value)} placeholder="owner@example.com" />
+                                </div>
+                            </div>
+
+                            {/* System details */}
+                            <div className="alarm-label" style={{ marginBottom: 8, fontWeight: 600 }}>System Details</div>
+                            <div className="alarm-grid" style={{ marginBottom: 12 }}>
                                 <div className="alarm-field"><div className="alarm-label">System Type</div><div className="alarm-value">{client.system_type || '—'}</div></div>
                                 <div className="alarm-field"><div className="alarm-label">Vendor</div><div className="alarm-value">{client.vendor}</div></div>
                                 <div className="alarm-field"><div className="alarm-label">Serial #</div><div className="alarm-value">{client.serial_number || '—'}</div></div>
                                 <div className="alarm-field"><div className="alarm-label">Connection</div><div className="alarm-value">{client.connection_type || '—'}</div></div>
                                 <div className="alarm-field"><div className="alarm-label">Carrier</div><div className="alarm-value">{client.carrier || '—'}</div></div>
+                                <div className="alarm-field">
+                                    <div className="alarm-label">Panel Brand</div>
+                                    <input className="alarm-input" value={panelBrand} onChange={e => setPanelBrand(e.target.value)} placeholder="e.g. DSC, Honeywell" />
+                                </div>
+                                <div className="alarm-field">
+                                    <div className="alarm-label">Panel Model</div>
+                                    <input className="alarm-input" value={panelModel} onChange={e => setPanelModel(e.target.value)} placeholder="e.g. PowerSeries Neo" />
+                                </div>
+                                <div className="alarm-field">
+                                    <div className="alarm-label">Cameras</div>
+                                    <input className="alarm-input" type="number" min="0" value={cameraCount} onChange={e => setCameraCount(e.target.value)} placeholder="0" />
+                                </div>
+                                <div className="alarm-field">
+                                    <div className="alarm-label">Zones</div>
+                                    <input className="alarm-input" type="number" min="0" value={zoneCount} onChange={e => setZoneCount(e.target.value)} placeholder="0" />
+                                </div>
                                 <div className="alarm-field">
                                     <div className="alarm-label">Monitoring</div>
                                     <div className="alarm-value">
@@ -188,26 +266,19 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                                     </div>
                                 </div>
                             </div>
-                            <div className="alarm-grid" style={{ marginTop: 16 }}>
+
+                            {/* Permit */}
+                            <div className="alarm-grid" style={{ marginBottom: 12 }}>
                                 <div className="alarm-field">
                                     <div className="alarm-label">Permit #</div>
-                                    <input
-                                        className="alarm-input"
-                                        value={permitNum}
-                                        onChange={e => setPermitNum(e.target.value)}
-                                        placeholder="e.g. P-12345"
-                                    />
+                                    <input className="alarm-input" value={permitNum} onChange={e => setPermitNum(e.target.value)} placeholder="e.g. P-12345" />
                                 </div>
                                 <div className="alarm-field">
                                     <div className="alarm-label">Permit Expires</div>
-                                    <input
-                                        className="alarm-input"
-                                        type="date"
-                                        value={permitExp}
-                                        onChange={e => setPermitExp(e.target.value)}
-                                    />
+                                    <input className="alarm-input" type="date" value={permitExp} onChange={e => setPermitExp(e.target.value)} />
                                 </div>
                             </div>
+
                             <div className="alarm-notes-section">
                                 <div className="alarm-label">Notes</div>
                                 <textarea
@@ -218,9 +289,67 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                                     placeholder="Internal notes…"
                                 />
                                 <button className="btn btn-primary" onClick={saveNotes} disabled={savingNotes}>
-                                    {savingNotes ? 'Saving…' : 'Save Notes'}
+                                    {savingNotes ? 'Saving…' : 'Save'}
                                 </button>
                             </div>
+                        </div>
+                    )}
+
+                    {/* CONTRACT TAB */}
+                    {tab === 'contract' && (
+                        <div className="alarm-section">
+                            <div className="alarm-grid" style={{ marginBottom: 16 }}>
+                                <div className="alarm-field">
+                                    <div className="alarm-label">Contract Type</div>
+                                    <select className="alarm-input" value={contractType} onChange={e => setContractType(e.target.value)}>
+                                        <option value="">— Select —</option>
+                                        <option value="monitoring">Monitoring Only</option>
+                                        <option value="service">Service Only</option>
+                                        <option value="full_service">Full Service</option>
+                                        <option value="installation">Installation</option>
+                                        <option value="time_materials">Time & Materials</option>
+                                    </select>
+                                </div>
+                                <div className="alarm-field">
+                                    <div className="alarm-label">Contract Start</div>
+                                    <input className="alarm-input" type="date" value={contractStart} onChange={e => setContractStart(e.target.value)} />
+                                </div>
+                                <div className="alarm-field">
+                                    <div className="alarm-label">Contract End</div>
+                                    <input className="alarm-input" type="date" value={contractEnd} onChange={e => setContractEnd(e.target.value)} />
+                                </div>
+                            </div>
+
+                            {/* Contract status badge */}
+                            {contractEnd && (() => {
+                                const days = Math.ceil((new Date(contractEnd) - new Date()) / 86400000);
+                                if (days < 0)   return <div style={{ marginBottom: 12 }}><span className="tag tag-red">Contract EXPIRED {Math.abs(days)}d ago</span></div>;
+                                if (days <= 60) return <div style={{ marginBottom: 12 }}><span className="tag tag-yellow">Expires in {days}d</span></div>;
+                                return <div style={{ marginBottom: 12 }}><span className="tag tag-green">Active — {days}d remaining</span></div>;
+                            })()}
+
+                            <div className="alarm-label" style={{ marginBottom: 8, fontWeight: 600 }}>Inspections</div>
+                            <div className="alarm-grid" style={{ marginBottom: 16 }}>
+                                <div className="alarm-field">
+                                    <div className="alarm-label">Last Inspection</div>
+                                    <input className="alarm-input" type="date" value={lastInsp} onChange={e => setLastInsp(e.target.value)} />
+                                </div>
+                                <div className="alarm-field">
+                                    <div className="alarm-label">Next Inspection Due</div>
+                                    <input className="alarm-input" type="date" value={nextInsp} onChange={e => setNextInsp(e.target.value)} />
+                                </div>
+                            </div>
+
+                            {nextInsp && (() => {
+                                const days = Math.ceil((new Date(nextInsp) - new Date()) / 86400000);
+                                if (days < 0)   return <div style={{ marginBottom: 12 }}><span className="tag tag-red">Inspection OVERDUE by {Math.abs(days)}d</span></div>;
+                                if (days <= 30) return <div style={{ marginBottom: 12 }}><span className="tag tag-yellow">Inspection due in {days}d</span></div>;
+                                return null;
+                            })()}
+
+                            <button className="btn btn-primary" onClick={saveContract} disabled={savingContract}>
+                                {savingContract ? 'Saving…' : 'Save Contract'}
+                            </button>
                         </div>
                     )}
 

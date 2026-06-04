@@ -4,9 +4,25 @@ const { authenticate, requireRole } = require('../middleware/requireRole');
 
 const router = express.Router();
 
-/* Add permit columns to clients if not already present */
-pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS permit_number  TEXT`).catch(() => {});
-pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS permit_expires DATE`).catch(() => {});
+/* ── Schema migrations ────────────────────────────────────────────────── */
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS permit_number   TEXT`).catch(() => {});
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS permit_expires  DATE`).catch(() => {});
+/* Site & contact */
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS site_address    TEXT`).catch(() => {});
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS contact_name    TEXT`).catch(() => {});
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS contact_phone   TEXT`).catch(() => {});
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS contact_email   TEXT`).catch(() => {});
+/* Equipment */
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS panel_brand     TEXT`).catch(() => {});
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS panel_model     TEXT`).catch(() => {});
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS camera_count    INTEGER`).catch(() => {});
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS zone_count      INTEGER`).catch(() => {});
+/* Contract */
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS contract_type   TEXT`).catch(() => {});
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS contract_start  DATE`).catch(() => {});
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS contract_end    DATE`).catch(() => {});
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_inspection DATE`).catch(() => {});
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS next_inspection DATE`).catch(() => {});
 
 /* GET /api/clients?service=&vendor=&search= */
 router.get('/', authenticate, async (req, res) => {
@@ -94,15 +110,21 @@ router.patch('/billing/bulk', requireRole('admin', 'accounting'), async (req, re
 
 /* PATCH /api/clients/:id */
 router.patch('/:id', authenticate, async (req, res) => {
-    const { notes, billing_amount, permit_number, permit_expires } = req.body;
+    const FIELDS = [
+        'notes', 'billing_amount',
+        'permit_number', 'permit_expires',
+        'site_address', 'contact_name', 'contact_phone', 'contact_email',
+        'panel_brand', 'panel_model', 'camera_count', 'zone_count',
+        'contract_type', 'contract_start', 'contract_end',
+        'last_inspection', 'next_inspection',
+    ];
     try {
         const sets = []; const params = [];
         const add = (col, val) => { params.push(val); sets.push(`${col} = $${params.length}`); };
 
-        if (notes          !== undefined) add('notes',          notes);
-        if ('billing_amount' in req.body) add('billing_amount', billing_amount ?? null);
-        if (permit_number  !== undefined) add('permit_number',  permit_number  || null);
-        if (permit_expires !== undefined) add('permit_expires', permit_expires || null);
+        for (const f of FIELDS) {
+            if (f in req.body) add(f, req.body[f] ?? null);
+        }
 
         if (sets.length === 0) return res.json({ message: 'Nothing to update.' });
 

@@ -20,6 +20,7 @@ const aiRoutes         = require('./routes/ai');
 const feedbackRoutes   = require('./routes/feedback');
 const messageRoutes    = require('./routes/messages');
 const calendarRoutes   = require('./routes/calendar');
+const postRoutes       = require('./routes/posts');
 const { startScheduler } = require('./services/monitoringScheduler');
 
 const app  = express();
@@ -53,6 +54,7 @@ app.use('/api/ai',          aiRoutes);
 app.use('/api/feedback',    feedbackRoutes);
 app.use('/api/messages',    messageRoutes);
 app.use('/api/calendar',    calendarRoutes);
+app.use('/api/posts',       postRoutes);
 
 app.get('/api/health', (_, res) => res.json({ status: 'ok' }));
 

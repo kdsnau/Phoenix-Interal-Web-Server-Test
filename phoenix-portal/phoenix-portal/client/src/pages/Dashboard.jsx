@@ -5,6 +5,106 @@ import Layout from '../components/Layout';
 import './Dashboard.css';
 
 /* -----------------------------------------------------------------------
+   Helpers
+   ----------------------------------------------------------------------- */
+function timeAgo(dateStr) {
+    const diff = Date.now() - new Date(dateStr).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1)  return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24)  return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    if (days < 7)  return `${days}d ago`;
+    return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+/* -----------------------------------------------------------------------
+   Post Board side panel
+   ----------------------------------------------------------------------- */
+function PostBoard({ user, onClose }) {
+    const [posts,   setPosts]   = useState([]);
+    const [content, setContent] = useState('');
+    const [posting, setPosting] = useState(false);
+
+    useEffect(() => {
+        api.get('/posts').then(r => setPosts(r.data)).catch(() => {});
+    }, []);
+
+    async function submit(e) {
+        e.preventDefault();
+        if (!content.trim()) return;
+        setPosting(true);
+        try {
+            const { data } = await api.post('/posts', { content });
+            setPosts(prev => [data, ...prev]);
+            setContent('');
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setPosting(false);
+        }
+    }
+
+    async function deletePost(id) {
+        if (!confirm('Delete this post?')) return;
+        await api.delete(`/posts/${id}`);
+        setPosts(prev => prev.filter(p => p.id !== id));
+    }
+
+    return (
+        <div className="board-overlay" onClick={onClose}>
+            <div className="board-panel" onClick={e => e.stopPropagation()}>
+
+                <div className="board-header">
+                    <div className="board-title">📋 Notice Board</div>
+                    <button className="proj-close-btn" onClick={onClose}>✕</button>
+                </div>
+
+                {user.role === 'admin' && (
+                    <form className="board-compose" onSubmit={submit}>
+                        <textarea
+                            className="board-textarea"
+                            value={content}
+                            onChange={e => setContent(e.target.value)}
+                            placeholder="Write a notice for the team…"
+                            rows={3}
+                        />
+                        <button
+                            type="submit"
+                            className="btn btn-primary"
+                            disabled={posting || !content.trim()}
+                            style={{ alignSelf: 'flex-end' }}
+                        >
+                            {posting ? 'Posting…' : 'Post'}
+                        </button>
+                    </form>
+                )}
+
+                <div className="board-posts">
+                    {posts.length === 0 && (
+                        <div className="board-empty">No notices yet.</div>
+                    )}
+                    {posts.map(post => (
+                        <div key={post.id} className="board-post">
+                            <div className="board-post-meta">
+                                <span className="board-post-author">{post.author_name || 'Admin'}</span>
+                                <span className="board-post-time">{timeAgo(post.created_at)}</span>
+                                {user.role === 'admin' && (
+                                    <button className="board-delete" onClick={() => deletePost(post.id)} title="Delete">✕</button>
+                                )}
+                            </div>
+                            <div className="board-post-content">{post.content}</div>
+                        </div>
+                    ))}
+                </div>
+
+            </div>
+        </div>
+    );
+}
+
+/* -----------------------------------------------------------------------
    Alert panel — one of the three alert columns
    ----------------------------------------------------------------------- */
 function AlertPanel({ title, items, emptyMsg, renderItem }) {
@@ -103,9 +203,12 @@ function AccountingStats({ summary, mrr }) {
    ----------------------------------------------------------------------- */
 export default function Dashboard() {
     const { user } = useAuth();
-    const [roleData, setRoleData] = useState(null);
-    const [alerts,   setAlerts]   = useState(null);
-    const [loading,  setLoading]  = useState(true);
+    const [roleData,   setRoleData]   = useState(null);
+    const [alerts,     setAlerts]     = useState(null);
+    const [loading,    setLoading]    = useState(true);
+    const [posts,      setPosts]      = useState([]);
+    const [boardOpen,  setBoardOpen]  = useState(false);
+    const [lastRead,   setLastRead]   = useState(() => localStorage.getItem('postBoardLastRead'));
 
     useEffect(() => {
         async function load() {
@@ -128,6 +231,20 @@ export default function Dashboard() {
         load();
     }, [user.role]);
 
+    useEffect(() => {
+        api.get('/posts').then(r => setPosts(r.data)).catch(() => {});
+    }, []);
+
+    const unreadCount = posts.filter(p => !lastRead || new Date(p.created_at) > new Date(lastRead)).length;
+    const hasUnread   = unreadCount > 0;
+
+    function openBoard() {
+        const now = new Date().toISOString();
+        localStorage.setItem('postBoardLastRead', now);
+        setLastRead(now);
+        setBoardOpen(true);
+    }
+
     return (
         <Layout>
             <div className="page-header">
@@ -135,6 +252,13 @@ export default function Dashboard() {
                     Dashboard
                     <span>{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</span>
                 </h1>
+                <button
+                    className={`btn btn-ghost board-btn ${hasUnread ? 'board-btn--unread' : ''}`}
+                    onClick={openBoard}
+                >
+                    📋 Board
+                    {hasUnread && <span className="board-badge">{unreadCount}</span>}
+                </button>
             </div>
 
             {loading && <p style={{ color: 'var(--text-dim)' }}>Loading…</p>}
@@ -213,6 +337,9 @@ export default function Dashboard() {
                         <span className="dash-session-email">{user.email}</span>
                     </div>
                 </>
+            )}
+            {boardOpen && (
+                <PostBoard user={user} onClose={() => setBoardOpen(false)} />
             )}
         </Layout>
     );

@@ -92,6 +92,182 @@
     color: var(--text-dim);
 }
 
+/* ── Notice Board ─────────────────────────────────────────────────────── */
+
+/* Header button — unread state */
+.board-btn { position: relative; transition: border-color 0.2s, color 0.2s, box-shadow 0.2s; }
+
+.board-btn--unread {
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
+}
+
+.board-btn--unread::after {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border-radius: calc(var(--radius, 6px) + 3px);
+    border: 2px solid var(--accent);
+    animation: board-ring 2s ease-in-out infinite;
+    pointer-events: none;
+}
+
+@keyframes board-ring {
+    0%, 100% { opacity: 0.5; transform: scale(1); }
+    50%       { opacity: 1;   transform: scale(1.03); }
+}
+
+.board-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--accent);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    min-width: 16px;
+    height: 16px;
+    border-radius: 8px;
+    padding: 0 4px;
+    margin-left: 6px;
+    vertical-align: middle;
+}
+
+/* Side panel */
+.board-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.5);
+    z-index: 200;
+    display: flex;
+    justify-content: flex-end;
+    align-items: stretch;
+}
+
+.board-panel {
+    width: 400px;
+    max-width: 100vw;
+    height: 100vh;
+    background: var(--bg-2);
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.board-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 20px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.board-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-hi);
+}
+
+/* Admin compose area */
+.board-compose {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-3);
+    flex-shrink: 0;
+}
+
+.board-textarea {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 72px;
+    resize: vertical;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 13px;
+    padding: 10px 12px;
+    font-family: inherit;
+    line-height: 1.5;
+}
+
+.board-textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+/* Posts list */
+.board-posts {
+    flex: 1;
+    overflow-y: auto;
+}
+
+.board-empty {
+    text-align: center;
+    padding: 48px 20px;
+    color: var(--text-dim);
+    font-size: 13px;
+}
+
+.board-post {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+.board-post:last-child { border-bottom: none; }
+
+.board-post-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.board-post-author {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.board-post-time {
+    font-size: 11px;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    flex: 1;
+}
+
+.board-post-content {
+    font-size: 13px;
+    color: var(--text);
+    line-height: 1.65;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.board-delete {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 11px;
+    cursor: pointer;
+    padding: 2px 5px;
+    border-radius: 3px;
+    opacity: 0;
+    transition: opacity 0.15s, background 0.15s;
+}
+
+.board-post:hover .board-delete { opacity: 1; }
+
+.board-delete:hover {
+    background: rgba(224,82,82,0.15);
+    color: var(--red);
+}
+
 /* Billing table in Admin */
 .billing-table-wrap {
     margin-top: 8px;

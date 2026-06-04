@@ -4,7 +4,25 @@ import { useAuth } from '../context/AuthContext';
 import Layout from '../components/Layout';
 import './Inventory.css';
 
-const CATEGORIES = ['all', 'equipment', 'cable', 'hardware', 'tools', 'consumables', 'other'];
+const CATEGORIES = [
+    'all',
+    'cameras', 'networking', 'access_control', 'storage',
+    'fire_alarm', 'power', 'notification', 'equipment',
+    'cable', 'hardware', 'tools', 'consumables', 'other',
+];
+
+const CAT_LABELS = {
+    all: 'All', cameras: 'Cameras', networking: 'Networking',
+    access_control: 'Access Control', storage: 'Storage',
+    fire_alarm: 'Fire Alarm', power: 'Power', notification: 'Notification',
+    equipment: 'Equipment', cable: 'Cable', hardware: 'Hardware',
+    tools: 'Tools', consumables: 'Consumables', other: 'Other',
+};
+
+function fmt$(n) {
+    if (n == null || n === '' || Number(n) === 0) return null;
+    return '$' + Number(n).toFixed(2);
+}
 
 /* -----------------------------------------------------------------------
    Add / Edit item modal
@@ -19,13 +37,22 @@ function ItemModal({ item, onClose, onSave }) {
         unit:          item?.unit          || 'ea',
         location:      item?.location      || '',
         notes:         item?.notes         || '',
+        cost:          item?.cost          ?? '',
+        price:         item?.price         ?? '',
+        vendor:        item?.vendor        || '',
+        mpn:           item?.mpn           || '',
+        active:        item?.active        ?? true,
     });
 
     function set(k, v) { setForm(f => ({ ...f, [k]: v })); }
 
     async function handleSubmit(e) {
         e.preventDefault();
-        await onSave(form);
+        await onSave({
+            ...form,
+            cost:  form.cost  !== '' ? Number(form.cost)  : null,
+            price: form.price !== '' ? Number(form.price) : null,
+        });
         onClose();
     }
 
@@ -44,7 +71,9 @@ function ItemModal({ item, onClose, onSave }) {
                     <div className="inv-form-row3">
                         <label>Category
                             <select className="inv-select" value={form.category} onChange={e => set('category', e.target.value)}>
-                                {CATEGORIES.filter(c => c !== 'all').map(c => <option key={c} value={c}>{c}</option>)}
+                                {CATEGORIES.filter(c => c !== 'all').map(c => (
+                                    <option key={c} value={c}>{CAT_LABELS[c] || c}</option>
+                                ))}
                             </select>
                         </label>
                         <label>Unit<input className="inv-input" value={form.unit} onChange={e => set('unit', e.target.value)} /></label>
@@ -54,7 +83,19 @@ function ItemModal({ item, onClose, onSave }) {
                         <label>Quantity<input className="inv-input" type="number" min="0" value={form.quantity} onChange={e => set('quantity', Number(e.target.value))} /></label>
                         <label>Low Stock Threshold<input className="inv-input" type="number" min="0" value={form.min_threshold} onChange={e => set('min_threshold', Number(e.target.value))} /></label>
                     </div>
+                    <div className="inv-form-row2">
+                        <label>Cost (purchase)<input className="inv-input" type="number" min="0" step="0.01" value={form.cost} onChange={e => set('cost', e.target.value)} placeholder="0.00" /></label>
+                        <label>Price (sale)<input className="inv-input" type="number" min="0" step="0.01" value={form.price} onChange={e => set('price', e.target.value)} placeholder="0.00" /></label>
+                    </div>
+                    <div className="inv-form-row2">
+                        <label>Vendor<input className="inv-input" value={form.vendor} onChange={e => set('vendor', e.target.value)} /></label>
+                        <label>MPN<input className="inv-input" value={form.mpn} onChange={e => set('mpn', e.target.value)} /></label>
+                    </div>
                     <label>Notes<textarea className="inv-input inv-textarea" value={form.notes} onChange={e => set('notes', e.target.value)} rows={2} /></label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginTop: 8 }}>
+                        <input type="checkbox" checked={form.active} onChange={e => set('active', e.target.checked)} />
+                        <span>Active item</span>
+                    </label>
                     <div className="inv-modal-footer">
                         <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
                         <button type="submit" className="btn btn-primary">{item ? 'Save' : 'Add Item'}</button>
@@ -122,7 +163,6 @@ function AssignVehicleModal({ item, onClose, onAssigned }) {
         api.get(`/inventory/${item.id}/assignments`).then(r => setAssignments(Array.isArray(r.data) ? r.data : [])).catch(() => {});
     }, [item.id]);
 
-    /* When the user types a vehicle name, try to find a matching vehicle */
     const handleVehicleInput = (val) => {
         setVehicleInput(val);
         const match = vehicles.find(v => v.name.toLowerCase() === val.toLowerCase());
@@ -143,10 +183,7 @@ function AssignVehicleModal({ item, onClose, onAssigned }) {
                 const exists = prev.findIndex(a => a.id === data.id);
                 return exists >= 0 ? prev.map((a, i) => i === exists ? data : a) : [...prev, data];
             });
-            setVehicleInput('');
-            setSelectedVId('');
-            setQuantity(1);
-            setNotes('');
+            setVehicleInput(''); setSelectedVId(''); setQuantity(1); setNotes('');
             if (onAssigned) onAssigned();
         } finally {
             setSaving(false);
@@ -172,7 +209,6 @@ function AssignVehicleModal({ item, onClose, onAssigned }) {
                     <button className="inv-modal-close" onClick={onClose}>✕</button>
                 </div>
 
-                {/* Current assignments */}
                 {assignments.length > 0 && (
                     <div style={{ marginBottom: 16 }}>
                         <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
@@ -180,9 +216,7 @@ function AssignVehicleModal({ item, onClose, onAssigned }) {
                         </div>
                         {assignments.map(a => (
                             <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
-                                <span style={{ flex: 1, fontSize: 13, color: 'var(--text-hi)', fontWeight: 500 }}>
-                                    🚗 {a.vehicle_name}
-                                </span>
+                                <span style={{ flex: 1, fontSize: 13, color: 'var(--text-hi)', fontWeight: 500 }}>🚗 {a.vehicle_name}</span>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                                     <button onClick={() => handleAdjust(a.id, Math.max(0, a.quantity - 1))}
                                         style={{ background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text)', width: 22, height: 22, cursor: 'pointer', fontSize: 13, lineHeight: 1 }}>−</button>
@@ -198,26 +232,17 @@ function AssignVehicleModal({ item, onClose, onAssigned }) {
                     </div>
                 )}
 
-                {/* Add new assignment */}
                 <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 8 }}>
                     Assign to Vehicle
                 </div>
                 <form onSubmit={handleAssign}>
                     <div className="inv-form-row2" style={{ marginBottom: 10 }}>
-                        <label style={{ position: 'relative' }}>
+                        <label>
                             Vehicle Name
-                            <input
-                                className="inv-input"
-                                list="inv-vehicle-list"
-                                placeholder="Type vehicle name…"
-                                value={vehicleInput}
-                                onChange={e => handleVehicleInput(e.target.value)}
-                                autoComplete="off"
-                            />
+                            <input className="inv-input" list="inv-vehicle-list" placeholder="Type vehicle name…"
+                                value={vehicleInput} onChange={e => handleVehicleInput(e.target.value)} autoComplete="off" />
                             <datalist id="inv-vehicle-list">
-                                {vehicles.map(v => (
-                                    <option key={v.id} value={v.name}>{v.year} {v.make} {v.model}</option>
-                                ))}
+                                {vehicles.map(v => <option key={v.id} value={v.name}>{v.year} {v.make} {v.model}</option>)}
                             </datalist>
                         </label>
                         <label>
@@ -230,9 +255,7 @@ function AssignVehicleModal({ item, onClose, onAssigned }) {
                         <input className="inv-input" value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. stored in rear compartment" />
                     </label>
                     {vehicleInput && !selectedVId && (
-                        <div style={{ fontSize: 12, color: 'var(--yellow)', marginBottom: 8 }}>
-                            ⚠ Select a vehicle from the list
-                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--yellow)', marginBottom: 8 }}>⚠ Select a vehicle from the list</div>
                     )}
                     <div className="inv-modal-footer">
                         <button type="button" className="btn btn-ghost" onClick={onClose}>Done</button>
@@ -254,26 +277,28 @@ export default function Inventory() {
     const canEdit   = user.role === 'admin' || user.role === 'accounting';
     const canDelete = user.role === 'admin';
 
-    const [items, setItems]           = useState([]);
-    const [loading, setLoading]       = useState(true);
-    const [catTab, setCatTab]         = useState('all');
-    const [search, setSearch]         = useState('');
-    const [showAdd, setShowAdd]       = useState(false);
-    const [editItem, setEditItem]     = useState(null);
-    const [adjItem, setAdjItem]       = useState(null);
-    const [assignItem, setAssignItem] = useState(null);
+    const [items,       setItems]       = useState([]);
+    const [loading,     setLoading]     = useState(true);
+    const [catTab,      setCatTab]      = useState('all');
+    const [search,      setSearch]      = useState('');
+    const [showInactive,setShowInactive]= useState(false);
+    const [showAdd,     setShowAdd]     = useState(false);
+    const [editItem,    setEditItem]    = useState(null);
+    const [adjItem,     setAdjItem]     = useState(null);
+    const [assignItem,  setAssignItem]  = useState(null);
 
     function fetchItems() {
         setLoading(true);
         const params = {};
-        if (catTab !== 'all') params.category = catTab;
-        if (search) params.search = search;
+        if (catTab !== 'all')  params.category = catTab;
+        if (search)            params.search   = search;
+        if (!showInactive)     params.active   = 'true';
         api.get('/inventory', { params })
-            .then(r => setItems(r.data))
+            .then(r => setItems(Array.isArray(r.data) ? r.data : []))
             .finally(() => setLoading(false));
     }
 
-    useEffect(() => { fetchItems(); }, [catTab, search]);
+    useEffect(() => { fetchItems(); }, [catTab, search, showInactive]);
 
     async function handleAdd(form) {
         await api.post('/inventory', form);
@@ -296,9 +321,11 @@ export default function Inventory() {
         fetchItems();
     }
 
-    const lowCount = items.filter(i => i.quantity > 0 && i.quantity <= i.min_threshold).length;
-    const outCount = items.filter(i => i.quantity === 0).length;
-    const totalVal = items.reduce((s, i) => s + i.quantity, 0);
+    /* Stats — only for items with thresholds set */
+    const lowCount  = items.filter(i => i.min_threshold > 0 && i.quantity > 0 && i.quantity <= i.min_threshold).length;
+    const outCount  = items.filter(i => i.quantity === 0).length;
+    const totalUnits= items.reduce((s, i) => s + i.quantity, 0);
+    const totalCost = items.reduce((s, i) => s + (Number(i.cost || 0) * i.quantity), 0);
 
     return (
         <Layout>
@@ -312,35 +339,66 @@ export default function Inventory() {
 
                 {/* Stats */}
                 <div className="stats-grid" style={{ marginBottom: '20px' }}>
-                    <div className="stat-card"><div className="stat-label">Total Items</div><div className="stat-value">{items.length}</div></div>
-                    <div className="stat-card"><div className="stat-label">Total Units</div><div className="stat-value">{totalVal}</div></div>
-                    <div className="stat-card"><div className="stat-label">Low Stock</div><div className="stat-value" style={{ color: 'var(--yellow)' }}>{lowCount}</div></div>
-                    <div className="stat-card"><div className="stat-label">Out of Stock</div><div className="stat-value" style={{ color: 'var(--red)' }}>{outCount}</div></div>
+                    <div className="stat-card">
+                        <div className="stat-label">Total Items</div>
+                        <div className="stat-value">{items.length}</div>
+                    </div>
+                    <div className="stat-card">
+                        <div className="stat-label">Total Units</div>
+                        <div className="stat-value">{totalUnits.toLocaleString()}</div>
+                    </div>
+                    <div className="stat-card">
+                        <div className="stat-label">Low Stock</div>
+                        <div className="stat-value" style={{ color: lowCount > 0 ? 'var(--yellow)' : undefined }}>{lowCount}</div>
+                    </div>
+                    <div className="stat-card">
+                        <div className="stat-label">Out of Stock</div>
+                        <div className="stat-value" style={{ color: outCount > 0 ? 'var(--red)' : undefined }}>{outCount}</div>
+                    </div>
+                    {canEdit && (
+                        <div className="stat-card">
+                            <div className="stat-label">Stock Value (cost)</div>
+                            <div className="stat-value" style={{ fontSize: 16 }}>
+                                ${totalCost.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                            </div>
+                        </div>
+                    )}
                 </div>
 
-                {/* Alert banner */}
-                {(lowCount > 0 || outCount > 0) && (
-                    <div className="inv-alert">
-                        {outCount > 0 && <span>⚠ {outCount} item{outCount > 1 ? 's' : ''} out of stock</span>}
-                        {lowCount > 0 && <span>⚠ {lowCount} item{lowCount > 1 ? 's' : ''} running low</span>}
+                {/* Alert banners */}
+                {outCount > 0 && (
+                    <div className="inv-alert inv-alert-out">
+                        ⚠ {outCount} item{outCount !== 1 ? 's' : ''} out of stock
+                    </div>
+                )}
+                {lowCount > 0 && (
+                    <div className="inv-alert inv-alert-low">
+                        ⚠ {lowCount} item{lowCount !== 1 ? 's' : ''} running low
                     </div>
                 )}
 
                 {/* Toolbar */}
                 <div className="inv-toolbar">
-                    <div className="alarm-service-tabs">
+                    <div className="alarm-service-tabs" style={{ flexWrap: 'wrap' }}>
                         {CATEGORIES.map(c => (
                             <button key={c} className={`alarm-tab ${catTab === c ? 'active' : ''}`} onClick={() => setCatTab(c)}>
-                                {c === 'all' ? 'All' : c.charAt(0).toUpperCase() + c.slice(1)}
+                                {CAT_LABELS[c] || c}
                             </button>
                         ))}
                     </div>
-                    <input
-                        className="alarm-search"
-                        placeholder="Search items…"
-                        value={search}
-                        onChange={e => setSearch(e.target.value)}
-                    />
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+                        <input
+                            className="alarm-search"
+                            placeholder="Search name or SKU…"
+                            value={search}
+                            onChange={e => setSearch(e.target.value)}
+                            style={{ flex: 1 }}
+                        />
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-dim)', whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                            <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} />
+                            Show inactive
+                        </label>
+                    </div>
                 </div>
 
                 {/* Table */}
@@ -354,9 +412,9 @@ export default function Inventory() {
                                     <th>Name</th>
                                     <th>SKU</th>
                                     <th>Category</th>
-                                    <th>Qty</th>
-                                    <th>Unit</th>
-                                    <th>Location</th>
+                                    <th>Stock</th>
+                                    <th>Cost → Price</th>
+                                    <th>Vendor</th>
                                     <th>Vehicles</th>
                                     <th>Actions</th>
                                 </tr>
@@ -367,19 +425,36 @@ export default function Inventory() {
                                 )}
                                 {items.map(item => {
                                     const isOut = item.quantity === 0;
-                                    const isLow = !isOut && item.quantity <= item.min_threshold;
+                                    const isLow = !isOut && item.min_threshold > 0 && item.quantity <= item.min_threshold;
+                                    const costFmt  = fmt$(item.cost);
+                                    const priceFmt = fmt$(item.price);
                                     return (
                                         <tr key={item.id} className={isOut ? 'inv-row-out' : isLow ? 'inv-row-low' : ''}>
-                                            <td className="inv-name">{item.name}</td>
+                                            <td className="inv-name">
+                                                <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
+                                                    <span>{item.name}</span>
+                                                    {isOut && <span className="tag tag-red"  style={{ fontSize: 10 }}>Out of stock</span>}
+                                                    {isLow && <span className="tag tag-yellow" style={{ fontSize: 10 }}>Low stock</span>}
+                                                    {!item.active && <span className="tag tag-dim" style={{ fontSize: 10 }}>Inactive</span>}
+                                                </div>
+                                                {item.mpn && <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 2 }}>MPN: {item.mpn}</div>}
+                                            </td>
                                             <td className="inv-dim">{item.sku || '—'}</td>
-                                            <td><span className="tag-dim">{item.category}</span></td>
+                                            <td><span className="tag tag-dim">{CAT_LABELS[item.category] || item.category}</span></td>
                                             <td>
                                                 <span className={`inv-qty ${isOut ? 'inv-qty-out' : isLow ? 'inv-qty-low' : 'inv-qty-ok'}`}>
-                                                    {item.quantity} {item.min_threshold > 0 && <span className="inv-threshold">/ {item.min_threshold}</span>}
+                                                    {item.quantity}
+                                                    {item.min_threshold > 0 && (
+                                                        <span className="inv-threshold"> / {item.min_threshold}</span>
+                                                    )}
                                                 </span>
                                             </td>
-                                            <td className="inv-dim">{item.unit}</td>
-                                            <td className="inv-dim">{item.location || '—'}</td>
+                                            <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.7 }}>
+                                                {costFmt  ? <div style={{ color: 'var(--text-dim)' }}>{costFmt}</div>  : null}
+                                                {priceFmt ? <div style={{ color: 'var(--accent)'   }}>{priceFmt}</div> : null}
+                                                {!costFmt && !priceFmt && <span style={{ color: 'var(--text-dim)' }}>—</span>}
+                                            </td>
+                                            <td className="inv-dim" style={{ fontSize: 12 }}>{item.vendor || '—'}</td>
                                             <td>
                                                 <button
                                                     className="inv-btn-sm"
@@ -391,7 +466,7 @@ export default function Inventory() {
                                             </td>
                                             <td className="inv-actions">
                                                 <button className="inv-btn-sm" onClick={() => setAdjItem(item)}>Adjust</button>
-                                                {canEdit && <button className="inv-btn-sm" onClick={() => setEditItem(item)}>Edit</button>}
+                                                {canEdit  && <button className="inv-btn-sm" onClick={() => setEditItem(item)}>Edit</button>}
                                                 {canDelete && <button className="inv-btn-sm inv-btn-del" onClick={() => handleDelete(item.id)}>Delete</button>}
                                             </td>
                                         </tr>

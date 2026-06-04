@@ -32,8 +32,10 @@ router.get('/', authenticate, async (req, res) => {
     const conditions = [];
     const params     = [];
 
-    if (category) { params.push(category);      conditions.push(`ii.category = $${params.length}`); }
-    if (search)   { params.push(`%${search}%`); conditions.push(`(ii.name ILIKE $${params.length} OR ii.sku ILIKE $${params.length})`); }
+    if (category)                    { params.push(category);      conditions.push(`ii.category = $${params.length}`); }
+    if (search)                      { params.push(`%${search}%`); conditions.push(`(ii.name ILIKE $${params.length} OR ii.sku ILIKE $${params.length})`); }
+    if (req.query.active === 'true')   conditions.push(`ii.active = TRUE`);
+    if (req.query.active === 'false')  conditions.push(`ii.active = FALSE`);
 
     const where = conditions.length ? ' WHERE ' + conditions.join(' AND ') : '';
     try {

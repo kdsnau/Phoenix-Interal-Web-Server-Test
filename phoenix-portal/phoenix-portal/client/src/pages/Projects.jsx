@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import api from '../api/client';
+import { useAuth } from '../context/AuthContext';
 import Layout from '../components/Layout';
 import './Projects.css';
 
@@ -93,9 +94,67 @@ function VisitCard({ visit }) {
 }
 
 /* -----------------------------------------------------------------------
+   Add manual project modal
+   ----------------------------------------------------------------------- */
+function NewProjectModal({ onClose, onCreated }) {
+    const [form, setForm] = useState({ name: '', rfq: '', notes: '' });
+    const [error,  setError]  = useState('');
+    const [saving, setSaving] = useState(false);
+
+    function set(k, v) { setForm(f => ({ ...f, [k]: v })); }
+
+    async function submit(e) {
+        e.preventDefault();
+        setError('');
+        setSaving(true);
+        try {
+            const { data } = await api.post('/projects', form);
+            onCreated(data);
+            onClose();
+        } catch (err) {
+            setError(err.response?.data?.error || 'Failed to create project.');
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    return (
+        <div className="proj-overlay" onClick={onClose}>
+            <div className="proj-detail" onClick={e => e.stopPropagation()} style={{ maxWidth: 460, height: 'auto' }}>
+                <div className="proj-detail-header">
+                    <div className="proj-detail-name">Add Project</div>
+                    <button className="proj-close-btn" onClick={onClose}>✕</button>
+                </div>
+                {error && <div style={{ color: 'var(--red)', fontSize: 13, padding: '8px 20px' }}>{error}</div>}
+                <form onSubmit={submit} style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text-dim)' }}>
+                        Project Name *
+                        <input className="inv-input" value={form.name} onChange={e => set('name', e.target.value)} required autoFocus placeholder="e.g. Terros Health - Phoenix" />
+                    </label>
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text-dim)' }}>
+                        RFQ # <span style={{ fontWeight: 400 }}>(optional)</span>
+                        <input className="inv-input" value={form.rfq} onChange={e => set('rfq', e.target.value)} placeholder="e.g. RFQ-2024-042" />
+                    </label>
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text-dim)' }}>
+                        Notes / Description <span style={{ fontWeight: 400 }}>(optional)</span>
+                        <textarea className="inv-input inv-textarea" value={form.notes} onChange={e => set('notes', e.target.value)} rows={3} placeholder="Scope, location, details…" />
+                    </label>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                        <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                        <button type="submit" className="btn btn-primary" disabled={saving}>
+                            {saving ? 'Adding…' : 'Add Project'}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+}
+
+/* -----------------------------------------------------------------------
    Project detail overlay — shows all visits for a project
    ----------------------------------------------------------------------- */
-function ProjectDetail({ project, onClose, onComplete }) {
+function ProjectDetail({ project, onClose, onComplete, onDelete }) {
     return (
         <div className="proj-overlay" onClick={onClose}>
             <div className="proj-detail" onClick={e => e.stopPropagation()}>
@@ -111,6 +170,16 @@ function ProjectDetail({ project, onClose, onComplete }) {
                     >
                         {project.completed ? '↩ Reopen' : '✓ Mark Complete'}
                     </button>
+                    {project._manualId && (
+                        <button
+                            className="btn"
+                            style={{ background: 'rgba(224,82,82,0.15)', color: 'var(--red)', border: '1px solid rgba(224,82,82,0.3)', fontSize: 12 }}
+                            onClick={e => { e.stopPropagation(); onDelete(project); }}
+                            title="Delete this manually-added project"
+                        >
+                            🗑 Delete
+                        </button>
+                    )}
                     <button className="proj-close-btn" onClick={onClose}>✕</button>
                 </div>
                 <div className="proj-detail-body">
@@ -185,9 +254,11 @@ function groupAndMerge(list) {
     /* Pre-compute token sets for each project */
     const tokenSets = list.map(p => new Set(getTokens(p.name)));
 
-    /* Only merge projects that share 2+ meaningful tokens */
+    /* Only merge projects that share 2+ meaningful tokens.
+       Never merge manually-added projects with anything. */
     for (let i = 0; i < list.length; i++) {
         for (let j = i + 1; j < list.length; j++) {
+            if (list[i]._manual || list[j]._manual) continue;
             const shared = [...tokenSets[i]].filter(t => tokenSets[j].has(t)).length;
             if (shared >= 2) union(i, j);
         }
@@ -240,11 +311,13 @@ function groupAndMerge(list) {
 const FILTER_TABS = ['all', 'in_progress', 'completed'];
 
 export default function Projects() {
-    const [projects, setProjects] = useState([]);
-    const [loading, setLoading]   = useState(true);
-    const [filter, setFilter]     = useState('all');
-    const [search, setSearch]     = useState('');
-    const [selected, setSelected] = useState(null);
+    const { user }                          = useAuth();
+    const [projects, setProjects]           = useState([]);
+    const [loading, setLoading]             = useState(true);
+    const [filter, setFilter]               = useState('all');
+    const [search, setSearch]               = useState('');
+    const [selected, setSelected]           = useState(null);
+    const [showAddProject, setShowAddProject] = useState(false);
 
     useEffect(() => {
         api.get('/projects')
@@ -285,6 +358,15 @@ export default function Projects() {
         }
     };
 
+    const deleteManual = async (project) => {
+        if (!confirm(`Delete "${project.name}"? This cannot be undone.`)) return;
+        try {
+            await api.delete(`/projects/manual/${project._manualId}`);
+            setProjects(prev => prev.filter(p => p._manualId !== project._manualId));
+            setSelected(null);
+        } catch (e) { console.error(e); }
+    };
+
     /* Merge all projects for counts, then filter for display */
     const allMerged = groupAndMerge(projects);
     const visible   = allMerged.filter(p => {
@@ -303,12 +385,19 @@ export default function Projects() {
             <div className="proj-page">
                 <div className="proj-page-header">
                     <h1 className="page-title">Projects</h1>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                    {user.role === 'admin' && (
+                        <button className="btn btn-primary" onClick={() => setShowAddProject(true)}>
+                            + Add Project
+                        </button>
+                    )}
                     <input
                         className="alarm-search"
                         placeholder="Search by name or RFQ#…"
                         value={search}
                         onChange={e => setSearch(e.target.value)}
                     />
+                    </div>
                 </div>
 
                 <div className="alarm-service-tabs" style={{ marginBottom: '24px' }}>
@@ -350,6 +439,16 @@ export default function Projects() {
                         project={selected}
                         onClose={() => setSelected(null)}
                         onComplete={markComplete}
+                        onDelete={deleteManual}
+                    />
+                )}
+                {showAddProject && (
+                    <NewProjectModal
+                        onClose={() => setShowAddProject(false)}
+                        onCreated={() => {
+                            setShowAddProject(false);
+                            api.get('/projects').then(r => setProjects(r.data));
+                        }}
                     />
                 )}
             </div>

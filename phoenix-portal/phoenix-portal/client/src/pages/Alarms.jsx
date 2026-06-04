@@ -483,15 +483,99 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
 }
 
 /* -----------------------------------------------------------------------
+   Add client modal
+   ----------------------------------------------------------------------- */
+function NewClientModal({ onClose, onCreated }) {
+    const [form, setForm] = useState({
+        name: '', customer_id: '', vendor: 'generic', services: [],
+    });
+    const [error,   setError]   = useState('');
+    const [saving,  setSaving]  = useState(false);
+
+    function set(k, v) { setForm(f => ({ ...f, [k]: v })); }
+
+    function toggleService(s) {
+        setForm(f => ({
+            ...f,
+            services: f.services.includes(s)
+                ? f.services.filter(x => x !== s)
+                : [...f.services, s],
+        }));
+    }
+
+    async function submit(e) {
+        e.preventDefault();
+        setError('');
+        setSaving(true);
+        try {
+            const { data } = await api.post('/clients', form);
+            onCreated(data);
+            onClose();
+        } catch (err) {
+            setError(err.response?.data?.error || 'Failed to create client.');
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    return (
+        <div className="alarm-detail-overlay" onClick={onClose}>
+            <div className="alarm-detail" onClick={e => e.stopPropagation()} style={{ maxWidth: 480, height: 'auto' }}>
+                <div className="alarm-detail-header">
+                    <div className="alarm-detail-name">Add Client</div>
+                    <button className="alarm-close-btn" onClick={onClose}>✕</button>
+                </div>
+                {error && <div style={{ color: 'var(--red)', fontSize: 13, padding: '8px 24px' }}>{error}</div>}
+                <form onSubmit={submit} style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text-dim)' }}>
+                            Client Name *
+                            <input className="inv-input" value={form.name} onChange={e => set('name', e.target.value)} required autoFocus />
+                        </label>
+                        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text-dim)' }}>
+                            Customer ID *
+                            <input className="inv-input" value={form.customer_id} onChange={e => set('customer_id', e.target.value)} placeholder="e.g. PHX-001" required />
+                        </label>
+                    </div>
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text-dim)' }}>
+                        Vendor / Panel Manufacturer
+                        <input className="inv-input" value={form.vendor} onChange={e => set('vendor', e.target.value)} placeholder="generic, DSC, Honeywell, Bosch…" />
+                    </label>
+                    <div>
+                        <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>Services</div>
+                        <div style={{ display: 'flex', gap: 16 }}>
+                            {['alarm', 'fire', 'access_control'].map(s => (
+                                <label key={s} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                                    <input type="checkbox" checked={form.services.includes(s)} onChange={() => toggleService(s)} />
+                                    {s === 'access_control' ? 'Access Control' : s.charAt(0).toUpperCase() + s.slice(1)}
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+                        <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                        <button type="submit" className="btn btn-primary" disabled={saving}>
+                            {saving ? 'Adding…' : 'Add Client'}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+}
+
+/* -----------------------------------------------------------------------
    Main Alarms page
    ----------------------------------------------------------------------- */
 export default function Alarms() {
-    const [clients, setClients]       = useState([]);
-    const [selected, setSelected]     = useState(null);
-    const [serviceTab, setServiceTab] = useState('all');
-    const [search, setSearch]         = useState('');
-    const [technicians, setTechnicians] = useState([]);
-    const [loading, setLoading]       = useState(true);
+    const { user }                          = useAuth();
+    const [clients, setClients]             = useState([]);
+    const [selected, setSelected]           = useState(null);
+    const [serviceTab, setServiceTab]       = useState('all');
+    const [search, setSearch]               = useState('');
+    const [technicians, setTechnicians]     = useState([]);
+    const [loading, setLoading]             = useState(true);
+    const [showAddClient, setShowAddClient] = useState(false);
     const [permits, setPermits]       = useState([]);
     const [permitsLoading, setPermitsLoading] = useState(false);
 
@@ -538,12 +622,19 @@ export default function Alarms() {
             <div className="alarm-page">
                 <div className="alarm-page-header">
                     <h1 className="page-title">Alarms</h1>
-                    <input
-                        className="alarm-search"
-                        placeholder="Search clients…"
-                        value={search}
-                        onChange={e => setSearch(e.target.value)}
-                    />
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                        <input
+                            className="alarm-search"
+                            placeholder="Search clients…"
+                            value={search}
+                            onChange={e => setSearch(e.target.value)}
+                        />
+                        {user.role === 'admin' && (
+                            <button className="btn btn-primary" onClick={() => setShowAddClient(true)}>
+                                + Add Client
+                            </button>
+                        )}
+                    </div>
                 </div>
 
                 <div className="alarm-service-tabs">
@@ -641,6 +732,12 @@ export default function Alarms() {
                         onClose={() => setSelected(null)}
                         onRefresh={refreshSelected}
                         technicians={technicians}
+                    />
+                )}
+                {showAddClient && (
+                    <NewClientModal
+                        onClose={() => setShowAddClient(false)}
+                        onCreated={() => { setShowAddClient(false); fetchClients(); }}
                     />
                 )}
             </div>

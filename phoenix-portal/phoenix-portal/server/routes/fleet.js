@@ -1,6 +1,6 @@
 const express = require('express');
 const pool    = require('../db/pool');
-const { authenticate } = require('../middleware/requireRole');
+const { authenticate, requireRole } = require('../middleware/requireRole');
 const { sendServiceReminder, sendTagsReminder } = require('../config/mailer');
 
 const router = express.Router();
@@ -66,6 +66,31 @@ router.get('/:id', async (req, res) => {
     } catch (err) {
         console.error(err);
         return res.status(500).json({ error: 'Server error.' });
+    }
+});
+
+/* POST /api/fleet — create a new vehicle (admin only) */
+router.post('/', requireRole('admin'), async (req, res) => {
+    const { name, vehicle_id, make, model, year, mileage, tags_renewal, slack_name } = req.body;
+    if (!name || !vehicle_id)
+        return res.status(400).json({ error: 'name and vehicle_id are required.' });
+    try {
+        const result = await pool.query(
+            `INSERT INTO vehicles (name, vehicle_id, make, model, year, mileage, tags_renewal, slack_name)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+            [name.trim(), vehicle_id.trim(),
+             make || null, model || null,
+             year ? Number(year) : null,
+             mileage ? Number(mileage) : 0,
+             tags_renewal || null,
+             slack_name || null]
+        );
+        res.status(201).json(result.rows[0]);
+    } catch (err) {
+        if (err.code === '23505')
+            return res.status(409).json({ error: 'A vehicle with that ID already exists.' });
+        console.error(err);
+        res.status(500).json({ error: 'Failed to create vehicle.' });
     }
 });
 

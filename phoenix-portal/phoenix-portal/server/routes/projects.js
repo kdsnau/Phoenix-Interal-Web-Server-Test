@@ -1,6 +1,6 @@
 const express      = require('express');
 const { WebClient } = require('@slack/web-api');
-const { authenticate } = require('../middleware/requireRole');
+const { authenticate, requireRole } = require('../middleware/requireRole');
 const pool         = require('../db/pool');
 
 const router     = express.Router();
@@ -17,6 +17,20 @@ pool.query(`
         updated_at TIMESTAMP DEFAULT NOW()
     )
 `).catch(err => console.error('project_completions table init:', err.message));
+
+/* Manually-entered projects (not from Slack) */
+pool.query(`
+    CREATE TABLE IF NOT EXISTS manual_projects (
+        id         SERIAL    PRIMARY KEY,
+        name       TEXT      NOT NULL,
+        rfq        TEXT,
+        notes      TEXT,
+        completed  BOOLEAN   NOT NULL DEFAULT FALSE,
+        created_by INT       REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+    )
+`).catch(err => console.error('manual_projects table init:', err.message));
 
 /* Normalise a job name for grouping — case-insensitive, collapse whitespace */
 const normalizeKey = s => s.trim().replace(/\s+/g, ' ').toLowerCase();
@@ -77,9 +91,10 @@ function get(fields, keys) {
    ----------------------------------------------------------------------- */
 router.get('/', async (req, res) => {
     try {
-        const [slackResult, overrideResult] = await Promise.all([
+        const [slackResult, overrideResult, manualResult] = await Promise.all([
             slack.conversations.history({ channel: CHANNEL_ID, limit: 1000 }),
             pool.query('SELECT name, completed FROM project_completions').catch(() => ({ rows: [] })),
+            pool.query('SELECT * FROM manual_projects ORDER BY created_at DESC').catch(() => ({ rows: [] })),
         ]);
 
         const msgs = slackResult.messages || [];
@@ -155,10 +170,78 @@ router.get('/', async (req, res) => {
                 return b.lastVisit - a.lastVisit;
             });
 
-        res.json(projects);
+        /* Build synthetic project objects from manual entries */
+        const manualProjects = manualResult.rows.map(mp => {
+            const tsSeconds = String(Math.floor(new Date(mp.created_at).getTime() / 1000));
+            return {
+                name:      mp.name,
+                rfq:       mp.rfq || '',
+                completed: mp.completed
+                    ? true
+                    : (normalizeKey(mp.name) in overrideMap
+                        ? overrideMap[normalizeKey(mp.name)]
+                        : false),
+                lastVisit: tsSeconds,
+                visits:    [{
+                    ts:          tsSeconds,
+                    date:        mp.created_at,
+                    technicians: '',
+                    arrival:     '',
+                    work:        mp.notes || '',
+                    parts:       '',
+                    completed:   mp.completed,
+                    images:      [],
+                }],
+                _manual:   true,
+                _manualId: mp.id,
+            };
+        });
+
+        const allProjects = [...projects, ...manualProjects].sort((a, b) => {
+            if (a.completed !== b.completed) return a.completed ? 1 : -1;
+            return Number(b.lastVisit) - Number(a.lastVisit);
+        });
+
+        res.json(allProjects);
     } catch (err) {
         console.error('Projects Slack error:', err.message);
         res.status(500).json({ error: 'Failed to fetch project reports.' });
+    }
+});
+
+/* -----------------------------------------------------------------------
+   POST /api/projects — create a manual project (admin only)
+   ----------------------------------------------------------------------- */
+router.post('/', requireRole('admin'), async (req, res) => {
+    const { name, rfq, notes } = req.body;
+    if (!name) return res.status(400).json({ error: 'name is required.' });
+    try {
+        const result = await pool.query(
+            `INSERT INTO manual_projects (name, rfq, notes, created_by)
+             VALUES ($1,$2,$3,$4) RETURNING *`,
+            [name.trim(), rfq || null, notes || null, req.user.id]
+        );
+        res.status(201).json(result.rows[0]);
+    } catch (err) {
+        console.error('Create manual project error:', err.message);
+        res.status(500).json({ error: 'Failed to create project.' });
+    }
+});
+
+/* -----------------------------------------------------------------------
+   DELETE /api/projects/manual/:id — admin only
+   ----------------------------------------------------------------------- */
+router.delete('/manual/:id', requireRole('admin'), async (req, res) => {
+    try {
+        const result = await pool.query(
+            'DELETE FROM manual_projects WHERE id = $1 RETURNING id',
+            [req.params.id]
+        );
+        if (result.rowCount === 0) return res.status(404).json({ error: 'Project not found.' });
+        res.json({ success: true });
+    } catch (err) {
+        console.error('Delete manual project error:', err.message);
+        res.status(500).json({ error: 'Failed to delete project.' });
     }
 });
 

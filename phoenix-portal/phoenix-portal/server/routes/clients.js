@@ -24,6 +24,26 @@ pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS contract_end    DATE`).
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_inspection DATE`).catch(() => {});
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS next_inspection DATE`).catch(() => {});
 
+/* POST /api/clients — admin only */
+router.post('/', requireRole('admin'), async (req, res) => {
+    const { name, customer_id, vendor, services } = req.body;
+    if (!name || !customer_id)
+        return res.status(400).json({ error: 'name and customer_id are required.' });
+    try {
+        const result = await pool.query(
+            `INSERT INTO clients (name, customer_id, vendor, services)
+             VALUES ($1, $2, $3, $4) RETURNING *`,
+            [name.trim(), customer_id.trim(), vendor || 'generic', services || []]
+        );
+        res.status(201).json(result.rows[0]);
+    } catch (err) {
+        if (err.code === '23505')
+            return res.status(409).json({ error: 'A client with that Customer ID already exists.' });
+        console.error(err);
+        res.status(500).json({ error: 'Failed to create client.' });
+    }
+});
+
 /* GET /api/clients?service=&vendor=&search= */
 router.get('/', authenticate, async (req, res) => {
     const { service, vendor, search } = req.query;

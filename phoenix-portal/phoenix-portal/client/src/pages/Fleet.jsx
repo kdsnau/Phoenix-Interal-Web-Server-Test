@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
+import { useAuth } from '../context/AuthContext';
 import Layout from '../components/Layout';
 import './Fleet.css';
 
@@ -648,10 +649,94 @@ function VehicleDetail({ vehicleId, onClose }) {
     );
 }
 
+/* ── Add vehicle modal ────────────────────────────────────────────────── */
+function NewVehicleModal({ onClose, onCreated }) {
+    const [form, setForm] = useState({
+        name: '', vehicle_id: '', make: '', model: '',
+        year: '', mileage: '0', tags_renewal: '', slack_name: '',
+    });
+    const [error,  setError]  = useState('');
+    const [saving, setSaving] = useState(false);
+
+    function set(k, v) { setForm(f => ({ ...f, [k]: v })); }
+
+    async function submit(e) {
+        e.preventDefault();
+        setError('');
+        setSaving(true);
+        try {
+            const { data } = await api.post('/fleet', form);
+            onCreated(data);
+            onClose();
+        } catch (err) {
+            setError(err.response?.data?.error || 'Failed to create vehicle.');
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+                <div className="modal-title">Add Vehicle</div>
+                {error && <div className="error-msg">{error}</div>}
+                <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Display Name *</label>
+                            <input value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. NV200 #3" required autoFocus />
+                        </div>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Unit # (Vehicle ID) *</label>
+                            <input value={form.vehicle_id} onChange={e => set('vehicle_id', e.target.value)} placeholder="e.g. NV200-3" required />
+                        </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Make</label>
+                            <input value={form.make} onChange={e => set('make', e.target.value)} placeholder="Nissan" />
+                        </div>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Model</label>
+                            <input value={form.model} onChange={e => set('model', e.target.value)} placeholder="NV200" />
+                        </div>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Year</label>
+                            <input type="number" value={form.year} onChange={e => set('year', e.target.value)} placeholder="2022" min="1990" max="2030" />
+                        </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Starting Mileage</label>
+                            <input type="number" value={form.mileage} onChange={e => set('mileage', e.target.value)} min="0" />
+                        </div>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Tags Renewal</label>
+                            <input type="date" value={form.tags_renewal} onChange={e => set('tags_renewal', e.target.value)} />
+                        </div>
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                        <label className="form-label">Slack Name <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(exact name in Slack for feed matching)</span></label>
+                        <input value={form.slack_name} onChange={e => set('slack_name', e.target.value)} placeholder="e.g. NV200 #3" />
+                    </div>
+                    <div className="modal-actions">
+                        <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                        <button type="submit" className="btn btn-primary" disabled={saving}>
+                            {saving ? 'Adding…' : 'Add Vehicle'}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+}
+
 export default function Fleet() {
-    const [vehicles, setVehicles]     = useState([]);
-    const [loading, setLoading]       = useState(true);
-    const [selectedId, setSelectedId] = useState(null);
+    const { user }                      = useAuth();
+    const [vehicles, setVehicles]       = useState([]);
+    const [loading, setLoading]         = useState(true);
+    const [selectedId, setSelectedId]   = useState(null);
+    const [showAddVehicle, setShowAddVehicle] = useState(false);
     const [importing, setImporting]   = useState(false);
     const [importMsg, setImportMsg]   = useState('');
 
@@ -684,6 +769,11 @@ export default function Fleet() {
                     <button className="btn btn-ghost" onClick={runImport} disabled={importing}>
                         {importing ? 'Importing...' : '↓ Import from Report'}
                     </button>
+                    {user.role === 'admin' && (
+                        <button className="btn btn-primary" onClick={() => setShowAddVehicle(true)}>
+                            + Add Vehicle
+                        </button>
+                    )}
                 </div>
             </div>
             {loading && <p style={{ color: 'var(--text-dim)' }}>Loading...</p>}
@@ -696,6 +786,15 @@ export default function Fleet() {
             )}
             {selectedId && (
                 <VehicleDetail vehicleId={selectedId} onClose={() => setSelectedId(null)} />
+            )}
+            {showAddVehicle && (
+                <NewVehicleModal
+                    onClose={() => setShowAddVehicle(false)}
+                    onCreated={v => {
+                        setVehicles(prev => [...prev, { ...v, open_issues: 0 }]);
+                        setShowAddVehicle(false);
+                    }}
+                />
             )}
         </Layout>
     );

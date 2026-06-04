@@ -78,7 +78,7 @@ function get(fields, keys) {
 router.get('/', async (req, res) => {
     try {
         const [slackResult, overrideResult] = await Promise.all([
-            slack.conversations.history({ channel: CHANNEL_ID, limit: 200 }),
+            slack.conversations.history({ channel: CHANNEL_ID, limit: 1000 }),
             pool.query('SELECT name, completed FROM project_completions').catch(() => ({ rows: [] })),
         ]);
 
@@ -137,9 +137,16 @@ router.get('/', async (req, res) => {
             .map(p => ({
                 name:      p.name,
                 rfq:       p.rfq,
-                completed: normalizeKey(p.name) in overrideMap
-                    ? overrideMap[normalizeKey(p.name)]
-                    : p.slackCompleted,
+                /* Slack-detected completion is authoritative when true.
+                   A DB override of false cannot un-complete something Slack
+                   already confirmed complete (avoids stale overrides blocking
+                   STATUS: COMPLETE entries). The override CAN still manually
+                   mark things complete when Slack didn't detect it. */
+                completed: p.slackCompleted
+                    ? true
+                    : (normalizeKey(p.name) in overrideMap
+                        ? overrideMap[normalizeKey(p.name)]
+                        : false),
                 lastVisit: p.lastVisit,
                 visits:    p.visits.sort((a, b) => b.ts - a.ts),
             }))

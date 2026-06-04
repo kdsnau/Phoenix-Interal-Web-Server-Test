@@ -168,7 +168,10 @@ function getTokens(name) {
     return name.toLowerCase()
         .replace(/[^a-z0-9\s]/g, ' ')
         .split(/\s+/)
-        .filter(w => w.length > 2 && !STOP_WORDS.has(w));
+        .filter(w => w.length > 2 && !STOP_WORDS.has(w))
+        /* Basic plural/possessive stemming so "sisters" and "sister's" both
+           resolve to "sister" and count as the same token when merging. */
+        .map(w => w.endsWith('s') && w.length > 3 ? w.slice(0, -1) : w);
 }
 
 function groupAndMerge(list) {

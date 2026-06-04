@@ -519,40 +519,37 @@ function NewClientModal({ onClose, onCreated }) {
     }
 
     return (
-        <div className="alarm-detail-overlay" onClick={onClose}>
-            <div className="alarm-detail" onClick={e => e.stopPropagation()} style={{ maxWidth: 480, height: 'auto' }}>
-                <div className="alarm-detail-header">
-                    <div className="alarm-detail-name">Add Client</div>
-                    <button className="alarm-close-btn" onClick={onClose}>✕</button>
-                </div>
-                {error && <div style={{ color: 'var(--red)', fontSize: 13, padding: '8px 24px' }}>{error}</div>}
-                <form onSubmit={submit} style={{ padding: '16px 24px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480 }}>
+                <div className="modal-title">Add Client</div>
+                {error && <div className="error-msg">{error}</div>}
+                <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text-dim)' }}>
-                            Client Name *
-                            <input className="inv-input" value={form.name} onChange={e => set('name', e.target.value)} required autoFocus />
-                        </label>
-                        <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text-dim)' }}>
-                            Customer ID *
-                            <input className="inv-input" value={form.customer_id} onChange={e => set('customer_id', e.target.value)} placeholder="e.g. PHX-001" required />
-                        </label>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Client Name *</label>
+                            <input value={form.name} onChange={e => set('name', e.target.value)} required autoFocus />
+                        </div>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Customer ID *</label>
+                            <input value={form.customer_id} onChange={e => set('customer_id', e.target.value)} placeholder="e.g. PHX-001" required />
+                        </div>
                     </div>
-                    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text-dim)' }}>
-                        Vendor / Panel Manufacturer
-                        <input className="inv-input" value={form.vendor} onChange={e => set('vendor', e.target.value)} placeholder="generic, DSC, Honeywell, Bosch…" />
-                    </label>
-                    <div>
-                        <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>Services</div>
-                        <div style={{ display: 'flex', gap: 16 }}>
+                    <div className="form-group" style={{ margin: 0 }}>
+                        <label className="form-label">Vendor / Panel Manufacturer</label>
+                        <input value={form.vendor} onChange={e => set('vendor', e.target.value)} placeholder="generic, DSC, Honeywell, Bosch…" />
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                        <label className="form-label">Services</label>
+                        <div style={{ display: 'flex', gap: 16, marginTop: 6 }}>
                             {['alarm', 'fire', 'access_control'].map(s => (
-                                <label key={s} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                                <label key={s} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', fontWeight: 400 }}>
                                     <input type="checkbox" checked={form.services.includes(s)} onChange={() => toggleService(s)} />
                                     {s === 'access_control' ? 'Access Control' : s.charAt(0).toUpperCase() + s.slice(1)}
                                 </label>
                             ))}
                         </div>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+                    <div className="modal-actions">
                         <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
                         <button type="submit" className="btn btn-primary" disabled={saving}>
                             {saving ? 'Adding…' : 'Add Client'}

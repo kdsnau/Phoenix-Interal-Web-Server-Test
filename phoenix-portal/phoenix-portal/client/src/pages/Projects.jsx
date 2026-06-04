@@ -119,27 +119,24 @@ function NewProjectModal({ onClose, onCreated }) {
     }
 
     return (
-        <div className="proj-overlay" onClick={onClose}>
-            <div className="proj-detail" onClick={e => e.stopPropagation()} style={{ maxWidth: 460, height: 'auto' }}>
-                <div className="proj-detail-header">
-                    <div className="proj-detail-name">Add Project</div>
-                    <button className="proj-close-btn" onClick={onClose}>✕</button>
-                </div>
-                {error && <div style={{ color: 'var(--red)', fontSize: 13, padding: '8px 20px' }}>{error}</div>}
-                <form onSubmit={submit} style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-                    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text-dim)' }}>
-                        Project Name *
-                        <input className="inv-input" value={form.name} onChange={e => set('name', e.target.value)} required autoFocus placeholder="e.g. Terros Health - Phoenix" />
-                    </label>
-                    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text-dim)' }}>
-                        RFQ # <span style={{ fontWeight: 400 }}>(optional)</span>
-                        <input className="inv-input" value={form.rfq} onChange={e => set('rfq', e.target.value)} placeholder="e.g. RFQ-2024-042" />
-                    </label>
-                    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: 'var(--text-dim)' }}>
-                        Notes / Description <span style={{ fontWeight: 400 }}>(optional)</span>
-                        <textarea className="inv-input inv-textarea" value={form.notes} onChange={e => set('notes', e.target.value)} rows={3} placeholder="Scope, location, details…" />
-                    </label>
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
+                <div className="modal-title">Add Project</div>
+                {error && <div className="error-msg">{error}</div>}
+                <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    <div className="form-group">
+                        <label className="form-label">Project Name *</label>
+                        <input value={form.name} onChange={e => set('name', e.target.value)} required autoFocus placeholder="e.g. Terros Health - Phoenix" />
+                    </div>
+                    <div className="form-group">
+                        <label className="form-label">RFQ # (optional)</label>
+                        <input value={form.rfq} onChange={e => set('rfq', e.target.value)} placeholder="e.g. RFQ-2024-042" />
+                    </div>
+                    <div className="form-group">
+                        <label className="form-label">Notes / Description (optional)</label>
+                        <textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={3} placeholder="Scope, location, details…" style={{ resize: 'vertical' }} />
+                    </div>
+                    <div className="modal-actions">
                         <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
                         <button type="submit" className="btn btn-primary" disabled={saving}>
                             {saving ? 'Adding…' : 'Add Project'}

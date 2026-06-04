@@ -331,6 +331,7 @@ function VehicleDetail({ vehicleId, onClose }) {
     const totalInvoices = (v.invoices || []).reduce((sum, i) => sum + Number(i.amount), 0);
 
     return (
+        <>
         <div className="modal-overlay fleet-overlay" onClick={onClose}>
             <div className="fleet-detail" onClick={e => e.stopPropagation()}>
                 <div className="fleet-detail-header">
@@ -643,7 +644,7 @@ function VehicleDetail({ vehicleId, onClose }) {
                 onAdd={addVehicleInv}
             />
         )}
-    </div>
+        </>
     );
 }
 

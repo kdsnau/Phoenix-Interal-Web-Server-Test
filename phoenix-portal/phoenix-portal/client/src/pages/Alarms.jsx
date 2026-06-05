@@ -391,11 +391,6 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
     const [contactName,   setContactName]   = useState(client.contact_name   || '');
     const [contactPhone,  setContactPhone]  = useState(client.contact_phone  || '');
     const [contactEmail,  setContactEmail]  = useState(client.contact_email  || '');
-    /* Equipment */
-    const [panelBrand,    setPanelBrand]    = useState(client.panel_brand    || '');
-    const [panelModel,    setPanelModel]    = useState(client.panel_model    || '');
-    const [cameraCount,   setCameraCount]   = useState(client.camera_count   ?? '');
-    const [zoneCount,     setZoneCount]     = useState(client.zone_count     ?? '');
     /* Contract */
     const [contractType,  setContractType]  = useState(client.contract_type  || '');
     const [contractStart, setContractStart] = useState(client.contract_start ? client.contract_start.slice(0, 10) : '');
@@ -431,10 +426,6 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
             contact_name:   contactName   || null,
             contact_phone:  contactPhone  || null,
             contact_email:  contactEmail  || null,
-            panel_brand:    panelBrand    || null,
-            panel_model:    panelModel    || null,
-            camera_count:   cameraCount !== '' ? Number(cameraCount) : null,
-            zone_count:     zoneCount   !== '' ? Number(zoneCount)   : null,
         });
         setSavingNotes(false);
         onRefresh();
@@ -547,22 +538,6 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                                 <div className="alarm-field"><div className="alarm-label">Serial #</div><div className="alarm-value">{client.serial_number || '—'}</div></div>
                                 <div className="alarm-field"><div className="alarm-label">Connection</div><div className="alarm-value">{client.connection_type || '—'}</div></div>
                                 <div className="alarm-field"><div className="alarm-label">Carrier</div><div className="alarm-value">{client.carrier || '—'}</div></div>
-                                <div className="alarm-field">
-                                    <div className="alarm-label">Panel Brand</div>
-                                    <input className="alarm-input" value={panelBrand} onChange={e => setPanelBrand(e.target.value)} placeholder="e.g. DSC, Honeywell" />
-                                </div>
-                                <div className="alarm-field">
-                                    <div className="alarm-label">Panel Model</div>
-                                    <input className="alarm-input" value={panelModel} onChange={e => setPanelModel(e.target.value)} placeholder="e.g. PowerSeries Neo" />
-                                </div>
-                                <div className="alarm-field">
-                                    <div className="alarm-label">Cameras</div>
-                                    <input className="alarm-input" type="number" min="0" value={cameraCount} onChange={e => setCameraCount(e.target.value)} placeholder="0" />
-                                </div>
-                                <div className="alarm-field">
-                                    <div className="alarm-label">Zones</div>
-                                    <input className="alarm-input" type="number" min="0" value={zoneCount} onChange={e => setZoneCount(e.target.value)} placeholder="0" />
-                                </div>
                                 <div className="alarm-field">
                                     <div className="alarm-label">Monitoring</div>
                                     <div className="alarm-value">

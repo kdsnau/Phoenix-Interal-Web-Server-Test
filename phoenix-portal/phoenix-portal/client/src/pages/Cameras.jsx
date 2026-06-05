@@ -82,12 +82,6 @@ function ServerModal({ existing, onClose, onSaved }) {
                 {error && <div className="error-msg">{error}</div>}
                 <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
-                    {/* Demo mode toggle */}
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
-                        <input type="checkbox" checked={form.mock} onChange={e => set('mock', e.target.checked)} />
-                        Demo / Mock mode
-                    </label>
-
                     <div className="form-group" style={{ margin: 0 }}>
                         <label className="form-label">Display Name *</label>
                         <input value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Main Office NVR" required autoFocus />
@@ -127,12 +121,18 @@ function ServerModal({ existing, onClose, onSaved }) {
                                 {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                             </select>
                         </div>
-                        {!form.mock && (
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', paddingTop: 20, whiteSpace: 'nowrap' }}>
-                                <input type="checkbox" checked={form.use_https} onChange={e => set('use_https', e.target.checked)} />
-                                Use HTTPS
-                            </label>
-                        )}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 20 }}>
+                            {!form.mock && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                                    <input type="checkbox" id="cb-https" checked={form.use_https} onChange={e => set('use_https', e.target.checked)} />
+                                    <label htmlFor="cb-https" style={{ cursor: 'pointer', fontSize: 13 }}>Use HTTPS</label>
+                                </div>
+                            )}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                                <input type="checkbox" id="cb-mock" checked={form.mock} onChange={e => set('mock', e.target.checked)} />
+                                <label htmlFor="cb-mock" style={{ cursor: 'pointer', fontSize: 13 }}>Demo / Mock</label>
+                            </div>
+                        </div>
                     </div>
                     <div className="modal-actions">
                         <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>

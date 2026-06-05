@@ -169,8 +169,20 @@ function CameraCard({ camera, serverId }) {
             </div>
             <div className="cam-info">
                 <div className="cam-name" title={camera.name}>{camera.name || 'Unnamed Camera'}</div>
-                {camera.model && <div className="cam-model">{camera.model}</div>}
-                <span className={`tag ${tagClass}`} style={{ fontSize: 10 }}>{tagLabel}</span>
+                {camera.model && (
+                    <div className="cam-model" title={camera.vendor ? `${camera.vendor} ${camera.model}` : camera.model}>
+                        {camera.model}
+                    </div>
+                )}
+                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 2 }}>
+                    <span className={`tag ${tagClass}`} style={{ fontSize: 10 }}>{tagLabel}</span>
+                    {camera.isLicensed === false && (
+                        <span className="tag tag-red" style={{ fontSize: 10 }}>Unlicensed</span>
+                    )}
+                    {camera.isLicensed === true && (
+                        <span className="tag tag-dim" style={{ fontSize: 10 }}>Licensed</span>
+                    )}
+                </div>
             </div>
         </div>
     );
@@ -242,6 +254,7 @@ function ServerPanel({ server, onEdit, onDelete }) {
     const [tab,      setTab]                = useState('cameras'); // 'cameras' | 'events'
     const [ping,     setPing]               = useState(null);
     const [devices,  setDevices]            = useState([]);
+    const [licenses, setLicenses]           = useState([]);
     const [loadingDevices, setLoadingDevices] = useState(false);
     const [devError, setDevError]           = useState('');
 
@@ -257,8 +270,12 @@ function ServerPanel({ server, onEdit, onDelete }) {
         setLoadingDevices(true);
         setDevError('');
         try {
-            const { data } = await api.get(`/nvr/servers/${server.id}/devices`);
-            setDevices(Array.isArray(data) ? data : (data?.data || []));
+            const [devRes, licRes] = await Promise.all([
+                api.get(`/nvr/servers/${server.id}/devices`),
+                api.get(`/nvr/servers/${server.id}/licenses`).catch(() => ({ data: [] })),
+            ]);
+            setDevices(Array.isArray(devRes.data) ? devRes.data : (devRes.data?.data || []));
+            setLicenses(Array.isArray(licRes.data) ? licRes.data : []);
         } catch (err) {
             setDevError(err.response?.data?.error || 'Could not load cameras.');
         } finally {
@@ -327,6 +344,12 @@ function ServerPanel({ server, onEdit, onDelete }) {
                             {offlineCount > 0 && <span className="tag tag-red" style={{ fontSize: 10 }}>{offlineCount} offline</span>}
                         </>
                     )}
+                    {licenses.length > 0 && (() => {
+                        const total = licenses.reduce((s, l) => s + (l.channels || 0), 0);
+                        const used  = licenses.reduce((s, l) => s + (l.usedChannels || 0), 0);
+                        const cls   = used >= total ? 'tag-red' : used >= total * 0.8 ? 'tag-yellow' : 'tag-dim';
+                        return <span className={`tag ${cls}`} style={{ fontSize: 10 }}>🔑 {used}/{total} licensed</span>;
+                    })()}
                 </div>
 
                 <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -365,6 +388,12 @@ function ServerPanel({ server, onEdit, onDelete }) {
                         >
                             🔔 Events
                         </button>
+                        <button
+                            className={`nvr-tab ${tab === 'licenses' ? 'nvr-tab--active' : ''}`}
+                            onClick={() => switchTab('licenses')}
+                        >
+                            🔑 Licenses
+                        </button>
                     </div>
 
                     {/* Cameras tab */}
@@ -388,6 +417,61 @@ function ServerPanel({ server, onEdit, onDelete }) {
                     {/* Events tab */}
                     {tab === 'events' && (
                         <EventsLog serverId={server.id} devices={devices} />
+                    )}
+
+                    {/* Licenses tab */}
+                    {tab === 'licenses' && (
+                        <div>
+                            {licenses.length === 0 ? (
+                                <div className="nvr-loading">No license data available.</div>
+                            ) : (
+                                <div className="table-card">
+                                    <table className="data-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Key</th>
+                                                <th>Type</th>
+                                                <th>Channels</th>
+                                                <th>Used</th>
+                                                <th>Expires</th>
+                                                <th>Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {licenses.map(lic => {
+                                                const expiring = lic.expirationDate
+                                                    ? Math.ceil((new Date(lic.expirationDate) - Date.now()) / 86400000)
+                                                    : null;
+                                                return (
+                                                    <tr key={lic.id}>
+                                                        <td style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)' }}>
+                                                            {lic.key || '—'}
+                                                        </td>
+                                                        <td>
+                                                            <span className={`tag ${lic.type === 'trial' ? 'tag-yellow' : 'tag-dim'}`} style={{ fontSize: 10 }}>
+                                                                {lic.type || 'unknown'}
+                                                            </span>
+                                                        </td>
+                                                        <td style={{ fontFamily: 'var(--font-mono)' }}>{lic.channels ?? '—'}</td>
+                                                        <td style={{ fontFamily: 'var(--font-mono)' }}>{lic.usedChannels ?? '—'}</td>
+                                                        <td style={{ fontSize: 12, color: expiring !== null && expiring < 30 ? 'var(--red)' : 'var(--text-dim)' }}>
+                                                            {lic.expirationDate
+                                                                ? expiring < 0 ? 'Expired' : `${expiring}d`
+                                                                : 'Never'}
+                                                        </td>
+                                                        <td>
+                                                            <span className={`tag ${lic.isValid ? 'tag-green' : 'tag-red'}`} style={{ fontSize: 10 }}>
+                                                                {lic.isValid ? 'Valid' : 'Invalid'}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+                        </div>
                     )}
                 </div>
             )}

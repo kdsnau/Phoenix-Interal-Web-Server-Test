@@ -29,14 +29,35 @@ pool.query(`ALTER TABLE nvr_servers ADD COLUMN IF NOT EXISTS mock BOOLEAN NOT NU
    ═══════════════════════════════════════════════════════════════════════ */
 
 const MOCK_DEVICES = [
-    { id: 'mock-cam-01', name: 'Front Entrance',  model: 'DW-MD421D',   status: 'Online'      },
-    { id: 'mock-cam-02', name: 'Parking Lot A',   model: 'DW-MD421D',   status: 'Recording'   },
-    { id: 'mock-cam-03', name: 'Server Room',     model: 'DW-PF5M1TIR', status: 'Recording'   },
-    { id: 'mock-cam-04', name: 'Back Door',       model: 'DW-MD421D',   status: 'Offline'     },
-    { id: 'mock-cam-05', name: 'Reception',       model: 'DW-PF5M1TIR', status: 'Online'      },
-    { id: 'mock-cam-06', name: 'Loading Dock',    model: 'DW-MD421D',   status: 'Offline'     },
-    { id: 'mock-cam-07', name: 'Side Gate',       model: 'DW-PF5M1TIR', status: 'Online'      },
-    { id: 'mock-cam-08', name: 'Break Room',      model: 'DW-MD421D',   status: 'Recording'   },
+    { id: 'mock-cam-01', name: 'Front Entrance',  model: 'DW-MD421D',   vendor: 'Digital Watchdog', status: 'Online',    isLicensed: true  },
+    { id: 'mock-cam-02', name: 'Parking Lot A',   model: 'DW-MD421D',   vendor: 'Digital Watchdog', status: 'Recording', isLicensed: true  },
+    { id: 'mock-cam-03', name: 'Server Room',     model: 'DW-PF5M1TIR', vendor: 'Digital Watchdog', status: 'Recording', isLicensed: true  },
+    { id: 'mock-cam-04', name: 'Back Door',       model: 'DW-MD421D',   vendor: 'Digital Watchdog', status: 'Offline',   isLicensed: true  },
+    { id: 'mock-cam-05', name: 'Reception',       model: 'DW-PF5M1TIR', vendor: 'Digital Watchdog', status: 'Online',    isLicensed: true  },
+    { id: 'mock-cam-06', name: 'Loading Dock',    model: 'DW-MD421D',   vendor: 'Digital Watchdog', status: 'Offline',   isLicensed: false },
+    { id: 'mock-cam-07', name: 'Side Gate',       model: 'DW-PF5M1TIR', vendor: 'Digital Watchdog', status: 'Online',    isLicensed: true  },
+    { id: 'mock-cam-08', name: 'Break Room',      model: 'DW-MD421D',   vendor: 'Digital Watchdog', status: 'Recording', isLicensed: false },
+];
+
+const MOCK_LICENSES = [
+    {
+        id: 'mock-lic-01',
+        key: 'MOCK-XXXX-XXXX-XXXX',
+        type: 'permanent',
+        channels: 6,
+        usedChannels: 6,
+        expirationDate: null,
+        isValid: true,
+    },
+    {
+        id: 'mock-lic-02',
+        key: 'MOCK-TRIAL-XXXX',
+        type: 'trial',
+        channels: 4,
+        usedChannels: 0,
+        expirationDate: new Date(Date.now() + 14 * 86400000).toISOString(),
+        isValid: true,
+    },
 ];
 
 function mockNow(offsetMs = 0) {
@@ -201,11 +222,26 @@ router.get('/servers/:id/devices', async (req, res) => {
         const server = await getServer(req.params.id);
         if (server.mock) return res.json(MOCK_DEVICES);
         const client = nvrClient(server);
-        const { data } = await client.get('/rest/v2/devices', { params: { _with: 'status' } });
+        const { data } = await client.get('/rest/v2/devices', {
+            params: { _with: 'status,settings,licenses' },
+        });
         return res.json(data);
     } catch (err) {
         console.error('NVR devices error:', err.message);
         return res.status(502).json({ error: 'Could not reach NVR.', detail: err.message });
+    }
+});
+
+router.get('/servers/:id/licenses', async (req, res) => {
+    try {
+        const server = await getServer(req.params.id);
+        if (server.mock) return res.json(MOCK_LICENSES);
+        const client = nvrClient(server);
+        const { data } = await client.get('/rest/v2/licenses');
+        return res.json(data);
+    } catch (err) {
+        console.error('NVR licenses error:', err.message);
+        return res.status(502).json({ error: 'Could not fetch licenses.', detail: err.message });
     }
 });
 

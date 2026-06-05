@@ -83,23 +83,10 @@ function ServerModal({ existing, onClose, onSaved }) {
                 <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
                     {/* Demo mode toggle */}
-                    <div
-                        className={`nvr-mock-toggle ${form.mock ? 'nvr-mock-toggle--on' : ''}`}
-                        onClick={() => set('mock', !form.mock)}
-                        style={{ cursor: 'pointer' }}
-                    >
-                        <input
-                            type="checkbox"
-                            checked={form.mock}
-                            onChange={e => set('mock', e.target.checked)}
-                            onClick={e => e.stopPropagation()}
-                            style={{ flexShrink: 0, marginTop: 2 }}
-                        />
-                        <div style={{ fontSize: 13, lineHeight: 1.5 }}>
-                            <strong>Demo / Mock mode</strong>
-                            <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}> — uses built-in sample data, no real NVR needed</span>
-                        </div>
-                    </div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={form.mock} onChange={e => set('mock', e.target.checked)} />
+                        Demo / Mock mode
+                    </label>
 
                     <div className="form-group" style={{ margin: 0 }}>
                         <label className="form-label">Display Name *</label>

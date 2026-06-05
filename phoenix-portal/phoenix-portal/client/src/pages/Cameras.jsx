@@ -125,12 +125,12 @@ function ServerModal({ existing, onClose, onSaved }) {
                             {!form.mock && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
                                     <input type="checkbox" id="cb-https" checked={form.use_https} onChange={e => set('use_https', e.target.checked)} />
-                                    <label htmlFor="cb-https" style={{ cursor: 'pointer', fontSize: 13 }}>Use HTTPS</label>
+                                    <label htmlFor="cb-https" style={{ cursor: 'pointer', fontSize: 13, whiteSpace: 'nowrap' }}>Use HTTPS</label>
                                 </div>
                             )}
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
                                 <input type="checkbox" id="cb-mock" checked={form.mock} onChange={e => set('mock', e.target.checked)} />
-                                <label htmlFor="cb-mock" style={{ cursor: 'pointer', fontSize: 13 }}>Demo / Mock</label>
+                                <label htmlFor="cb-mock" style={{ cursor: 'pointer', fontSize: 13, whiteSpace: 'nowrap' }}>Demo / Mock</label>
                             </div>
                         </div>
                     </div>

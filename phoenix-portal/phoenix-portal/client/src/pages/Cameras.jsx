@@ -77,7 +77,7 @@ function ServerModal({ existing, onClose, onSaved }) {
 
     return (
         <div className="modal-overlay" onClick={onClose}>
-            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 460, width: '100%' }}>
                 <div className="modal-title">{existing ? 'Edit NVR System' : 'Add NVR System'}</div>
                 {error && <div className="error-msg">{error}</div>}
                 <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

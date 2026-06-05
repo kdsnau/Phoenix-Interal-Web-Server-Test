@@ -35,12 +35,6 @@ const EVENT_TYPE = {
     system:      { label: 'System',      cls: 'tag-dim'    },
 };
 
-const ZONE_TYPE_ICON = {
-    entry:     '🚪',
-    motion:    '👁',
-    perimeter: '🪟',
-    fire:      '🔥',
-};
 
 /* -----------------------------------------------------------------------
    Panel tab — DMP alarm panel status, zones, events
@@ -97,7 +91,6 @@ function PanelTab({ clientId, isAdmin }) {
     if (accounts.length === 0) {
         return (
             <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-dim)' }}>
-                <div style={{ fontSize: 28, marginBottom: 12 }}>🔒</div>
                 <div style={{ fontSize: 14, marginBottom: 4 }}>No alarm panel linked to this client.</div>
                 {isAdmin && (
                     <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={() => setShowLink(true)}>
@@ -207,7 +200,7 @@ function PanelTab({ clientId, isAdmin }) {
                                     {zones.map(z => (
                                         <tr key={z.id} style={{ opacity: z.bypassed ? 0.5 : 1 }}>
                                             <td style={{ fontWeight: 500, color: 'var(--text-hi)' }}>
-                                                {ZONE_TYPE_ICON[z.type] || '📍'} {z.name}
+                                                {z.name}
                                             </td>
                                             <td><span className="tag tag-dim" style={{ fontSize: 10 }}>{z.type}</span></td>
                                             <td>

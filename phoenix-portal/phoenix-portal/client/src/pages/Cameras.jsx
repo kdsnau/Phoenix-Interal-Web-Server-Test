@@ -164,7 +164,7 @@ function CameraCard({ camera, serverId }) {
                         onError={() => setImgError(true)}
                     />
                 ) : (
-                    <div className="cam-snapshot-placeholder">{online ? '📷' : '🚫'}</div>
+                    <div className="cam-snapshot-placeholder">{online ? 'No Feed' : 'Offline'}</div>
                 )}
             </div>
             <div className="cam-info">
@@ -328,7 +328,7 @@ function ServerPanel({ server, onEdit, onDelete }) {
                             onClick={e => { e.stopPropagation(); navigate('/alarms', { state: { openClientId: server.client_id } }); }}
                             title={`View ${server.client_name} in Alarms`}
                         >
-                            🏢 {server.client_name}
+                            {server.client_name}
                         </button>
                     )}
 
@@ -348,7 +348,7 @@ function ServerPanel({ server, onEdit, onDelete }) {
                         const total = licenses.reduce((s, l) => s + (l.channels || 0), 0);
                         const used  = licenses.reduce((s, l) => s + (l.usedChannels || 0), 0);
                         const cls   = used >= total ? 'tag-red' : used >= total * 0.8 ? 'tag-yellow' : 'tag-dim';
-                        return <span className={`tag ${cls}`} style={{ fontSize: 10 }}>🔑 {used}/{total} licensed</span>;
+                        return <span className={`tag ${cls}`} style={{ fontSize: 10 }}>{used}/{total} licensed</span>;
                     })()}
                 </div>
 
@@ -380,19 +380,19 @@ function ServerPanel({ server, onEdit, onDelete }) {
                             className={`nvr-tab ${tab === 'cameras' ? 'nvr-tab--active' : ''}`}
                             onClick={() => switchTab('cameras')}
                         >
-                            📷 Cameras {devices.length > 0 && `(${devices.length})`}
+                            Cameras {devices.length > 0 && `(${devices.length})`}
                         </button>
                         <button
                             className={`nvr-tab ${tab === 'events' ? 'nvr-tab--active' : ''}`}
                             onClick={() => switchTab('events')}
                         >
-                            🔔 Events
+                            Events
                         </button>
                         <button
                             className={`nvr-tab ${tab === 'licenses' ? 'nvr-tab--active' : ''}`}
                             onClick={() => switchTab('licenses')}
                         >
-                            🔑 Licenses
+                            Licenses
                         </button>
                     </div>
 
@@ -527,7 +527,6 @@ export default function Cameras() {
 
             {!loading && servers.length === 0 && (
                 <div className="nvr-empty">
-                    <div style={{ fontSize: 32, marginBottom: 12 }}>📷</div>
                     <div>No NVR systems connected yet.</div>
                     {user.role === 'admin' && (
                         <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={openAdd}>

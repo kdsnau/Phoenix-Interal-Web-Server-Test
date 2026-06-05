@@ -85,7 +85,7 @@ function ServerModal({ existing, onClose, onSaved }) {
                     {/* Demo mode toggle */}
                     <div className={`nvr-mock-toggle ${form.mock ? 'nvr-mock-toggle--on' : ''}`}>
                         <input id="nvr-mock-cb" type="checkbox" checked={form.mock} onChange={e => set('mock', e.target.checked)} style={{ flexShrink: 0, marginTop: 1 }} />
-                        <label htmlFor="nvr-mock-cb" style={{ cursor: 'pointer', fontSize: 13, lineHeight: 1.5 }}>
+                        <label htmlFor="nvr-mock-cb" style={{ cursor: 'pointer', fontSize: 13, lineHeight: 1.5, flex: 1, minWidth: 0 }}>
                             <strong>Demo / Mock mode</strong>
                             <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}> — uses built-in sample data, no real NVR needed</span>
                         </label>

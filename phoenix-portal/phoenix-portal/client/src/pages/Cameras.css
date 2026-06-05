@@ -152,6 +152,7 @@
     font-size: 13px;
     color: var(--text);
     transition: border-color 0.15s, background 0.15s;
+    overflow: hidden;
 }
 
 .nvr-mock-toggle--on {
@@ -160,6 +161,12 @@
 }
 
 .nvr-mock-toggle input { margin-top: 1px; flex-shrink: 0; }
+
+.nvr-mock-toggle span {
+    flex: 1;
+    min-width: 0;
+    line-height: 1.5;
+}
 
 /* ── Client badge ─────────────────────────────────────────────────────── */
 .nvr-client-badge {

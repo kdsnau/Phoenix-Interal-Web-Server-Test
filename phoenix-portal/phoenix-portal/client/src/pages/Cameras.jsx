@@ -131,7 +131,7 @@ function ServerModal({ existing, onClose, onSaved }) {
                             </select>
                         </div>
                         {!form.mock && (
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', paddingTop: 20 }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', paddingTop: 20, whiteSpace: 'nowrap' }}>
                                 <input type="checkbox" checked={form.use_https} onChange={e => set('use_https', e.target.checked)} />
                                 Use HTTPS
                             </label>

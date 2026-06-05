@@ -63,6 +63,9 @@ app.get('/api/health', (_, res) => res.json({ status: 'ok' }));
    Run `npm run build` in the client directory first.
    API routes above take priority; everything else falls through to React.
    ----------------------------------------------------------------------- */
+/* Serve uploaded files (insurance cards, etc.) */
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
 const DIST = path.join(__dirname, '../client/dist');
 app.use(express.static(DIST));
 app.use((_, res) => res.sendFile(path.join(DIST, 'index.html')));

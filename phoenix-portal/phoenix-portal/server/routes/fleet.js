@@ -1,4 +1,7 @@
 const express = require('express');
+const path    = require('path');
+const fs      = require('fs');
+const multer  = require('multer');
 const pool    = require('../db/pool');
 const { authenticate, requireRole } = require('../middleware/requireRole');
 const { sendServiceReminder, sendTagsReminder } = require('../config/mailer');
@@ -6,10 +9,31 @@ const { sendServiceReminder, sendTagsReminder } = require('../config/mailer');
 const router = express.Router();
 router.use(authenticate);
 
+/* ── Insurance file upload setup ──────────────────────────────────────── */
+const UPLOAD_DIR = path.join(__dirname, '../../uploads/insurance');
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+const storage = multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
+    filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
+        cb(null, `vehicle-${req.params.id}-insurance${ext}`);
+    },
+});
+const upload = multer({
+    storage,
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+    fileFilter: (_req, file, cb) => {
+        const ok = /^image\/(jpeg|png|webp|gif)$/.test(file.mimetype);
+        cb(ok ? null : new Error('Only image files are allowed.'), ok);
+    },
+});
+
 /* Add resolution columns to vehicle_notes if not already present */
 pool.query(`ALTER TABLE vehicle_notes ADD COLUMN IF NOT EXISTS resolved    BOOLEAN   NOT NULL DEFAULT FALSE`).catch(() => {});
 pool.query(`ALTER TABLE vehicle_notes ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP`).catch(() => {});
-pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS driver VARCHAR(100)`).catch(() => {});
+pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS driver         VARCHAR(100)`).catch(() => {});
+pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS insurance_file VARCHAR(255)`).catch(() => {});
 
 router.get('/', async (req, res) => {
     try {
@@ -286,6 +310,25 @@ console.log('Recipients:', [...recipients]);
         console.error(err);
         return res.status(500).json({ error: 'Server error.' });
     }
+});
+
+/* POST /api/fleet/:id/insurance — upload insurance card image (admin only) */
+router.post('/:id/insurance', requireRole('admin'), (req, res) => {
+    upload.single('insurance')(req, res, async (err) => {
+        if (err) return res.status(400).json({ error: err.message });
+        if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+        const filename = req.file.filename;
+        try {
+            await pool.query(
+                'UPDATE vehicles SET insurance_file = $1 WHERE id = $2',
+                [filename, req.params.id]
+            );
+            return res.json({ insurance_file: filename });
+        } catch (e) {
+            console.error(e);
+            return res.status(500).json({ error: 'Failed to save insurance file.' });
+        }
+    });
 });
 
 router.post('/:id/send-tags-email', async (req, res) => {

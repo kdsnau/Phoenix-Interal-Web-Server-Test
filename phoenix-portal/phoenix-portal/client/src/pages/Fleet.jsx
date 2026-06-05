@@ -199,9 +199,12 @@ function AddVehicleInvModal({ vehicleId, onClose, onAdd }) {
 }
 
 function VehicleDetail({ vehicleId, onClose }) {
+    const { user }                           = useAuth();
     const [v, setV]                         = useState(null);
     const [loading, setLoading]             = useState(true);
     const [showInsurance, setShowInsurance] = useState(false);
+    const [uploadingIns, setUploadingIns]   = useState(false);
+    const [insMsg,       setInsMsg]         = useState('');
     const [editMileage, setEditMileage]     = useState('');
     const [editReg,     setEditReg]         = useState('');
     const [editTags,    setEditTags]        = useState('');
@@ -310,6 +313,27 @@ function VehicleDetail({ vehicleId, onClose }) {
     const deleteInvoice = async (invId) => {
         await api.delete(`/fleet/${vehicleId}/invoices/${invId}`);
         setV(prev => ({ ...prev, invoices: prev.invoices.filter(i => i.id !== invId) }));
+    };
+
+    const uploadInsurance = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        setUploadingIns(true);
+        setInsMsg('');
+        try {
+            const fd = new FormData();
+            fd.append('insurance', file);
+            const { data } = await api.post(`/fleet/${vehicleId}/insurance`, fd, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            setV(prev => ({ ...prev, insurance_file: data.insurance_file }));
+            setInsMsg('Uploaded.');
+            setTimeout(() => setInsMsg(''), 3000);
+        } catch (err) {
+            setInsMsg(err.response?.data?.error || 'Upload failed.');
+        } finally {
+            setUploadingIns(false);
+        }
     };
 
     const sendEmail = async (type) => {
@@ -425,32 +449,46 @@ function VehicleDetail({ vehicleId, onClose }) {
 
                     <section className="fleet-section">
                         <div className="fleet-section-title">Insurance</div>
-                        <div style={{ display: 'flex', gap: 10 }}>
-                            <button className="btn btn-ghost" onClick={() => setShowInsurance(!showInsurance)}>
-                                {showInsurance ? 'Hide Insurance' : 'View Insurance'}
-                            </button>
-                            <a className="btn btn-ghost" href="/placeholder-insurance.png" download="insurance.png" style={{ textDecoration: 'none' }}>
-                                Download
-                            </a>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                            {v.insurance_file && (
+                                <>
+                                    <button className="btn btn-ghost" onClick={() => setShowInsurance(!showInsurance)}>
+                                        {showInsurance ? 'Hide Insurance' : 'View Insurance'}
+                                    </button>
+                                    <a
+                                        className="btn btn-ghost"
+                                        href={`/uploads/insurance/${v.insurance_file}`}
+                                        download={v.insurance_file}
+                                        style={{ textDecoration: 'none' }}
+                                    >
+                                        Download
+                                    </a>
+                                </>
+                            )}
+                            {!v.insurance_file && (
+                                <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>No insurance card on file.</span>
+                            )}
+                            {user.role === 'admin' && (
+                                <label className="btn btn-ghost" style={{ cursor: 'pointer', margin: 0 }}>
+                                    {uploadingIns ? 'Uploading…' : v.insurance_file ? '↑ Replace' : '↑ Upload Card'}
+                                    <input
+                                        type="file"
+                                        accept="image/*"
+                                        style={{ display: 'none' }}
+                                        onChange={uploadInsurance}
+                                        disabled={uploadingIns}
+                                    />
+                                </label>
+                            )}
+                            {insMsg && <span style={{ fontSize: 12, color: 'var(--green)' }}>{insMsg}</span>}
                         </div>
-                        {showInsurance && (
-                            <div className="fleet-insurance-preview">
-                                <div style={{
-                                    background: 'var(--bg-3)',
-                                    border: '1px dashed var(--border-hi)',
-                                    borderRadius: 'var(--radius)',
-                                    padding: 40,
-                                    textAlign: 'center',
-                                    color: 'var(--text-dim)',
-                                    fontFamily: 'var(--font-mono)',
-                                    fontSize: 12,
-                                    marginTop: 12,
-                                }}>
-                                    [ Insurance document placeholder ]<br />
-                                    <span style={{ fontSize: 11, marginTop: 6, display: 'block' }}>
-                                        Upload insurance image to server/uploads/ to display here
-                                    </span>
-                                </div>
+                        {showInsurance && v.insurance_file && (
+                            <div className="fleet-insurance-preview" style={{ marginTop: 12 }}>
+                                <img
+                                    src={`/uploads/insurance/${v.insurance_file}`}
+                                    alt="Insurance card"
+                                    style={{ maxWidth: '100%', borderRadius: 'var(--radius)', border: '1px solid var(--border)' }}
+                                />
                             </div>
                         )}
                     </section>

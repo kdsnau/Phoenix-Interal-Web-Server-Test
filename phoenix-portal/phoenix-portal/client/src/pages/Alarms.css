@@ -153,6 +153,51 @@
 .tx-pos { color: var(--green, #2db56d) !important; }
 .tx-neg { color: var(--red, #e05252) !important; }
 
+/* ── DMP Panel tab ────────────────────────────────────────────────────── */
+.dmp-status-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    padding: 10px 14px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 14px;
+}
+
+.dmp-status-item { display: flex; align-items: center; }
+
+.dmp-tabs {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 14px;
+}
+
+.dmp-info-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-top: 8px;
+}
+
+.dmp-info-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    font-size: 13px;
+    color: var(--text-hi);
+}
+
+@media (max-width: 600px) {
+    .dmp-info-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
 /* Slack feed */
 .alarm-slack-feed { display: flex; flex-direction: column; gap: 12px; }
 .alarm-slack-empty { color: #5c6e82; font-size: 13px; padding: 16px 0; }

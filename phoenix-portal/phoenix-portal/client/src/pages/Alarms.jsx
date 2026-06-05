@@ -4,6 +4,330 @@ import { useAuth } from '../context/AuthContext';
 import Layout from '../components/Layout';
 import './Alarms.css';
 
+/* -----------------------------------------------------------------------
+   Helpers
+   ----------------------------------------------------------------------- */
+function timeAgo(dateStr) {
+    if (!dateStr) return '—';
+    const diff = Date.now() - new Date(dateStr).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1)  return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24)  return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    return days === 1 ? 'yesterday' : `${days}d ago`;
+}
+
+const ARM_STATE = {
+    armed_away: { label: 'Armed Away', cls: 'tag-red'    },
+    armed_stay: { label: 'Armed Stay', cls: 'tag-yellow' },
+    disarmed:   { label: 'Disarmed',   cls: 'tag-green'  },
+};
+
+const EVENT_TYPE = {
+    armed_away:  { label: 'Armed Away',  cls: 'tag-red'    },
+    armed_stay:  { label: 'Armed Stay',  cls: 'tag-yellow' },
+    disarmed:    { label: 'Disarmed',    cls: 'tag-green'  },
+    alarm:       { label: 'ALARM',       cls: 'tag-red'    },
+    trouble:     { label: 'Trouble',     cls: 'tag-yellow' },
+    zone_bypass: { label: 'Bypass',      cls: 'tag-yellow' },
+    system:      { label: 'System',      cls: 'tag-dim'    },
+};
+
+const ZONE_TYPE_ICON = {
+    entry:     '🚪',
+    motion:    '👁',
+    perimeter: '🪟',
+    fire:      '🔥',
+};
+
+/* -----------------------------------------------------------------------
+   Panel tab — DMP alarm panel status, zones, events
+   ----------------------------------------------------------------------- */
+function PanelTab({ clientId, isAdmin }) {
+    const [accounts,  setAccounts]  = useState([]);
+    const [selected,  setSelected]  = useState(null); // active dmp account id
+    const [status,    setStatus]    = useState(null);
+    const [zones,     setZones]     = useState([]);
+    const [events,    setEvents]    = useState([]);
+    const [tab,       setTab]       = useState('status');
+    const [loading,   setLoading]   = useState(true);
+    const [dataLoading, setDataLoading] = useState(false);
+    const [showLink,  setShowLink]  = useState(false);
+
+    /* Load DMP accounts for this client */
+    useEffect(() => {
+        api.get('/dmp/accounts', { params: { client_id: clientId } })
+            .then(r => {
+                setAccounts(r.data);
+                if (r.data.length > 0) setSelected(r.data[0].id);
+            })
+            .catch(() => {})
+            .finally(() => setLoading(false));
+    }, [clientId]);
+
+    /* Load panel data when account selected */
+    useEffect(() => {
+        if (!selected) return;
+        setDataLoading(true);
+        Promise.all([
+            api.get(`/dmp/accounts/${selected}/status`),
+            api.get(`/dmp/accounts/${selected}/zones`),
+            api.get(`/dmp/accounts/${selected}/events`),
+        ]).then(([s, z, e]) => {
+            setStatus(s.data);
+            setZones(Array.isArray(z.data) ? z.data : []);
+            setEvents(Array.isArray(e.data) ? e.data : []);
+        }).catch(() => {
+            setStatus(null);
+        }).finally(() => setDataLoading(false));
+    }, [selected]);
+
+    async function unlinkAccount(id) {
+        if (!confirm('Remove this panel link?')) return;
+        await api.delete(`/dmp/accounts/${id}`);
+        setAccounts(a => a.filter(x => x.id !== id));
+        if (selected === id) setSelected(accounts.find(x => x.id !== id)?.id || null);
+    }
+
+    if (loading) return <div className="alarm-empty">Loading…</div>;
+
+    /* No accounts linked yet */
+    if (accounts.length === 0) {
+        return (
+            <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-dim)' }}>
+                <div style={{ fontSize: 28, marginBottom: 12 }}>🔒</div>
+                <div style={{ fontSize: 14, marginBottom: 4 }}>No alarm panel linked to this client.</div>
+                {isAdmin && (
+                    <button className="btn btn-primary" style={{ marginTop: 14 }} onClick={() => setShowLink(true)}>
+                        + Link Panel
+                    </button>
+                )}
+                {showLink && (
+                    <LinkPanelModal
+                        clientId={clientId}
+                        onClose={() => setShowLink(false)}
+                        onSaved={acc => { setAccounts([acc]); setSelected(acc.id); setShowLink(false); }}
+                    />
+                )}
+            </div>
+        );
+    }
+
+    const arm  = status ? (ARM_STATE[status.armState] || { label: status.armState, cls: 'tag-dim' }) : null;
+    const faultZones = zones.filter(z => z.state === 'open' || z.state === 'alarm');
+    const bypassed   = zones.filter(z => z.bypassed);
+
+    return (
+        <div className="alarm-section">
+            {/* Account selector (if multiple panels) */}
+            {accounts.length > 1 && (
+                <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+                    {accounts.map(a => (
+                        <button
+                            key={a.id}
+                            className={`btn ${selected === a.id ? 'btn-primary' : 'btn-ghost'}`}
+                            style={{ fontSize: 12, padding: '4px 12px' }}
+                            onClick={() => setSelected(a.id)}
+                        >
+                            {a.name}
+                            {a.mock && <span style={{ marginLeft: 6, opacity: 0.6, fontSize: 10 }}>MOCK</span>}
+                        </button>
+                    ))}
+                </div>
+            )}
+
+            {dataLoading && <div className="alarm-empty">Loading panel data…</div>}
+
+            {!dataLoading && status && (
+                <>
+                    {/* Status bar */}
+                    <div className="dmp-status-bar">
+                        <div className="dmp-status-item">
+                            <span className={`tag ${status.online ? 'tag-green' : 'tag-red'}`}>
+                                {status.online ? '● Online' : '● Offline'}
+                            </span>
+                        </div>
+                        {arm && (
+                            <div className="dmp-status-item">
+                                <span className={`tag ${arm.cls}`}>{arm.label}</span>
+                            </div>
+                        )}
+                        {!status.acPower && <span className="tag tag-red">AC Loss</span>}
+                        {!status.batteryOk && <span className="tag tag-red">Low Battery</span>}
+                        {status.trouble && <span className="tag tag-yellow">Trouble</span>}
+                        {faultZones.length > 0 && (
+                            <span className="tag tag-red">{faultZones.length} Zone Fault{faultZones.length !== 1 ? 's' : ''}</span>
+                        )}
+                        {bypassed.length > 0 && (
+                            <span className="tag tag-yellow">{bypassed.length} Bypassed</span>
+                        )}
+                        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
+                            Updated {timeAgo(status.lastUpdate)}
+                        </span>
+                    </div>
+
+                    {/* Sub-tabs */}
+                    <div className="dmp-tabs">
+                        {['status', 'zones', 'events'].map(t => (
+                            <button
+                                key={t}
+                                className={`nvr-tab ${tab === t ? 'nvr-tab--active' : ''}`}
+                                onClick={() => setTab(t)}
+                            >
+                                {t.charAt(0).toUpperCase() + t.slice(1)}
+                                {t === 'zones' && faultZones.length > 0 && (
+                                    <span className="tag tag-red" style={{ fontSize: 9, marginLeft: 6 }}>{faultZones.length}</span>
+                                )}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Status tab */}
+                    {tab === 'status' && (
+                        <div className="dmp-info-grid">
+                            <div className="dmp-info-item"><span className="alarm-label">Panel ID</span><span>{status.panelId || '—'}</span></div>
+                            <div className="dmp-info-item"><span className="alarm-label">Arm State</span><span className={`tag ${arm?.cls}`}>{arm?.label || '—'}</span></div>
+                            <div className="dmp-info-item"><span className="alarm-label">AC Power</span><span className={`tag ${status.acPower ? 'tag-green' : 'tag-red'}`}>{status.acPower ? 'OK' : 'LOSS'}</span></div>
+                            <div className="dmp-info-item"><span className="alarm-label">Battery</span><span className={`tag ${status.batteryOk ? 'tag-green' : 'tag-red'}`}>{status.batteryOk ? 'OK' : 'LOW'}</span></div>
+                            <div className="dmp-info-item"><span className="alarm-label">Zones</span><span>{zones.length}</span></div>
+                            <div className="dmp-info-item"><span className="alarm-label">Faults</span><span>{faultZones.length > 0 ? <span className="tag tag-red">{faultZones.length}</span> : <span className="tag tag-green">None</span>}</span></div>
+                        </div>
+                    )}
+
+                    {/* Zones tab */}
+                    {tab === 'zones' && (
+                        <div className="table-card" style={{ marginTop: 8 }}>
+                            <table className="data-table">
+                                <thead>
+                                    <tr><th>Zone</th><th>Type</th><th>State</th><th>Bypassed</th></tr>
+                                </thead>
+                                <tbody>
+                                    {zones.map(z => (
+                                        <tr key={z.id} style={{ opacity: z.bypassed ? 0.5 : 1 }}>
+                                            <td style={{ fontWeight: 500, color: 'var(--text-hi)' }}>
+                                                {ZONE_TYPE_ICON[z.type] || '📍'} {z.name}
+                                            </td>
+                                            <td><span className="tag tag-dim" style={{ fontSize: 10 }}>{z.type}</span></td>
+                                            <td>
+                                                <span className={`tag ${z.state === 'open' || z.state === 'alarm' ? 'tag-red' : z.state === 'inactive' || z.state === 'closed' ? 'tag-green' : 'tag-dim'}`} style={{ fontSize: 10 }}>
+                                                    {z.state}
+                                                </span>
+                                            </td>
+                                            <td>{z.bypassed ? <span className="tag tag-yellow" style={{ fontSize: 10 }}>Bypassed</span> : '—'}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
+
+                    {/* Events tab */}
+                    {tab === 'events' && (
+                        <div style={{ marginTop: 8 }}>
+                            {events.map((ev, i) => {
+                                const et = EVENT_TYPE[ev.type] || { label: ev.type, cls: 'tag-dim' };
+                                return (
+                                    <div key={ev.id || i} className="event-row">
+                                        <span className={`tag ${et.cls}`} style={{ fontSize: 10, flexShrink: 0 }}>{et.label}</span>
+                                        <span className="event-camera">{ev.description}</span>
+                                        {ev.user && <span className="event-desc">{ev.user}</span>}
+                                        <span className="event-time">{timeAgo(ev.timestamp)}</span>
+                                    </div>
+                                );
+                            })}
+                            {events.length === 0 && <div className="alarm-empty">No events.</div>}
+                        </div>
+                    )}
+                </>
+            )}
+
+            {/* Admin controls */}
+            {isAdmin && (
+                <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)', display: 'flex', gap: 10 }}>
+                    <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => setShowLink(true)}>+ Add Panel</button>
+                    {selected && (
+                        <button className="btn btn-danger" style={{ fontSize: 12 }} onClick={() => unlinkAccount(selected)}>Remove Panel</button>
+                    )}
+                </div>
+            )}
+
+            {showLink && (
+                <LinkPanelModal
+                    clientId={clientId}
+                    onClose={() => setShowLink(false)}
+                    onSaved={acc => { setAccounts(a => [...a, acc]); setSelected(acc.id); setShowLink(false); }}
+                />
+            )}
+        </div>
+    );
+}
+
+/* -----------------------------------------------------------------------
+   Link panel modal
+   ----------------------------------------------------------------------- */
+function LinkPanelModal({ clientId, onClose, onSaved }) {
+    const [form, setForm] = useState({ name: '', site_id: '', api_key: '', api_url: 'https://api.wadmp.com', mock: false });
+    const [error, setError]   = useState('');
+    const [saving, setSaving] = useState(false);
+
+    function set(k, v) { setForm(f => ({ ...f, [k]: v })); }
+
+    async function submit(e) {
+        e.preventDefault();
+        setError('');
+        setSaving(true);
+        try {
+            const { data } = await api.post('/dmp/accounts', { ...form, client_id: clientId });
+            onSaved(data);
+        } catch (err) {
+            setError(err.response?.data?.error || 'Failed to link panel.');
+        } finally {
+            setSaving(false);
+        }
+    }
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 440, width: '100%' }}>
+                <div className="modal-title">Link DMP Panel</div>
+                {error && <div className="error-msg">{error}</div>}
+                <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <div className="form-group" style={{ margin: 0 }}>
+                        <label className="form-label">Display Name *</label>
+                        <input value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Main Panel" required autoFocus />
+                    </div>
+                    {!form.mock && (
+                        <>
+                            <div className="form-group" style={{ margin: 0 }}>
+                                <label className="form-label">Site ID *</label>
+                                <input value={form.site_id} onChange={e => set('site_id', e.target.value)} placeholder="DMP site identifier" required />
+                            </div>
+                            <div className="form-group" style={{ margin: 0 }}>
+                                <label className="form-label">API Key</label>
+                                <input type="password" value={form.api_key} onChange={e => set('api_key', e.target.value)} placeholder="WA DMP API key" />
+                            </div>
+                            <div className="form-group" style={{ margin: 0 }}>
+                                <label className="form-label">API URL</label>
+                                <input value={form.api_url} onChange={e => set('api_url', e.target.value)} />
+                            </div>
+                        </>
+                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                        <input type="checkbox" id="dmp-mock-cb" checked={form.mock} onChange={e => set('mock', e.target.checked)} />
+                        <label htmlFor="dmp-mock-cb" style={{ cursor: 'pointer', fontSize: 13, whiteSpace: 'nowrap' }}>Demo / Mock mode</label>
+                    </div>
+                    <div className="modal-actions">
+                        <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                        <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Linking…' : 'Link Panel'}</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+}
+
 const STATUS_CLASS = {
     open:             'tag-yellow',
     in_progress:      'tag-blue',
@@ -190,7 +514,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                 </div>
 
                 <div className="alarm-tabs">
-                    {['system', 'contract', 'tickets', 'slack', ...(canBilling ? ['billing', 'transactions'] : [])].map(t => (
+                    {['system', 'panel', 'contract', 'tickets', 'slack', ...(canBilling ? ['billing', 'transactions'] : [])].map(t => (
                         <button key={t} className={`alarm-tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
                             {t.charAt(0).toUpperCase() + t.slice(1)}
                         </button>
@@ -394,6 +718,11 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                                 ))}
                             </div>
                         </div>
+                    )}
+
+                    {/* PANEL TAB */}
+                    {tab === 'panel' && (
+                        <PanelTab clientId={client.id} isAdmin={user.role === 'admin'} />
                     )}
 
                     {/* SLACK TAB */}

@@ -148,24 +148,12 @@
     padding: 10px 12px;
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    cursor: pointer;
-    font-size: 13px;
-    color: var(--text);
     transition: border-color 0.15s, background 0.15s;
-    overflow: hidden;
 }
 
 .nvr-mock-toggle--on {
     border-color: var(--accent);
     background: rgba(99,102,241,0.06);
-}
-
-.nvr-mock-toggle input { margin-top: 1px; flex-shrink: 0; }
-
-.nvr-mock-toggle span {
-    flex: 1;
-    min-width: 0;
-    line-height: 1.5;
 }
 
 /* ── Client badge ─────────────────────────────────────────────────────── */

@@ -9,6 +9,7 @@ router.use(authenticate);
 /* Add resolution columns to vehicle_notes if not already present */
 pool.query(`ALTER TABLE vehicle_notes ADD COLUMN IF NOT EXISTS resolved    BOOLEAN   NOT NULL DEFAULT FALSE`).catch(() => {});
 pool.query(`ALTER TABLE vehicle_notes ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP`).catch(() => {});
+pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS driver VARCHAR(100)`).catch(() => {});
 
 router.get('/', async (req, res) => {
     try {
@@ -71,19 +72,20 @@ router.get('/:id', async (req, res) => {
 
 /* POST /api/fleet — create a new vehicle (admin only) */
 router.post('/', requireRole('admin'), async (req, res) => {
-    const { name, vehicle_id, make, model, year, mileage, tags_renewal, slack_name } = req.body;
+    const { name, vehicle_id, make, model, year, mileage, tags_renewal, slack_name, driver } = req.body;
     if (!name || !vehicle_id)
         return res.status(400).json({ error: 'name and vehicle_id are required.' });
     try {
         const result = await pool.query(
-            `INSERT INTO vehicles (name, vehicle_id, make, model, year, mileage, tags_renewal, slack_name)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+            `INSERT INTO vehicles (name, vehicle_id, make, model, year, mileage, tags_renewal, slack_name, driver)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
             [name.trim(), vehicle_id.trim(),
              make || null, model || null,
              year ? Number(year) : null,
              mileage ? Number(mileage) : 0,
              tags_renewal || null,
-             slack_name || null]
+             slack_name || null,
+             driver || null]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
@@ -95,16 +97,17 @@ router.post('/', requireRole('admin'), async (req, res) => {
 });
 
 router.patch('/:id', async (req, res) => {
-    const { mileage, registration, tags_renewal } = req.body;
+    const { mileage, registration, tags_renewal, driver } = req.body;
     try {
         const result = await pool.query(
             `UPDATE vehicles
              SET mileage      = COALESCE($1, mileage),
                  registration  = COALESCE($2, registration),
-                 tags_renewal  = COALESCE($3::date, tags_renewal)
-             WHERE id = $4
+                 tags_renewal  = COALESCE($3::date, tags_renewal),
+                 driver        = COALESCE($4, driver)
+             WHERE id = $5
              RETURNING *`,
-            [mileage ?? null, registration ?? null, tags_renewal ?? null, req.params.id]
+            [mileage ?? null, registration ?? null, tags_renewal ?? null, driver ?? null, req.params.id]
         );
         if (result.rowCount === 0) return res.status(404).json({ error: 'Vehicle not found.' });
         return res.json(result.rows[0]);

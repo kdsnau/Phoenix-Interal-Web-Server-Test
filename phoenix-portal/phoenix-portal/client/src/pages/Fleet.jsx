@@ -39,6 +39,11 @@ function VehicleCard({ vehicle, onClick }) {
             <div className="vehicle-card-body">
                 <div className="vehicle-card-name">{vehicle.name}</div>
                 <div className="vehicle-card-sub">{vehicle.year} {vehicle.make} {vehicle.model}</div>
+                {vehicle.driver && (
+                    <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 4 }}>
+                        👤 {vehicle.driver}
+                    </div>
+                )}
                 <div className="vehicle-card-meta">
                     <span>{Number(vehicle.mileage).toLocaleString()} mi</span>
                     {openIssues > 0 && (
@@ -198,8 +203,9 @@ function VehicleDetail({ vehicleId, onClose }) {
     const [loading, setLoading]             = useState(true);
     const [showInsurance, setShowInsurance] = useState(false);
     const [editMileage, setEditMileage]     = useState('');
-    const [editReg, setEditReg]             = useState('');
-    const [editTags, setEditTags]           = useState('');
+    const [editReg,     setEditReg]         = useState('');
+    const [editTags,    setEditTags]        = useState('');
+    const [editDriver,  setEditDriver]      = useState('');
     const [saving, setSaving]               = useState(false);
     const [noteCategory, setNoteCategory]   = useState('service');
     const [noteContent, setNoteContent]     = useState('');
@@ -220,6 +226,7 @@ function VehicleDetail({ vehicleId, onClose }) {
             setEditMileage(data.mileage);
             setEditReg(data.registration || '');
             setEditTags(data.tags_renewal ? data.tags_renewal.slice(0, 10) : '');
+            setEditDriver(data.driver || '');
         } finally {
             setLoading(false);
         }
@@ -231,9 +238,10 @@ function VehicleDetail({ vehicleId, onClose }) {
         setSaving(true);
         try {
             const { data } = await api.patch(`/fleet/${vehicleId}`, {
-                mileage: Number(editMileage),
-                registration: editReg,
-                tags_renewal: editTags || null,
+                mileage:      Number(editMileage),
+                registration: editReg      || null,
+                tags_renewal: editTags     || null,
+                driver:       editDriver   || null,
             });
             setV(prev => ({ ...prev, ...data }));
             setMsg('Saved.');
@@ -368,6 +376,10 @@ function VehicleDetail({ vehicleId, onClose }) {
                             <div className="fleet-field">
                                 <label className="form-label">Tags Renewal</label>
                                 <input type="date" value={editTags} onChange={e => setEditTags(e.target.value)} />
+                            </div>
+                            <div className="fleet-field">
+                                <label className="form-label">Driver</label>
+                                <input value={editDriver} onChange={e => setEditDriver(e.target.value)} placeholder="Assigned driver" />
                             </div>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
@@ -653,7 +665,7 @@ function VehicleDetail({ vehicleId, onClose }) {
 function NewVehicleModal({ onClose, onCreated }) {
     const [form, setForm] = useState({
         name: '', vehicle_id: '', make: '', model: '',
-        year: '', mileage: '0', tags_renewal: '', slack_name: '',
+        year: '', mileage: '0', tags_renewal: '', slack_name: '', driver: '',
     });
     const [error,  setError]  = useState('');
     const [saving, setSaving] = useState(false);
@@ -715,9 +727,15 @@ function NewVehicleModal({ onClose, onCreated }) {
                             <input type="date" value={form.tags_renewal} onChange={e => set('tags_renewal', e.target.value)} />
                         </div>
                     </div>
-                    <div className="form-group" style={{ margin: 0 }}>
-                        <label className="form-label">Slack Name <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}>(exact name in Slack for feed matching)</span></label>
-                        <input value={form.slack_name} onChange={e => set('slack_name', e.target.value)} placeholder="e.g. NV200 #3" />
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Driver</label>
+                            <input value={form.driver} onChange={e => set('driver', e.target.value)} placeholder="Assigned driver" />
+                        </div>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Slack Name</label>
+                            <input value={form.slack_name} onChange={e => set('slack_name', e.target.value)} placeholder="e.g. NV200 #3" />
+                        </div>
                     </div>
                     <div className="modal-actions">
                         <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>

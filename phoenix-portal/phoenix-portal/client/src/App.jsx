@@ -13,6 +13,7 @@ import AI        from './pages/AI';
 import Feedback  from './pages/Feedback';
 import Messages  from './pages/Messages';
 import Calendar  from './pages/Calendar';
+import Cameras   from './pages/Cameras';
 
 function PrivateRoute({ children, roles }) {
     const { user } = useAuth();
@@ -38,6 +39,7 @@ function AppRoutes() {
             <Route path="/feedback"   element={<PrivateRoute><Feedback /></PrivateRoute>} />
             <Route path="/messages"   element={<PrivateRoute><Messages /></PrivateRoute>} />
             <Route path="/calendar"   element={<PrivateRoute><Calendar /></PrivateRoute>} />
+            <Route path="/cameras"    element={<PrivateRoute><Cameras /></PrivateRoute>} />
             <Route path="*"           element={<Navigate to={user ? '/dashboard' : '/login'} />} />
         </Routes>
     );

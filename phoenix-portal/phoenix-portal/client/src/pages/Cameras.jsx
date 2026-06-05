@@ -37,7 +37,7 @@ function eventTag(type) {
 
 /* ── Add / Edit server modal ──────────────────────────────────────────── */
 function ServerModal({ existing, onClose, onSaved }) {
-    const blank = { name: '', host: '', port: '7001', use_https: true, username: '', password: '', client_id: '' };
+    const blank = { name: '', host: '', port: '7001', use_https: true, username: '', password: '', client_id: '', mock: false };
     const [form,    setForm]    = useState(existing ? { ...existing, password: '' } : blank);
     const [error,   setError]   = useState('');
     const [saving,  setSaving]  = useState(false);
@@ -81,30 +81,47 @@ function ServerModal({ existing, onClose, onSaved }) {
                 <div className="modal-title">{existing ? 'Edit NVR System' : 'Add NVR System'}</div>
                 {error && <div className="error-msg">{error}</div>}
                 <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+
+                    {/* Demo mode toggle — shown first so it can grey out irrelevant fields */}
+                    <label className={`nvr-mock-toggle ${form.mock ? 'nvr-mock-toggle--on' : ''}`}>
+                        <input type="checkbox" checked={form.mock} onChange={e => set('mock', e.target.checked)} />
+                        <span>
+                            <strong>Demo / Mock mode</strong>
+                            <span style={{ fontWeight: 400, color: 'var(--text-dim)' }}> — uses built-in sample data, no real NVR needed</span>
+                        </span>
+                    </label>
+
                     <div className="form-group" style={{ margin: 0 }}>
                         <label className="form-label">Display Name *</label>
                         <input value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Main Office NVR" required autoFocus />
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10 }}>
-                        <div className="form-group" style={{ margin: 0 }}>
-                            <label className="form-label">Host / IP *</label>
-                            <input value={form.host} onChange={e => set('host', e.target.value)} placeholder="192.168.1.100" required />
-                        </div>
-                        <div className="form-group" style={{ margin: 0 }}>
-                            <label className="form-label">Port</label>
-                            <input type="number" value={form.port} onChange={e => set('port', e.target.value)} min="1" max="65535" />
-                        </div>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                        <div className="form-group" style={{ margin: 0 }}>
-                            <label className="form-label">Username *</label>
-                            <input value={form.username} onChange={e => set('username', e.target.value)} required />
-                        </div>
-                        <div className="form-group" style={{ margin: 0 }}>
-                            <label className="form-label">{existing ? 'Password (blank = keep)' : 'Password *'}</label>
-                            <input type="password" value={form.password} onChange={e => set('password', e.target.value)} required={!existing} />
-                        </div>
-                    </div>
+
+                    {/* Host / credentials — hidden in mock mode */}
+                    {!form.mock && (
+                        <>
+                            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10 }}>
+                                <div className="form-group" style={{ margin: 0 }}>
+                                    <label className="form-label">Host / IP *</label>
+                                    <input value={form.host} onChange={e => set('host', e.target.value)} placeholder="192.168.1.100" required />
+                                </div>
+                                <div className="form-group" style={{ margin: 0 }}>
+                                    <label className="form-label">Port</label>
+                                    <input type="number" value={form.port} onChange={e => set('port', e.target.value)} min="1" max="65535" />
+                                </div>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                                <div className="form-group" style={{ margin: 0 }}>
+                                    <label className="form-label">Username *</label>
+                                    <input value={form.username} onChange={e => set('username', e.target.value)} required />
+                                </div>
+                                <div className="form-group" style={{ margin: 0 }}>
+                                    <label className="form-label">{existing ? 'Password (blank = keep)' : 'Password *'}</label>
+                                    <input type="password" value={form.password} onChange={e => set('password', e.target.value)} required={!existing} />
+                                </div>
+                            </div>
+                        </>
+                    )}
+
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, alignItems: 'center' }}>
                         <div className="form-group" style={{ margin: 0 }}>
                             <label className="form-label">Linked Client (optional)</label>
@@ -113,10 +130,12 @@ function ServerModal({ existing, onClose, onSaved }) {
                                 {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                             </select>
                         </div>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', paddingTop: 20 }}>
-                            <input type="checkbox" checked={form.use_https} onChange={e => set('use_https', e.target.checked)} />
-                            Use HTTPS
-                        </label>
+                        {!form.mock && (
+                            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', paddingTop: 20 }}>
+                                <input type="checkbox" checked={form.use_https} onChange={e => set('use_https', e.target.checked)} />
+                                Use HTTPS
+                            </label>
+                        )}
                     </div>
                     <div className="modal-actions">
                         <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
@@ -278,7 +297,10 @@ function ServerPanel({ server, onEdit, onDelete }) {
                     className="nvr-status-dot"
                     style={{ background: ping === null ? 'var(--text-dim)' : online ? 'var(--green)' : 'var(--red)' }}
                 />
-                <div className="nvr-panel-name">{server.name}</div>
+                <div className="nvr-panel-name">
+                    {server.name}
+                    {server.mock && <span className="tag tag-dim" style={{ fontSize: 10, marginLeft: 8, verticalAlign: 'middle' }}>MOCK</span>}
+                </div>
 
                 <div className="nvr-panel-meta">
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)' }}>

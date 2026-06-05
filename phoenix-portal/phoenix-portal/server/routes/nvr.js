@@ -12,26 +12,77 @@ pool.query(`
     CREATE TABLE IF NOT EXISTS nvr_servers (
         id         SERIAL PRIMARY KEY,
         name       VARCHAR(100) NOT NULL,
-        host       VARCHAR(255) NOT NULL,
+        host       VARCHAR(255) NOT NULL DEFAULT 'localhost',
         port       INTEGER      NOT NULL DEFAULT 7001,
         use_https  BOOLEAN      NOT NULL DEFAULT TRUE,
-        username   VARCHAR(100) NOT NULL,
-        password   VARCHAR(255) NOT NULL,
+        username   VARCHAR(100) NOT NULL DEFAULT '',
+        password   VARCHAR(255) NOT NULL DEFAULT '',
+        mock       BOOLEAN      NOT NULL DEFAULT FALSE,
         client_id  INTEGER REFERENCES clients(id) ON DELETE SET NULL,
         created_at TIMESTAMP    NOT NULL DEFAULT NOW()
     )
 `).catch(console.error);
+pool.query(`ALTER TABLE nvr_servers ADD COLUMN IF NOT EXISTS mock BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
 
-/* ── Helpers ──────────────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════
+   MOCK DATA
+   ═══════════════════════════════════════════════════════════════════════ */
 
-/** Fetch server row (with credentials). Never return password to the client. */
+const MOCK_DEVICES = [
+    { id: 'mock-cam-01', name: 'Front Entrance',  model: 'DW-MD421D',   status: 'Online'      },
+    { id: 'mock-cam-02', name: 'Parking Lot A',   model: 'DW-MD421D',   status: 'Recording'   },
+    { id: 'mock-cam-03', name: 'Server Room',     model: 'DW-PF5M1TIR', status: 'Recording'   },
+    { id: 'mock-cam-04', name: 'Back Door',       model: 'DW-MD421D',   status: 'Offline'     },
+    { id: 'mock-cam-05', name: 'Reception',       model: 'DW-PF5M1TIR', status: 'Online'      },
+    { id: 'mock-cam-06', name: 'Loading Dock',    model: 'DW-MD421D',   status: 'Offline'     },
+    { id: 'mock-cam-07', name: 'Side Gate',       model: 'DW-PF5M1TIR', status: 'Online'      },
+    { id: 'mock-cam-08', name: 'Break Room',      model: 'DW-MD421D',   status: 'Recording'   },
+];
+
+function mockNow(offsetMs = 0) {
+    return new Date(Date.now() - offsetMs).toISOString();
+}
+
+function mockEvents() {
+    const m = 60000;
+    return [
+        { id: 'ev-01', eventType: 'motionDetected',    deviceId: 'mock-cam-01', deviceName: 'Front Entrance', description: 'Zone 1',        eventTimestampUsec: (Date.now() - 2  * m) * 1000 },
+        { id: 'ev-02', eventType: 'cameraDisconnected', deviceId: 'mock-cam-04', deviceName: 'Back Door',      description: 'No signal',     eventTimestampUsec: (Date.now() - 15 * m) * 1000 },
+        { id: 'ev-03', eventType: 'motionDetected',    deviceId: 'mock-cam-02', deviceName: 'Parking Lot A',  description: 'Zone 2',        eventTimestampUsec: (Date.now() - 22 * m) * 1000 },
+        { id: 'ev-04', eventType: 'cameraReconnected', deviceId: 'mock-cam-06', deviceName: 'Loading Dock',   description: '',              eventTimestampUsec: (Date.now() - 60 * m) * 1000 },
+        { id: 'ev-05', eventType: 'motionDetected',    deviceId: 'mock-cam-07', deviceName: 'Side Gate',      description: 'Zone 1',        eventTimestampUsec: (Date.now() - 90 * m) * 1000 },
+        { id: 'ev-06', eventType: 'storageFailure',    deviceId: null,          deviceName: 'NVR Storage',    description: 'Drive 2 warn',  eventTimestampUsec: (Date.now() - 3  * 60 * m) * 1000 },
+        { id: 'ev-07', eventType: 'cameraDisconnected', deviceId: 'mock-cam-06', deviceName: 'Loading Dock',  description: 'No signal',     eventTimestampUsec: (Date.now() - 5  * 60 * m) * 1000 },
+        { id: 'ev-08', eventType: 'motionDetected',    deviceId: 'mock-cam-03', deviceName: 'Server Room',    description: 'Zone 1',        eventTimestampUsec: (Date.now() - 8  * 60 * m) * 1000 },
+        { id: 'ev-09', eventType: 'serverStarted',     deviceId: null,          deviceName: 'NVR',            description: 'System boot',   eventTimestampUsec: (Date.now() - 24 * 60 * m) * 1000 },
+        { id: 'ev-10', eventType: 'backupFinished',    deviceId: null,          deviceName: 'NVR',            description: 'Daily backup',  eventTimestampUsec: (Date.now() - 26 * 60 * m) * 1000 },
+    ];
+}
+
+/** Return a simple dark SVG that looks like a camera placeholder with the camera name */
+function mockSnapshotSvg(cameraName) {
+    const label = (cameraName || 'CAMERA').toUpperCase().replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
+  <rect width="640" height="360" fill="#0d1117"/>
+  <rect x="1" y="1" width="638" height="358" fill="none" stroke="#30363d" stroke-width="1"/>
+  <text x="320" y="155" font-family="monospace" font-size="11" fill="#444" text-anchor="middle" letter-spacing="2">LIVE</text>
+  <circle cx="320" cy="175" r="4" fill="#e05252" opacity="0.9"/>
+  <text x="320" y="210" font-family="monospace" font-size="13" fill="#8b949e" text-anchor="middle">${label}</text>
+  <text x="320" y="235" font-family="monospace" font-size="10" fill="#3d444d" text-anchor="middle">MOCK · DW SPECTRUM</text>
+</svg>`;
+    return Buffer.from(svg);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   HELPERS
+   ═══════════════════════════════════════════════════════════════════════ */
+
 async function getServer(id) {
     const r = await pool.query('SELECT * FROM nvr_servers WHERE id = $1', [id]);
     if (r.rowCount === 0) throw Object.assign(new Error('NVR server not found'), { status: 404 });
     return r.rows[0];
 }
 
-/** Build an axios instance pre-configured for a given NVR server. */
 function nvrClient(server) {
     const proto   = server.use_https ? 'https' : 'http';
     const baseURL = `${proto}://${server.host}:${server.port}`;
@@ -39,24 +90,19 @@ function nvrClient(server) {
         baseURL,
         timeout: 10000,
         auth: { username: server.username, password: server.password },
-        /* Allow self-signed certs — common on NVR appliances */
         httpsAgent: new https.Agent({ rejectUnauthorized: false }),
     });
 }
 
-/** Strip password before sending server data to the client. */
-function safe(server) {
-    const { password, ...rest } = server;   // eslint-disable-line no-unused-vars
-    return rest;
-}
-
-/* ── CRUD: NVR servers ────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════
+   CRUD
+   ═══════════════════════════════════════════════════════════════════════ */
 
 router.get('/servers', async (req, res) => {
     try {
         const r = await pool.query(
-            `SELECT s.id, s.name, s.host, s.port, s.use_https, s.client_id,
-                    s.created_at, c.name AS client_name
+            `SELECT s.id, s.name, s.host, s.port, s.use_https, s.mock,
+                    s.client_id, s.created_at, c.name AS client_name
              FROM nvr_servers s
              LEFT JOIN clients c ON c.id = s.client_id
              ORDER BY s.name`
@@ -69,15 +115,25 @@ router.get('/servers', async (req, res) => {
 });
 
 router.post('/servers', requireRole('admin'), async (req, res) => {
-    const { name, host, port, use_https, username, password, client_id } = req.body;
-    if (!name || !host || !username || !password)
-        return res.status(400).json({ error: 'name, host, username, and password are required.' });
+    const { name, host, port, use_https, username, password, client_id, mock } = req.body;
+    if (!name) return res.status(400).json({ error: 'name is required.' });
+    if (!mock && (!host || !username || !password))
+        return res.status(400).json({ error: 'host, username, and password are required for non-mock systems.' });
     try {
         const r = await pool.query(
-            `INSERT INTO nvr_servers (name, host, port, use_https, username, password, client_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
-             RETURNING id, name, host, port, use_https, client_id, created_at`,
-            [name.trim(), host.trim(), port || 7001, use_https !== false, username, password, client_id || null]
+            `INSERT INTO nvr_servers (name, host, port, use_https, username, password, client_id, mock)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             RETURNING id, name, host, port, use_https, mock, client_id, created_at`,
+            [
+                name.trim(),
+                host?.trim() || 'localhost',
+                port || 7001,
+                use_https !== false,
+                username || '',
+                password || '',
+                client_id || null,
+                !!mock,
+            ]
         );
         return res.status(201).json(r.rows[0]);
     } catch (err) {
@@ -87,7 +143,7 @@ router.post('/servers', requireRole('admin'), async (req, res) => {
 });
 
 router.patch('/servers/:id', requireRole('admin'), async (req, res) => {
-    const { name, host, port, use_https, username, password, client_id } = req.body;
+    const { name, host, port, use_https, username, password, client_id, mock } = req.body;
     try {
         const r = await pool.query(
             `UPDATE nvr_servers SET
@@ -97,11 +153,12 @@ router.patch('/servers/:id', requireRole('admin'), async (req, res) => {
                 use_https = COALESCE($4, use_https),
                 username  = COALESCE($5, username),
                 password  = COALESCE($6, password),
-                client_id = $7
-             WHERE id = $8
-             RETURNING id, name, host, port, use_https, client_id, created_at`,
+                client_id = $7,
+                mock      = COALESCE($8, mock)
+             WHERE id = $9
+             RETURNING id, name, host, port, use_https, mock, client_id, created_at`,
             [name || null, host || null, port || null, use_https ?? null,
-             username || null, password || null, client_id || null, req.params.id]
+             username || null, password || null, client_id || null, mock ?? null, req.params.id]
         );
         if (r.rowCount === 0) return res.status(404).json({ error: 'Not found.' });
         return res.json(r.rows[0]);
@@ -121,15 +178,16 @@ router.delete('/servers/:id', requireRole('admin'), async (req, res) => {
     }
 });
 
-/* ── Proxy: DW Spectrum API ───────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════
+   PROXY / MOCK ENDPOINTS
+   ═══════════════════════════════════════════════════════════════════════ */
 
-/**
- * GET /api/nvr/servers/:id/ping
- * Quick reachability check — returns { online, version? }
- */
 router.get('/servers/:id/ping', async (req, res) => {
     try {
         const server = await getServer(req.params.id);
+        if (server.mock) {
+            return res.json({ online: true, info: { name: server.name, version: 'mock', mock: true } });
+        }
         const client = nvrClient(server);
         const { data } = await client.get('/rest/v2/system/info');
         return res.json({ online: true, info: data });
@@ -138,17 +196,12 @@ router.get('/servers/:id/ping', async (req, res) => {
     }
 });
 
-/**
- * GET /api/nvr/servers/:id/devices
- * List all cameras / devices on this NVR.
- */
 router.get('/servers/:id/devices', async (req, res) => {
     try {
         const server = await getServer(req.params.id);
+        if (server.mock) return res.json(MOCK_DEVICES);
         const client = nvrClient(server);
-        const { data } = await client.get('/rest/v2/devices', {
-            params: { _with: 'status' },
-        });
+        const { data } = await client.get('/rest/v2/devices', { params: { _with: 'status' } });
         return res.json(data);
     } catch (err) {
         console.error('NVR devices error:', err.message);
@@ -156,13 +209,12 @@ router.get('/servers/:id/devices', async (req, res) => {
     }
 });
 
-/**
- * GET /api/nvr/servers/:id/servers
- * List media servers registered in this system.
- */
 router.get('/servers/:id/mediaservers', async (req, res) => {
     try {
         const server = await getServer(req.params.id);
+        if (server.mock) {
+            return res.json([{ id: 'mock-srv-01', name: 'Mock NVR Server', status: 'Online', version: 'mock' }]);
+        }
         const client = nvrClient(server);
         const { data } = await client.get('/rest/v2/servers');
         return res.json(data);
@@ -172,15 +224,17 @@ router.get('/servers/:id/mediaservers', async (req, res) => {
     }
 });
 
-/**
- * GET /api/nvr/servers/:id/snapshot/:deviceId
- * Proxy a live snapshot image from a camera.
- * Streams the image bytes directly to the browser.
- */
 router.get('/servers/:id/snapshot/:deviceId', async (req, res) => {
     try {
         const server = await getServer(req.params.id);
-        const client = nvrClient(server);
+        if (server.mock) {
+            const cam  = MOCK_DEVICES.find(d => d.id === req.params.deviceId);
+            const svg  = mockSnapshotSvg(cam?.name || req.params.deviceId);
+            res.setHeader('Content-Type', 'image/svg+xml');
+            res.setHeader('Cache-Control', 'no-cache');
+            return res.send(svg);
+        }
+        const client   = nvrClient(server);
         const response = await client.get(
             `/rest/v2/devices/${req.params.deviceId}/media/snapshot`,
             { responseType: 'stream', params: { width: 640 } }
@@ -193,13 +247,10 @@ router.get('/servers/:id/snapshot/:deviceId', async (req, res) => {
     }
 });
 
-/**
- * GET /api/nvr/servers/:id/events
- * Recent events from this NVR system.
- */
 router.get('/servers/:id/events', async (req, res) => {
     try {
         const server = await getServer(req.params.id);
+        if (server.mock) return res.json(mockEvents());
         const client = nvrClient(server);
         const { data } = await client.get('/rest/v2/events/log', {
             params: { limit: req.query.limit || 50 },

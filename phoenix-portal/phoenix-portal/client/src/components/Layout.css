@@ -51,10 +51,22 @@
 
 .sidebar-nav {
     flex: 1;
-    padding: 16px 0;
+    padding: 8px 0;
     display: flex;
     flex-direction: column;
     gap: 2px;
+    overflow-y: auto;
+}
+
+.nav-divider {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    padding: 12px 20px 4px;
+    opacity: 0.6;
 }
 
 .nav-link {

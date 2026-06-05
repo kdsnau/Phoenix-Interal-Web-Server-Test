@@ -5,45 +5,57 @@ import './Layout.css';
 
 const NAV = {
     technician: [
+        { divider: 'Operations' },
         { path: '/dashboard', label: 'Dashboard' },
         { path: '/tickets',   label: 'Tickets'   },
+        { path: '/projects',  label: 'Projects'  },
+        { path: '/calendar',  label: 'Calendar'  },
+        { divider: 'Field' },
         { path: '/alarms',    label: 'Alarms'    },
         { path: '/fleet',     label: 'Fleet'     },
         { path: '/inventory', label: 'Inventory' },
-        { path: '/projects',  label: 'Projects'  },
         { path: '/cameras',   label: 'Cameras'   },
+        { divider: 'Tools' },
         { path: '/ai',        label: 'AI'        },
-        { path: '/calendar',  label: 'Calendar'  },
         { path: '/messages',  label: 'Messages'  },
         { path: '/feedback',  label: 'Feedback'  },
     ],
     accounting: [
+        { divider: 'Operations' },
         { path: '/dashboard',  label: 'Dashboard'  },
+        { path: '/projects',   label: 'Projects'   },
+        { path: '/calendar',   label: 'Calendar'   },
+        { divider: 'Finance' },
         { path: '/financials', label: 'Financials' },
+        { divider: 'Field' },
         { path: '/alarms',     label: 'Alarms'     },
         { path: '/fleet',      label: 'Fleet'      },
         { path: '/inventory',  label: 'Inventory'  },
-        { path: '/projects',   label: 'Projects'   },
         { path: '/cameras',    label: 'Cameras'    },
+        { divider: 'Tools' },
         { path: '/ai',         label: 'AI'         },
-        { path: '/calendar',   label: 'Calendar'   },
         { path: '/messages',   label: 'Messages'   },
         { path: '/feedback',   label: 'Feedback'   },
     ],
     admin: [
+        { divider: 'Operations' },
         { path: '/dashboard',  label: 'Dashboard'  },
         { path: '/tickets',    label: 'Tickets'    },
-        { path: '/financials', label: 'Financials' },
+        { path: '/projects',   label: 'Projects'   },
+        { path: '/calendar',   label: 'Calendar'   },
+        { divider: 'Field' },
         { path: '/alarms',     label: 'Alarms'     },
         { path: '/fleet',      label: 'Fleet'      },
         { path: '/inventory',  label: 'Inventory'  },
-        { path: '/projects',   label: 'Projects'   },
         { path: '/cameras',    label: 'Cameras'    },
-        { path: '/admin',      label: 'Admin'      },
+        { divider: 'Finance' },
+        { path: '/financials', label: 'Financials' },
+        { divider: 'Tools' },
         { path: '/ai',         label: 'AI'         },
-        { path: '/calendar',   label: 'Calendar'   },
         { path: '/messages',   label: 'Messages'   },
         { path: '/feedback',   label: 'Feedback'   },
+        { divider: 'System' },
+        { path: '/admin',      label: 'Admin'      },
     ],
 };
 
@@ -84,16 +96,20 @@ export default function Layout({ children }) {
                 </div>
 
                 <nav className="sidebar-nav">
-                    {links.map(({ path, label }) => (
-                        <Link
-                            key={path}
-                            to={path}
-                            className={`nav-link ${location.pathname === path ? 'active' : ''}`}
-                        >
-                            <span className="nav-indicator" />
-                            {label}
-                        </Link>
-                    ))}
+                    {links.map((item, i) =>
+                        item.divider ? (
+                            <div key={`divider-${i}`} className="nav-divider">{item.divider}</div>
+                        ) : (
+                            <Link
+                                key={item.path}
+                                to={item.path}
+                                className={`nav-link ${location.pathname === item.path ? 'active' : ''}`}
+                            >
+                                <span className="nav-indicator" />
+                                {item.label}
+                            </Link>
+                        )
+                    )}
                 </nav>
 
                 <div className="sidebar-footer">

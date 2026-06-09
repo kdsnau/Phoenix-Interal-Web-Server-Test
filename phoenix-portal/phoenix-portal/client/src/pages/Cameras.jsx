@@ -35,9 +35,30 @@ function eventTag(type) {
     return { label: type || 'Event', cls: 'tag-dim' };
 }
 
+/* Pull a clean host out of a pasted address like
+   "http://192.168.10.43:80/onvif/device_service" -> { host, port, https }.
+   Protocol and any /path are removed; host:port is split apart. */
+function parseHostAddress(raw) {
+    let s = (raw || '').trim();
+    if (!s) return null;
+    let https = null;
+    const proto = s.match(/^(https?):\/\//i);
+    if (proto) { https = proto[1].toLowerCase() === 'https'; s = s.slice(proto[0].length); }
+    s = s.split(/[/?#]/)[0];                 // drop path / query / hash
+    let port = null;
+    const hp = s.match(/^(.+):(\d{1,5})$/);
+    if (hp) { s = hp[1]; port = hp[2]; }
+    return { host: s.trim(), port, https };
+}
+
+/* Lighter cleanup for typing: strip protocol + path, keep the rest. */
+function stripUrlNoise(raw) {
+    return (raw || '').replace(/^\s*https?:\/\//i, '').split(/[/?#]/)[0];
+}
+
 /* ── Add / Edit server modal ──────────────────────────────────────────── */
 function ServerModal({ existing, onClose, onSaved }) {
-    const blank = { name: '', host: '', port: '7001', use_https: true, username: '', password: '', client_id: '', mock: false };
+    const blank = { name: '', host: '', port: '', use_https: false, username: '', password: '', client_id: '', mock: false };
     const [form,    setForm]    = useState(existing ? { ...existing, password: '' } : blank);
     const [error,   setError]   = useState('');
     const [saving,  setSaving]  = useState(false);
@@ -93,11 +114,28 @@ function ServerModal({ existing, onClose, onSaved }) {
                             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10 }}>
                                 <div className="form-group" style={{ margin: 0 }}>
                                     <label className="form-label">Host / IP *</label>
-                                    <input value={form.host} onChange={e => set('host', e.target.value)} placeholder="192.168.1.100" required />
+                                    <input
+                                        value={form.host}
+                                        onChange={e => set('host', stripUrlNoise(e.target.value))}
+                                        onPaste={e => {
+                                            const text   = e.clipboardData?.getData('text');
+                                            const parsed = text && parseHostAddress(text);
+                                            if (!parsed || !parsed.host) return;   // nothing useful — allow normal paste
+                                            e.preventDefault();
+                                            setForm(f => ({
+                                                ...f,
+                                                host: parsed.host,
+                                                ...(parsed.port  != null ? { port: parsed.port } : {}),
+                                                ...(parsed.https != null ? { use_https: parsed.https } : {}),
+                                            }));
+                                        }}
+                                        placeholder="192.168.1.100"
+                                        required
+                                    />
                                 </div>
                                 <div className="form-group" style={{ margin: 0 }}>
                                     <label className="form-label">Port</label>
-                                    <input type="number" value={form.port} onChange={e => set('port', e.target.value)} min="1" max="65535" />
+                                    <input type="number" value={form.port} onChange={e => set('port', e.target.value)} min="1" max="65535" placeholder="7001" />
                                 </div>
                             </div>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>

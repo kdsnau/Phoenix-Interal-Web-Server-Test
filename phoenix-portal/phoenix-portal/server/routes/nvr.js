@@ -115,6 +115,45 @@ function nvrClient(server) {
     });
 }
 
+/* The real /rest/v2/devices objects carry ~100 fields each; trim to what the
+   UI needs and normalise the license flag (real API uses isLicenseUsed,
+   our mock uses isLicensed). */
+function normalizeDevice(d) {
+    return {
+        id:         d.id,
+        name:       d.name,
+        model:      d.model,
+        vendor:     d.vendor,
+        status:     d.status,
+        isLicensed: d.isLicensed ?? d.isLicenseUsed ?? null,
+    };
+}
+
+/* DW returns licenses as { key, licenseBlock } where licenseBlock is a
+   newline-delimited "NAME=...\nCOUNT=...\nEXPIRATION=..." text block. */
+function parseLicenseBlock(block) {
+    const out = {};
+    (block || '').split('\n').forEach(line => {
+        const i = line.indexOf('=');
+        if (i > 0) out[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+    });
+    return out;
+}
+
+function normalizeLicense(lic) {
+    // Mock licenses already have the normalised shape — pass them through.
+    if (lic.channels != null || lic.type) return lic;
+    const info = parseLicenseBlock(lic.licenseBlock);
+    return {
+        key:            lic.key || info.SERIAL || null,
+        type:           (info.CLASS || 'license').toLowerCase(),
+        channels:       parseInt(info.COUNT, 10) || 0,
+        usedChannels:   null,                       // DW doesn't report per-license usage
+        expirationDate: info.EXPIRATION || null,    // empty = permanent
+        isValid:        true,
+    };
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
    CRUD
    ═══════════════════════════════════════════════════════════════════════ */
@@ -222,10 +261,9 @@ router.get('/servers/:id/devices', async (req, res) => {
         const server = await getServer(req.params.id);
         if (server.mock) return res.json(MOCK_DEVICES);
         const client = nvrClient(server);
-        const { data } = await client.get('/rest/v2/devices', {
-            params: { _with: 'status,settings,licenses' },
-        });
-        return res.json(data);
+        const { data } = await client.get('/rest/v2/devices');
+        const list = Array.isArray(data) ? data : [];
+        return res.json(list.map(normalizeDevice));
     } catch (err) {
         console.error('NVR devices error:', err.message);
         return res.status(502).json({ error: 'Could not reach NVR.', detail: err.message });
@@ -238,7 +276,8 @@ router.get('/servers/:id/licenses', async (req, res) => {
         if (server.mock) return res.json(MOCK_LICENSES);
         const client = nvrClient(server);
         const { data } = await client.get('/rest/v2/licenses');
-        return res.json(data);
+        const list = Array.isArray(data) ? data : [];
+        return res.json(list.map(normalizeLicense));
     } catch (err) {
         console.error('NVR licenses error:', err.message);
         return res.status(502).json({ error: 'Could not fetch licenses.', detail: err.message });
@@ -271,10 +310,10 @@ router.get('/servers/:id/snapshot/:deviceId', async (req, res) => {
             return res.send(svg);
         }
         const client   = nvrClient(server);
-        const response = await client.get(
-            `/rest/v2/devices/${req.params.deviceId}/media/snapshot`,
-            { responseType: 'stream', params: { width: 640 } }
-        );
+        const response = await client.get('/ec2/cameraThumbnail', {
+            responseType: 'stream',
+            params: { cameraId: req.params.deviceId, time: 'latest', height: 480 },
+        });
         res.setHeader('Content-Type', response.headers['content-type'] || 'image/jpeg');
         response.data.pipe(res);
     } catch (err) {

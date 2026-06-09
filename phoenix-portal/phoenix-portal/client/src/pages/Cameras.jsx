@@ -197,7 +197,7 @@ function CameraCard({ camera, serverId }) {
             <div className="cam-snapshot">
                 {!imgError && online ? (
                     <img
-                        src={`/api/nvr/servers/${serverId}/snapshot/${camera.id}`}
+                        src={`/api/nvr/servers/${serverId}/snapshot/${encodeURIComponent(camera.id)}`}
                         alt={camera.name}
                         onError={() => setImgError(true)}
                     />
@@ -384,7 +384,7 @@ function ServerPanel({ server, onEdit, onDelete }) {
                     )}
                     {licenses.length > 0 && (() => {
                         const total = licenses.reduce((s, l) => s + (l.channels || 0), 0);
-                        const used  = licenses.reduce((s, l) => s + (l.usedChannels || 0), 0);
+                        const used  = devices.filter(d => d.isLicensed).length;
                         const cls   = used >= total ? 'tag-red' : used >= total * 0.8 ? 'tag-yellow' : 'tag-dim';
                         return <span className={`tag ${cls}`} style={{ fontSize: 10 }}>{used}/{total} licensed</span>;
                     })()}
@@ -476,12 +476,12 @@ function ServerPanel({ server, onEdit, onDelete }) {
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {licenses.map(lic => {
+                                            {licenses.map((lic, idx) => {
                                                 const expiring = lic.expirationDate
                                                     ? Math.ceil((new Date(lic.expirationDate) - Date.now()) / 86400000)
                                                     : null;
                                                 return (
-                                                    <tr key={lic.id}>
+                                                    <tr key={lic.key || idx}>
                                                         <td style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)' }}>
                                                             {lic.key || '—'}
                                                         </td>

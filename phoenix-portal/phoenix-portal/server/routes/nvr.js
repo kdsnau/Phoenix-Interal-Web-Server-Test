@@ -309,10 +309,11 @@ router.get('/servers/:id/snapshot/:deviceId', async (req, res) => {
             res.setHeader('Cache-Control', 'no-cache');
             return res.send(svg);
         }
+        const height   = Math.min(Math.max(parseInt(req.query.height, 10) || 480, 120), 1080);
         const client   = nvrClient(server);
         const response = await client.get('/ec2/cameraThumbnail', {
             responseType: 'stream',
-            params: { cameraId: req.params.deviceId, time: 'latest', height: 480 },
+            params: { cameraId: req.params.deviceId, time: 'latest', height },
         });
         res.setHeader('Content-Type', response.headers['content-type'] || 'image/jpeg');
         response.data.pipe(res);

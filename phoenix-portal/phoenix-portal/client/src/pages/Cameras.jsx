@@ -184,10 +184,82 @@ function ServerModal({ existing, onClose, onSaved }) {
     );
 }
 
+/* ── Live view modal (auto-refreshing snapshot ≈1 fps) ────────────────── */
+/* Polls the snapshot once a second via the authed blob fetch. Built so a
+   real HLS <video> player can drop into .live-modal-body later. */
+function LiveModal({ camera, serverId, onClose }) {
+    const [snapUrl, setSnapUrl] = useState(null);
+    const [err,     setErr]     = useState(false);
+
+    useEffect(() => {
+        let active = true;
+        let lastUrl;
+        let timer;
+        async function tick() {
+            try {
+                const r = await api.get(
+                    `/nvr/servers/${serverId}/snapshot/${encodeURIComponent(camera.id)}`,
+                    { responseType: 'blob', params: { height: 720 } }
+                );
+                if (!active) return;
+                const next = URL.createObjectURL(r.data);
+                if (lastUrl) URL.revokeObjectURL(lastUrl);
+                lastUrl = next;
+                setSnapUrl(next);
+                setErr(false);
+            } catch {
+                if (active) setErr(true);
+            } finally {
+                if (active) timer = setTimeout(tick, 1000);
+            }
+        }
+        tick();
+        return () => { active = false; clearTimeout(timer); if (lastUrl) URL.revokeObjectURL(lastUrl); };
+    }, [serverId, camera.id]);
+
+    /* Close on Escape */
+    useEffect(() => {
+        const onKey = e => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [onClose]);
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="live-modal" onClick={e => e.stopPropagation()}>
+                <div className="live-modal-header">
+                    <div style={{ minWidth: 0 }}>
+                        <div className="live-modal-title" title={camera.name}>{camera.name || 'Camera'}</div>
+                        {camera.model && (
+                            <div className="live-modal-sub">
+                                {camera.vendor ? `${camera.vendor} · ` : ''}{camera.model}
+                            </div>
+                        )}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+                        <span className="live-dot" />
+                        <span className="live-label">LIVE</span>
+                        <button className="live-close" onClick={onClose} aria-label="Close">✕</button>
+                    </div>
+                </div>
+                <div className="live-modal-body">
+                    {snapUrl && !err ? (
+                        <img src={snapUrl} alt={camera.name} className="live-img" />
+                    ) : (
+                        <div className="live-placeholder">{err ? 'Feed unavailable' : 'Connecting…'}</div>
+                    )}
+                </div>
+                <div className="live-modal-foot">Live snapshot · refreshing ~1/sec · press Esc to close</div>
+            </div>
+        </div>
+    );
+}
+
 /* ── Camera card ──────────────────────────────────────────────────────── */
 function CameraCard({ camera, serverId }) {
     const [imgError, setImgError] = useState(false);
     const [snapUrl,  setSnapUrl]  = useState(null);
+    const [open,     setOpen]     = useState(false);
     const status   = (camera.status?.toString() || '').toLowerCase();
     const online   = status.includes('online') || status.includes('recording');
     const tagClass = online ? 'tag-green' : 'tag-red';
@@ -211,7 +283,12 @@ function CameraCard({ camera, serverId }) {
     }, [serverId, camera.id, online]);
 
     return (
-        <div className={`cam-card ${online ? '' : 'cam-card--offline'}`}>
+        <>
+        <div
+            className={`cam-card ${online ? 'cam-card--live' : 'cam-card--offline'}`}
+            onClick={() => online && setOpen(true)}
+            title={online ? 'Click for live view' : undefined}
+        >
             <div className="cam-snapshot">
                 {online && snapUrl && !imgError ? (
                     <img src={snapUrl} alt={camera.name} onError={() => setImgError(true)} />
@@ -239,6 +316,8 @@ function CameraCard({ camera, serverId }) {
                 </div>
             </div>
         </div>
+        {open && <LiveModal camera={camera} serverId={serverId} onClose={() => setOpen(false)} />}
+        </>
     );
 }
 

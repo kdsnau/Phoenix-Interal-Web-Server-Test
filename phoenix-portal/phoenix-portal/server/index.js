@@ -23,6 +23,7 @@ const calendarRoutes   = require('./routes/calendar');
 const postRoutes       = require('./routes/posts');
 const nvrRoutes        = require('./routes/nvr');
 const dmpRoutes        = require('./routes/dmp');
+const complianceRoutes = require('./routes/compliance');
 const { startScheduler } = require('./services/monitoringScheduler');
 
 const app  = express();
@@ -59,6 +60,7 @@ app.use('/api/calendar',    calendarRoutes);
 app.use('/api/posts',       postRoutes);
 app.use('/api/nvr',         nvrRoutes);
 app.use('/api/dmp',         dmpRoutes);
+app.use('/api/compliance',  complianceRoutes);
 
 app.get('/api/health', (_, res) => res.json({ status: 'ok' }));
 

@@ -859,7 +859,7 @@ function NewClientModal({ onClose, onCreated }) {
 }
 
 /* -----------------------------------------------------------------------
-   Main Alarms page
+   Main Clients page
    ----------------------------------------------------------------------- */
 export default function Alarms() {
     const { user }                          = useAuth();
@@ -915,7 +915,7 @@ export default function Alarms() {
         <Layout>
             <div className="alarm-page">
                 <div className="alarm-page-header">
-                    <h1 className="page-title">Alarms</h1>
+                    <h1 className="page-title">Clients</h1>
                     <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                         <input
                             className="alarm-search"

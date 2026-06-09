@@ -32,7 +32,9 @@ function AppRoutes() {
             <Route path="/financials" element={<PrivateRoute roles={['accounting','admin']}><Financials /></PrivateRoute>} />
             <Route path="/admin"      element={<PrivateRoute roles={['admin']}><Admin /></PrivateRoute>} />
             <Route path="/fleet"      element={<PrivateRoute><Fleet /></PrivateRoute>} />
-            <Route path="/alarms"     element={<PrivateRoute><Alarms /></PrivateRoute>} />
+            <Route path="/clients"    element={<PrivateRoute><Alarms /></PrivateRoute>} />
+            {/* Legacy path — keep old bookmarks/links working */}
+            <Route path="/alarms"     element={<Navigate to="/clients" replace />} />
             <Route path="/inventory"  element={<PrivateRoute><Inventory /></PrivateRoute>} />
             <Route path="/projects"   element={<PrivateRoute><Projects /></PrivateRoute>} />
             <Route path="/ai"         element={<PrivateRoute><AI /></PrivateRoute>} />

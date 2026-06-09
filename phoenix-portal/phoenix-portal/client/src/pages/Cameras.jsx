@@ -321,12 +321,12 @@ function ServerPanel({ server, onEdit, onDelete }) {
                         {server.use_https ? 'https' : 'http'}://{server.host}:{server.port}
                     </span>
 
-                    {/* Client badge — clickable, navigates to Alarms page */}
+                    {/* Client badge — clickable, navigates to Clients page */}
                     {server.client_name && (
                         <button
                             className="tag tag-blue nvr-client-badge"
-                            onClick={e => { e.stopPropagation(); navigate('/alarms', { state: { openClientId: server.client_id } }); }}
-                            title={`View ${server.client_name} in Alarms`}
+                            onClick={e => { e.stopPropagation(); navigate('/clients', { state: { openClientId: server.client_id } }); }}
+                            title={`View ${server.client_name} in Clients`}
                         >
                             {server.client_name}
                         </button>

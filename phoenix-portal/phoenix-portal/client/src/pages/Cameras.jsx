@@ -187,22 +187,38 @@ function ServerModal({ existing, onClose, onSaved }) {
 /* ── Camera card ──────────────────────────────────────────────────────── */
 function CameraCard({ camera, serverId }) {
     const [imgError, setImgError] = useState(false);
+    const [snapUrl,  setSnapUrl]  = useState(null);
     const status   = (camera.status?.toString() || '').toLowerCase();
     const online   = status.includes('online') || status.includes('recording');
     const tagClass = online ? 'tag-green' : 'tag-red';
     const tagLabel = online ? 'Online' : (status || 'Offline');
 
+    /* An <img src=…> can't send the JWT Authorization header, so the snapshot
+       endpoint 401s when loaded directly. Fetch it through axios (which
+       attaches the token) and hand the <img> an object URL instead. */
+    useEffect(() => {
+        if (!online) return undefined;
+        let objUrl;
+        let cancelled = false;
+        api.get(`/nvr/servers/${serverId}/snapshot/${encodeURIComponent(camera.id)}`, { responseType: 'blob' })
+            .then(r => {
+                if (cancelled) return;
+                objUrl = URL.createObjectURL(r.data);
+                setSnapUrl(objUrl);
+            })
+            .catch(() => { if (!cancelled) setImgError(true); });
+        return () => { cancelled = true; if (objUrl) URL.revokeObjectURL(objUrl); };
+    }, [serverId, camera.id, online]);
+
     return (
         <div className={`cam-card ${online ? '' : 'cam-card--offline'}`}>
             <div className="cam-snapshot">
-                {!imgError && online ? (
-                    <img
-                        src={`/api/nvr/servers/${serverId}/snapshot/${encodeURIComponent(camera.id)}`}
-                        alt={camera.name}
-                        onError={() => setImgError(true)}
-                    />
+                {online && snapUrl && !imgError ? (
+                    <img src={snapUrl} alt={camera.name} onError={() => setImgError(true)} />
                 ) : (
-                    <div className="cam-snapshot-placeholder">{online ? 'No Feed' : 'Offline'}</div>
+                    <div className="cam-snapshot-placeholder">
+                        {!online ? 'Offline' : imgError ? 'No Feed' : 'Loading…'}
+                    </div>
                 )}
             </div>
             <div className="cam-info">

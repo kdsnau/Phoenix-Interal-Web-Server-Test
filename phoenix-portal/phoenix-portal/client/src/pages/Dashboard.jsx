@@ -150,10 +150,6 @@ function AdminStats({ stats, mrr, openTickets }) {
                 <div className="stat-label">Technicians</div>
                 <div className="stat-value">{userCounts.technician || 0}</div>
             </div>
-            <div className="stat-card">
-                <div className="stat-label">Total Users</div>
-                <div className="stat-value">{Object.values(userCounts).reduce((a, b) => a + b, 0)}</div>
-            </div>
         </div>
     );
 }

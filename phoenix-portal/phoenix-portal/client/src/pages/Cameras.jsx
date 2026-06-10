@@ -18,21 +18,33 @@ function timeAgo(dateStr) {
 }
 
 const EVENT_TYPE_LABELS = {
-    cameraDisconnected:     { label: 'Camera Offline',    cls: 'tag-red'    },
-    cameraIPConflict:       { label: 'IP Conflict',       cls: 'tag-red'    },
-    networkIssue:           { label: 'Network Issue',     cls: 'tag-red'    },
-    storageFailure:         { label: 'Storage Failure',   cls: 'tag-red'    },
-    motionDetected:         { label: 'Motion',            cls: 'tag-yellow' },
-    softwareTrigger:        { label: 'Trigger',           cls: 'tag-yellow' },
-    cameraReconnected:      { label: 'Camera Online',     cls: 'tag-green'  },
-    serverStarted:          { label: 'Server Started',    cls: 'tag-green'  },
-    backupFinished:         { label: 'Backup Done',       cls: 'tag-green'  },
+    cameraDisconnectEvent:  { label: 'Camera Offline',  cls: 'tag-red'    },
+    networkIssueEvent:      { label: 'Network Issue',   cls: 'tag-red'    },
+    cameraIpConflictEvent:  { label: 'IP Conflict',     cls: 'tag-red'    },
+    storageFailureEvent:    { label: 'Storage Failure', cls: 'tag-red'    },
+    serverFailureEvent:     { label: 'Server Failure',  cls: 'tag-red'    },
+    serverConflictEvent:    { label: 'Server Conflict', cls: 'tag-red'    },
+    licenseIssueEvent:      { label: 'License Issue',   cls: 'tag-red'    },
+    cameraMotionEvent:      { label: 'Motion',          cls: 'tag-yellow' },
+    cameraInputEvent:       { label: 'Input',           cls: 'tag-yellow' },
+    softwareTriggerEvent:   { label: 'Soft Trigger',    cls: 'tag-yellow' },
+    analyticsSdkEvent:      { label: 'Analytics',       cls: 'tag-yellow' },
+    userDefinedEvent:       { label: 'Custom',          cls: 'tag-dim'    },
+    serverStartEvent:       { label: 'Server Started',  cls: 'tag-green'  },
+    backupFinishedEvent:    { label: 'Backup Done',     cls: 'tag-green'  },
 };
 
+/* Known Nx event types get a label+color; unknown ones are humanized
+   ("poeOverBudgetEvent" -> "Poe Over Budget"). */
 function eventTag(type) {
     const t = EVENT_TYPE_LABELS[type];
     if (t) return t;
-    return { label: type || 'Event', cls: 'tag-dim' };
+    if (!type) return { label: 'Event', cls: 'tag-dim' };
+    const label = type
+        .replace(/Event$/, '')
+        .replace(/([a-z])([A-Z])/g, '$1 $2')
+        .replace(/^./, c => c.toUpperCase());
+    return { label, cls: 'tag-dim' };
 }
 
 /* Pull a clean host out of a pasted address like

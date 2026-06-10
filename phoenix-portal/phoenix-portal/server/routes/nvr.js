@@ -225,6 +225,21 @@ function normalizeLicense(lic) {
     };
 }
 
+/* DW /api/getEvents returns { reply: [ { eventParams: {...}, actionType, ... } ] }.
+   Flatten eventParams into the shape the Cameras EventsLog expects; the camera
+   name is resolved client-side from eventResourceId via the device list. */
+function normalizeEvent(ev, i) {
+    const p = ev.eventParams || {};
+    return {
+        id:                 p.eventResourceId ? `${p.eventResourceId}-${p.eventTimestampUsec}` : `ev-${i}`,
+        eventType:          p.eventType,
+        deviceId:           p.eventResourceId || null,
+        deviceName:         p.resourceName || p.caption || null,
+        description:        p.caption || p.description || p.reasonCode || '',
+        eventTimestampUsec: Number(p.eventTimestampUsec) || null,
+    };
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
    CRUD
    ═══════════════════════════════════════════════════════════════════════ */
@@ -419,12 +434,19 @@ router.get('/servers/:id/events', async (req, res) => {
     try {
         const server = await getServer(req.params.id);
         if (server.mock) return res.json(mockEvents());
+        const now  = Date.now();
+        const from = now - (Number(req.query.hours) || 24) * 3600000;
         const { data } = await nvrRequest(server, {
             method: 'get',
-            url: '/rest/v2/events/log',
-            params: { limit: req.query.limit || 50 },
+            url: '/api/getEvents',
+            params: { from, to: now },
         });
-        return res.json(data);
+        const reply  = Array.isArray(data?.reply) ? data.reply : [];
+        const events = reply
+            .map(normalizeEvent)
+            .sort((a, b) => (b.eventTimestampUsec || 0) - (a.eventTimestampUsec || 0))
+            .slice(0, Number(req.query.limit) || 100);
+        return res.json(events);
     } catch (err) {
         console.error('NVR events error:', err.message);
         return res.status(502).json({ error: 'Could not fetch events.', detail: err.message });

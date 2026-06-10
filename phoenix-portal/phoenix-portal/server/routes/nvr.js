@@ -23,6 +23,12 @@ pool.query(`
     )
 `).catch(console.error);
 pool.query(`ALTER TABLE nvr_servers ADD COLUMN IF NOT EXISTS mock BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+/* DW Spectrum Cloud relay connection support */
+pool.query(`ALTER TABLE nvr_servers ADD COLUMN IF NOT EXISTS conn_type       VARCHAR(10)  NOT NULL DEFAULT 'direct'`).catch(() => {});
+pool.query(`ALTER TABLE nvr_servers ADD COLUMN IF NOT EXISTS cloud_system_id VARCHAR(100) NOT NULL DEFAULT ''`).catch(() => {});
+pool.query(`ALTER TABLE nvr_servers ADD COLUMN IF NOT EXISTS cloud_host      VARCHAR(255) NOT NULL DEFAULT 'https://dwspectrum.digital-watchdog.com'`).catch(() => {});
+pool.query(`ALTER TABLE nvr_servers ADD COLUMN IF NOT EXISTS cloud_user      VARCHAR(255) NOT NULL DEFAULT ''`).catch(() => {});
+pool.query(`ALTER TABLE nvr_servers ADD COLUMN IF NOT EXISTS cloud_password  VARCHAR(255) NOT NULL DEFAULT ''`).catch(() => {});
 
 /* ═══════════════════════════════════════════════════════════════════════
    MOCK DATA
@@ -104,15 +110,80 @@ async function getServer(id) {
     return r.rows[0];
 }
 
-function nvrClient(server) {
-    const proto   = server.use_https ? 'https' : 'http';
-    const baseURL = `${proto}://${server.host}:${server.port}`;
+/* ── Cloud (DW Spectrum Cloud) bearer-token cache ───────────────────────
+   Cloud-relay systems authenticate with an OAuth2 bearer token from the
+   cloud, cached per server and refreshed ~30s before expiry. */
+const cloudTokens = new Map();   // serverId -> { token, expiresAt }
+
+async function getCloudToken(server, force = false) {
+    const cached = cloudTokens.get(server.id);
+    if (!force && cached && cached.expiresAt > Date.now() + 30000) return cached.token;
+    const host = (server.cloud_host || 'https://dwspectrum.digital-watchdog.com').replace(/\/+$/, '');
+    const { data } = await axios.post(`${host}/cdb/oauth2/token`, {
+        grant_type:    'password',
+        response_type: 'token',
+        client_id:     '3rdParty',
+        username:      server.cloud_user,
+        password:      server.cloud_password,
+        scope:         `cloudSystemId=${server.cloud_system_id}`,
+    }, { timeout: 12000 });
+    if (!data.access_token) throw new Error('Cloud auth returned no token');
+    cloudTokens.set(server.id, {
+        token:     data.access_token,
+        expiresAt: Date.now() + (Number(data.expires_in || 3600) * 1000),
+    });
+    return data.access_token;
+}
+
+/* Build an axios client for a server: a direct host:port connection (Basic
+   auth) or a DW Spectrum Cloud relay connection (Bearer token). */
+async function getClient(server) {
+    if (server.conn_type === 'cloud') {
+        const token = await getCloudToken(server);
+        return axios.create({
+            baseURL: `https://${server.cloud_system_id}.relay.vmsproxy.com`,
+            timeout: 15000,
+            headers: { Authorization: `Bearer ${token}` },
+            httpsAgent: new https.Agent({ rejectUnauthorized: false }),
+            maxRedirects: 5,
+            // The relay can redirect; re-attach auth so it survives the hop.
+            beforeRedirect: (options) => {
+                options.headers = { ...options.headers, Authorization: `Bearer ${token}` };
+            },
+        });
+    }
+    const proto = server.use_https ? 'https' : 'http';
     return axios.create({
-        baseURL,
+        baseURL: `${proto}://${server.host}:${server.port}`,
         timeout: 10000,
         auth: { username: server.username, password: server.password },
         httpsAgent: new https.Agent({ rejectUnauthorized: false }),
     });
+}
+
+/* Single request entry point with retry. Cloud relay tunnels can cold-start
+   (the first request after idle fails) and tokens can expire early, so retry
+   network errors and 401s (forcing a fresh token); don't retry other 4xx. */
+async function nvrRequest(server, config, attempts = 3) {
+    let lastErr;
+    for (let i = 0; i < attempts; i++) {
+        try {
+            const client = await getClient(server);
+            return await client.request(config);
+        } catch (err) {
+            lastErr = err;
+            const status = err.response?.status;
+            if (status && status >= 400 && status < 500) {
+                if (status === 401 && server.conn_type === 'cloud') {
+                    cloudTokens.delete(server.id);   // force re-auth on next attempt
+                } else {
+                    break;                            // other 4xx won't be fixed by retrying
+                }
+            }
+            if (i < attempts - 1) await new Promise(r => setTimeout(r, 400 * (i + 1)));
+        }
+    }
+    throw lastErr;
 }
 
 /* The real /rest/v2/devices objects carry ~100 fields each; trim to what the
@@ -162,6 +233,7 @@ router.get('/servers', async (req, res) => {
     try {
         const r = await pool.query(
             `SELECT s.id, s.name, s.host, s.port, s.use_https, s.mock,
+                    s.conn_type, s.cloud_system_id, s.cloud_host, s.cloud_user,
                     s.client_id, s.created_at, c.name AS client_name
              FROM nvr_servers s
              LEFT JOIN clients c ON c.id = s.client_id
@@ -175,15 +247,22 @@ router.get('/servers', async (req, res) => {
 });
 
 router.post('/servers', requireRole('admin'), async (req, res) => {
-    const { name, host, port, use_https, username, password, client_id, mock } = req.body;
+    const { name, host, port, use_https, username, password, client_id, mock,
+            conn_type, cloud_system_id, cloud_host, cloud_user, cloud_password } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required.' });
-    if (!mock && (!host || !username || !password))
-        return res.status(400).json({ error: 'host, username, and password are required for non-mock systems.' });
+    const type = conn_type === 'cloud' ? 'cloud' : 'direct';
+    if (!mock && type === 'cloud' && (!cloud_system_id || !cloud_user || !cloud_password))
+        return res.status(400).json({ error: 'cloud system ID, user, and password are required for cloud systems.' });
+    if (!mock && type === 'direct' && (!host || !username || !password))
+        return res.status(400).json({ error: 'host, username, and password are required for direct systems.' });
     try {
         const r = await pool.query(
-            `INSERT INTO nvr_servers (name, host, port, use_https, username, password, client_id, mock)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             RETURNING id, name, host, port, use_https, mock, client_id, created_at`,
+            `INSERT INTO nvr_servers
+                (name, host, port, use_https, username, password, client_id, mock,
+                 conn_type, cloud_system_id, cloud_host, cloud_user, cloud_password)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+             RETURNING id, name, host, port, use_https, mock, conn_type,
+                       cloud_system_id, cloud_host, cloud_user, client_id, created_at`,
             [
                 name.trim(),
                 host?.trim() || 'localhost',
@@ -193,6 +272,11 @@ router.post('/servers', requireRole('admin'), async (req, res) => {
                 password || '',
                 client_id || null,
                 !!mock,
+                type,
+                cloud_system_id || '',
+                cloud_host || 'https://dwspectrum.digital-watchdog.com',
+                cloud_user || '',
+                cloud_password || '',
             ]
         );
         return res.status(201).json(r.rows[0]);
@@ -203,24 +287,34 @@ router.post('/servers', requireRole('admin'), async (req, res) => {
 });
 
 router.patch('/servers/:id', requireRole('admin'), async (req, res) => {
-    const { name, host, port, use_https, username, password, client_id, mock } = req.body;
+    const { name, host, port, use_https, username, password, client_id, mock,
+            conn_type, cloud_system_id, cloud_host, cloud_user, cloud_password } = req.body;
     try {
         const r = await pool.query(
             `UPDATE nvr_servers SET
-                name      = COALESCE($1, name),
-                host      = COALESCE($2, host),
-                port      = COALESCE($3, port),
-                use_https = COALESCE($4, use_https),
-                username  = COALESCE($5, username),
-                password  = COALESCE($6, password),
-                client_id = $7,
-                mock      = COALESCE($8, mock)
-             WHERE id = $9
-             RETURNING id, name, host, port, use_https, mock, client_id, created_at`,
+                name            = COALESCE($1, name),
+                host            = COALESCE($2, host),
+                port            = COALESCE($3, port),
+                use_https       = COALESCE($4, use_https),
+                username        = COALESCE($5, username),
+                password        = COALESCE($6, password),
+                client_id       = $7,
+                mock            = COALESCE($8, mock),
+                conn_type       = COALESCE($9, conn_type),
+                cloud_system_id = COALESCE($10, cloud_system_id),
+                cloud_host      = COALESCE($11, cloud_host),
+                cloud_user      = COALESCE($12, cloud_user),
+                cloud_password  = COALESCE($13, cloud_password)
+             WHERE id = $14
+             RETURNING id, name, host, port, use_https, mock, conn_type,
+                       cloud_system_id, cloud_host, cloud_user, client_id, created_at`,
             [name || null, host || null, port || null, use_https ?? null,
-             username || null, password || null, client_id || null, mock ?? null, req.params.id]
+             username || null, password || null, client_id || null, mock ?? null,
+             conn_type || null, cloud_system_id || null, cloud_host || null,
+             cloud_user || null, cloud_password || null, req.params.id]
         );
         if (r.rowCount === 0) return res.status(404).json({ error: 'Not found.' });
+        cloudTokens.delete(Number(req.params.id));   // creds may have changed
         return res.json(r.rows[0]);
     } catch (err) {
         console.error(err);
@@ -231,6 +325,7 @@ router.patch('/servers/:id', requireRole('admin'), async (req, res) => {
 router.delete('/servers/:id', requireRole('admin'), async (req, res) => {
     try {
         await pool.query('DELETE FROM nvr_servers WHERE id = $1', [req.params.id]);
+        cloudTokens.delete(Number(req.params.id));
         return res.json({ success: true });
     } catch (err) {
         console.error(err);
@@ -248,8 +343,7 @@ router.get('/servers/:id/ping', async (req, res) => {
         if (server.mock) {
             return res.json({ online: true, info: { name: server.name, version: 'mock', mock: true } });
         }
-        const client = nvrClient(server);
-        const { data } = await client.get('/rest/v2/system/info');
+        const { data } = await nvrRequest(server, { method: 'get', url: '/rest/v2/system/info' });
         return res.json({ online: true, info: data });
     } catch (err) {
         return res.json({ online: false, error: err.message });
@@ -260,8 +354,7 @@ router.get('/servers/:id/devices', async (req, res) => {
     try {
         const server = await getServer(req.params.id);
         if (server.mock) return res.json(MOCK_DEVICES);
-        const client = nvrClient(server);
-        const { data } = await client.get('/rest/v2/devices');
+        const { data } = await nvrRequest(server, { method: 'get', url: '/rest/v2/devices' });
         const list = Array.isArray(data) ? data : [];
         return res.json(list.map(normalizeDevice));
     } catch (err) {
@@ -274,8 +367,7 @@ router.get('/servers/:id/licenses', async (req, res) => {
     try {
         const server = await getServer(req.params.id);
         if (server.mock) return res.json(MOCK_LICENSES);
-        const client = nvrClient(server);
-        const { data } = await client.get('/rest/v2/licenses');
+        const { data } = await nvrRequest(server, { method: 'get', url: '/rest/v2/licenses' });
         const list = Array.isArray(data) ? data : [];
         return res.json(list.map(normalizeLicense));
     } catch (err) {
@@ -290,8 +382,7 @@ router.get('/servers/:id/mediaservers', async (req, res) => {
         if (server.mock) {
             return res.json([{ id: 'mock-srv-01', name: 'Mock NVR Server', status: 'Online', version: 'mock' }]);
         }
-        const client = nvrClient(server);
-        const { data } = await client.get('/rest/v2/servers');
+        const { data } = await nvrRequest(server, { method: 'get', url: '/rest/v2/servers' });
         return res.json(data);
     } catch (err) {
         console.error('NVR servers error:', err.message);
@@ -310,8 +401,9 @@ router.get('/servers/:id/snapshot/:deviceId', async (req, res) => {
             return res.send(svg);
         }
         const height   = Math.min(Math.max(parseInt(req.query.height, 10) || 480, 120), 1080);
-        const client   = nvrClient(server);
-        const response = await client.get('/ec2/cameraThumbnail', {
+        const response = await nvrRequest(server, {
+            method: 'get',
+            url: '/ec2/cameraThumbnail',
             responseType: 'stream',
             params: { cameraId: req.params.deviceId, time: 'latest', height },
         });
@@ -327,8 +419,9 @@ router.get('/servers/:id/events', async (req, res) => {
     try {
         const server = await getServer(req.params.id);
         if (server.mock) return res.json(mockEvents());
-        const client = nvrClient(server);
-        const { data } = await client.get('/rest/v2/events/log', {
+        const { data } = await nvrRequest(server, {
+            method: 'get',
+            url: '/rest/v2/events/log',
             params: { limit: req.query.limit || 50 },
         });
         return res.json(data);

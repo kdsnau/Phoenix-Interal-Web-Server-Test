@@ -58,8 +58,13 @@ function stripUrlNoise(raw) {
 
 /* ── Add / Edit server modal ──────────────────────────────────────────── */
 function ServerModal({ existing, onClose, onSaved }) {
-    const blank = { name: '', host: '', port: '', use_https: false, username: '', password: '', client_id: '', mock: false };
-    const [form,    setForm]    = useState(existing ? { ...existing, password: '' } : blank);
+    const blank = {
+        name: '', host: '', port: '', use_https: false, username: '', password: '',
+        client_id: '', mock: false,
+        conn_type: 'direct', cloud_system_id: '',
+        cloud_host: 'https://dwspectrum.digital-watchdog.com', cloud_user: '', cloud_password: '',
+    };
+    const [form,    setForm]    = useState(existing ? { ...blank, ...existing, password: '', cloud_password: '' } : blank);
     const [error,   setError]   = useState('');
     const [saving,  setSaving]  = useState(false);
     const [clients, setClients] = useState([]);
@@ -81,6 +86,7 @@ function ServerModal({ existing, onClose, onSaved }) {
                 client_id: form.client_id ? Number(form.client_id) : null,
             };
             if (existing && !payload.password) delete payload.password;
+            if (existing && !payload.cloud_password) delete payload.cloud_password;
             let data;
             if (existing) {
                 ({ data } = await api.patch(`/nvr/servers/${existing.id}`, payload));
@@ -108,8 +114,23 @@ function ServerModal({ existing, onClose, onSaved }) {
                         <input value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. Main Office NVR" required autoFocus />
                     </div>
 
-                    {/* Host / credentials — hidden in mock mode */}
+                    {/* Connection type — hidden in mock mode */}
                     {!form.mock && (
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Connection</label>
+                            <div className="conn-toggle">
+                                <button type="button"
+                                    className={`conn-opt ${form.conn_type !== 'cloud' ? 'conn-opt--active' : ''}`}
+                                    onClick={() => set('conn_type', 'direct')}>Direct (LAN)</button>
+                                <button type="button"
+                                    className={`conn-opt ${form.conn_type === 'cloud' ? 'conn-opt--active' : ''}`}
+                                    onClick={() => set('conn_type', 'cloud')}>DW&nbsp;Cloud</button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Direct (LAN) host / credentials */}
+                    {!form.mock && form.conn_type !== 'cloud' && (
                         <>
                             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 10 }}>
                                 <div className="form-group" style={{ margin: 0 }}>
@@ -151,6 +172,35 @@ function ServerModal({ existing, onClose, onSaved }) {
                         </>
                     )}
 
+                    {/* DW Spectrum Cloud relay */}
+                    {!form.mock && form.conn_type === 'cloud' && (
+                        <>
+                            <div className="form-group" style={{ margin: 0 }}>
+                                <label className="form-label">Cloud System ID *</label>
+                                <input
+                                    value={form.cloud_system_id || ''}
+                                    onChange={e => set('cloud_system_id', e.target.value.trim())}
+                                    placeholder="2f78b1a4-e226-44ce-89a8-…"
+                                    required
+                                />
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                                <div className="form-group" style={{ margin: 0 }}>
+                                    <label className="form-label">Cloud Account *</label>
+                                    <input value={form.cloud_user || ''} onChange={e => set('cloud_user', e.target.value)} placeholder="service@yourco.com" required />
+                                </div>
+                                <div className="form-group" style={{ margin: 0 }}>
+                                    <label className="form-label">{existing ? 'Password (blank = keep)' : 'Password *'}</label>
+                                    <input type="password" value={form.cloud_password || ''} onChange={e => set('cloud_password', e.target.value)} required={!existing} />
+                                </div>
+                            </div>
+                            <div className="form-group" style={{ margin: 0 }}>
+                                <label className="form-label">Cloud Host</label>
+                                <input value={form.cloud_host || ''} onChange={e => set('cloud_host', e.target.value)} placeholder="https://dwspectrum.digital-watchdog.com" />
+                            </div>
+                        </>
+                    )}
+
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, alignItems: 'center' }}>
                         <div className="form-group" style={{ margin: 0 }}>
                             <label className="form-label">Linked Client (optional)</label>
@@ -160,7 +210,7 @@ function ServerModal({ existing, onClose, onSaved }) {
                             </select>
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, paddingTop: 20 }}>
-                            {!form.mock && (
+                            {!form.mock && form.conn_type !== 'cloud' && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
                                     <input type="checkbox" id="cb-https" checked={form.use_https} onChange={e => set('use_https', e.target.checked)} />
                                     <label htmlFor="cb-https" style={{ cursor: 'pointer', fontSize: 13, whiteSpace: 'nowrap' }}>Use HTTPS</label>
@@ -451,7 +501,9 @@ function ServerPanel({ server, onEdit, onDelete }) {
 
                 <div className="nvr-panel-meta">
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)' }}>
-                        {server.use_https ? 'https' : 'http'}://{server.host}:{server.port}
+                        {server.conn_type === 'cloud'
+                            ? `cloud · ${(server.cloud_system_id || '').slice(0, 8)}…`
+                            : `${server.use_https ? 'https' : 'http'}://${server.host}:${server.port}`}
                     </span>
 
                     {/* Client badge — clickable, navigates to Clients page */}

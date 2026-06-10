@@ -229,6 +229,27 @@
     flex-shrink: 0;
 }
 
+/* ── Connection-type toggle (Add/Edit modal) ──────────────────────────── */
+.conn-toggle {
+    display: flex;
+    border: 1px solid var(--border, #2a3040);
+    border-radius: 4px;
+    overflow: hidden;
+}
+.conn-opt {
+    flex: 1;
+    background: var(--bg-3, #0d0f11);
+    border: none;
+    color: var(--text-dim, #5c6e82);
+    padding: 8px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.conn-opt:not(:last-child) { border-right: 1px solid var(--border, #2a3040); }
+.conn-opt:hover:not(.conn-opt--active) { color: var(--text-hi, #eaf0f8); }
+.conn-opt--active { background: var(--accent); color: #fff; }
+
 /* ── Clickable camera card hint ───────────────────────────────────────── */
 .cam-card--live { cursor: pointer; }
 .cam-card--live:hover { border-color: var(--accent); }

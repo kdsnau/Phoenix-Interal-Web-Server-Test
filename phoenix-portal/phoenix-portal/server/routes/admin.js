@@ -99,7 +99,10 @@ router.get('/alerts', authenticate, async (req, res) => {
                 ORDER BY tags_renewal ASC
             `).catch(() => ({ rows: [] })),
             pool.query(`
-                SELECT COALESCE(SUM(billing_amount), 0) AS mrr
+                SELECT COALESCE(SUM(
+                    billing_amount / CASE COALESCE(billing_frequency, 'monthly')
+                        WHEN 'quarterly' THEN 3.0 WHEN 'yearly' THEN 12.0 ELSE 1.0 END
+                ), 0) AS mrr
                 FROM clients WHERE billing_amount IS NOT NULL AND billing_amount > 0
             `).catch(() => ({ rows: [{ mrr: 0 }] })),
             pool.query(`

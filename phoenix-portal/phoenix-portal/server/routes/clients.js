@@ -25,6 +25,11 @@ pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_inspection DATE`).
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS next_inspection DATE`).catch(() => {});
 /* Recurring billing frequency: monthly | quarterly | yearly */
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS billing_frequency TEXT DEFAULT 'monthly'`).catch(() => {});
+/* Scheduled maintenance — auto-generates a calendar ticket when due */
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS maintenance_enabled   BOOLEAN DEFAULT FALSE`).catch(() => {});
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS maintenance_frequency TEXT`).catch(() => {});
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS maintenance_next      DATE`).catch(() => {});
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS maintenance_last      DATE`).catch(() => {});
 
 /* POST /api/clients — admin only */
 router.post('/', requireRole('admin'), async (req, res) => {
@@ -139,6 +144,7 @@ router.patch('/:id', authenticate, async (req, res) => {
         'panel_brand', 'panel_model', 'camera_count', 'zone_count',
         'contract_type', 'contract_start', 'contract_end',
         'last_inspection', 'next_inspection',
+        'maintenance_enabled', 'maintenance_frequency', 'maintenance_next', 'maintenance_last',
     ];
     try {
         const sets = []; const params = [];

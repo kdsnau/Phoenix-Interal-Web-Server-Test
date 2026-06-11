@@ -330,7 +330,7 @@ const STATUS_CLASS = {
     return_necessary: 'tag-red',
 };
 
-const SERVICE_TABS = ['all', 'alarm', 'fire', 'access_control', 'maintenance', 'permits'];
+const SERVICE_TABS = ['all', 'alarm', 'fire', 'access_control', 'permits'];
 
 /* -----------------------------------------------------------------------
    Alarm Slack feed panel
@@ -399,6 +399,9 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
     const [contractEnd,   setContractEnd]   = useState(client.contract_end   ? client.contract_end.slice(0, 10)   : '');
     const [lastInsp,      setLastInsp]      = useState(client.last_inspection ? client.last_inspection.slice(0, 10) : '');
     const [nextInsp,      setNextInsp]      = useState(client.next_inspection ? client.next_inspection.slice(0, 10) : '');
+    const [maintEnabled,  setMaintEnabled]  = useState(client.maintenance_enabled || false);
+    const [maintFreq,     setMaintFreq]     = useState(client.maintenance_frequency || 'quarterly');
+    const [maintNext,     setMaintNext]     = useState(client.maintenance_next ? client.maintenance_next.slice(0, 10) : '');
     const [savingContract, setSavingContract] = useState(false);
     const [transactions, setTransactions] = useState([]);
     const [txLoading, setTxLoading]       = useState(false);
@@ -442,6 +445,9 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
             contract_end:    contractEnd   || null,
             last_inspection: lastInsp      || null,
             next_inspection: nextInsp      || null,
+            maintenance_enabled:   maintEnabled,
+            maintenance_frequency: maintFreq,
+            maintenance_next:      maintNext || null,
         });
         setSavingContract(false);
         onRefresh();
@@ -494,7 +500,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                             <span>{client.customer_id}</span>
                             <span className="alarm-sep">·</span>
                             <span>{client.vendor}</span>
-                            {svc.map(s => <span key={s} className={`tag-${s === 'fire' ? 'red' : s === 'access_control' ? 'blue' : s === 'maintenance' ? 'green' : 'yellow'} alarm-svc-tag`}>{s}</span>)}
+                            {svc.map(s => <span key={s} className={`tag-${s === 'fire' ? 'red' : s === 'access_control' ? 'blue' : 'yellow'} alarm-svc-tag`}>{s}</span>)}
                         </div>
                     </div>
                     <button className="alarm-close-btn" onClick={onClose}>✕</button>
@@ -641,6 +647,39 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                                 if (days <= 30) return <div style={{ marginBottom: 12 }}><span className="tag tag-yellow">Inspection due in {days}d</span></div>;
                                 return null;
                             })()}
+
+                            <div className="alarm-label" style={{ marginBottom: 8, fontWeight: 600 }}>Scheduled Maintenance</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                                <input type="checkbox" id={`maint-${client.id}`} checked={maintEnabled} onChange={e => setMaintEnabled(e.target.checked)} />
+                                <label htmlFor={`maint-${client.id}`} style={{ fontSize: 13, cursor: 'pointer' }}>
+                                    Auto-create a maintenance ticket on the calendar when due
+                                </label>
+                            </div>
+                            {maintEnabled && (
+                                <>
+                                    <div className="alarm-grid" style={{ marginBottom: 16 }}>
+                                        <div className="alarm-field">
+                                            <div className="alarm-label">Frequency</div>
+                                            <select className="alarm-input" value={maintFreq} onChange={e => setMaintFreq(e.target.value)}>
+                                                <option value="monthly">Monthly</option>
+                                                <option value="quarterly">Quarterly</option>
+                                                <option value="semiannual">Semi-Annual</option>
+                                                <option value="yearly">Yearly</option>
+                                            </select>
+                                        </div>
+                                        <div className="alarm-field">
+                                            <div className="alarm-label">Next Maintenance Due</div>
+                                            <input className="alarm-input" type="date" value={maintNext} onChange={e => setMaintNext(e.target.value)} />
+                                        </div>
+                                    </div>
+                                    {maintNext && (() => {
+                                        const days = Math.ceil((new Date(maintNext) - new Date()) / 86400000);
+                                        if (days < 0)   return <div style={{ marginBottom: 12 }}><span className="tag tag-red">Maintenance OVERDUE by {Math.abs(days)}d</span></div>;
+                                        if (days <= 30) return <div style={{ marginBottom: 12 }}><span className="tag tag-yellow">Maintenance due in {days}d</span></div>;
+                                        return <div style={{ marginBottom: 12 }}><span className="tag tag-green">Next visit in {days}d</span></div>;
+                                    })()}
+                                </>
+                            )}
 
                             <button className="btn btn-primary" onClick={saveContract} disabled={savingContract}>
                                 {savingContract ? 'Saving…' : 'Save Contract'}
@@ -850,7 +889,7 @@ function NewClientModal({ onClose, onCreated }) {
                     <div className="form-group" style={{ margin: 0 }}>
                         <label className="form-label">Services</label>
                         <div style={{ display: 'flex', gap: 16, marginTop: 6 }}>
-                            {['alarm', 'fire', 'access_control', 'maintenance'].map(s => (
+                            {['alarm', 'fire', 'access_control'].map(s => (
                                 <label key={s} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', fontWeight: 400 }}>
                                     <input type="checkbox" checked={form.services.includes(s)} onChange={() => toggleService(s)} />
                                     {s === 'access_control' ? 'Access Control' : s.charAt(0).toUpperCase() + s.slice(1)}
@@ -1018,7 +1057,7 @@ export default function Alarms() {
                                 <div className="alarm-client-meta">
                                     <span className="tag-dim">{c.customer_id}</span>
                                     {(c.services || []).map(s => (
-                                        <span key={s} className={`${s === 'fire' ? 'tag-red' : s === 'access_control' ? 'tag-blue' : s === 'maintenance' ? 'tag-green' : 'tag-yellow'}`}>{s}</span>
+                                        <span key={s} className={`${s === 'fire' ? 'tag-red' : s === 'access_control' ? 'tag-blue' : 'tag-yellow'}`}>{s}</span>
                                     ))}
                                     {c.monitoring_enabled && <span className="tag-green">monitored</span>}
                                     {c.permit_expires && (() => {

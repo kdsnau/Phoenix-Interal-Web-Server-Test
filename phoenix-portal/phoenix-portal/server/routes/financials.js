@@ -73,7 +73,10 @@ router.get('/monthly', requireRole('accounting', 'admin'), async (req, res) => {
                 ORDER BY 1
             `).catch(() => ({ rows: [] })),   /* graceful if table missing */
             pool.query(`
-                SELECT COALESCE(SUM(billing_amount), 0) AS mrr
+                SELECT COALESCE(SUM(
+                    billing_amount / CASE COALESCE(billing_frequency, 'monthly')
+                        WHEN 'quarterly' THEN 3.0 WHEN 'yearly' THEN 12.0 ELSE 1.0 END
+                ), 0) AS mrr
                 FROM clients
                 WHERE billing_amount IS NOT NULL AND billing_amount > 0
             `).catch(() => ({ rows: [{ mrr: 0 }] })),

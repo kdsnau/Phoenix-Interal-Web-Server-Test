@@ -126,20 +126,28 @@ router.get('/alerts', authenticate, async (req, res) => {
 /* GET /api/admin/stats — dashboard stats for admin */
 router.get('/stats', requireRole('admin'), async (req, res) => {
     try {
-        const [users, tickets, finance] = await Promise.all([
+        const [users, tickets, records, payRow, fleetRow] = await Promise.all([
             pool.query('SELECT role, COUNT(*) AS count FROM users GROUP BY role'),
             pool.query('SELECT status, COUNT(*) AS count FROM service_tickets GROUP BY status'),
             pool.query(
                 `SELECT
-                    COALESCE(SUM(CASE WHEN type='income'  THEN amount ELSE 0 END),0) AS total_income,
-                    COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END),0) AS total_expenses
+                    COALESCE(SUM(CASE WHEN type='income'  THEN amount ELSE 0 END),0) AS income,
+                    COALESCE(SUM(CASE WHEN type='expense' THEN amount ELSE 0 END),0) AS expenses
                  FROM financial_records`
             ),
+            /* Match /financials/summary: client payments are income, fleet invoices are expenses. */
+            pool.query("SELECT COALESCE(SUM(amount),0) AS pay FROM client_transactions WHERE type='payment'")
+                .catch(() => ({ rows: [{ pay: 0 }] })),
+            pool.query("SELECT COALESCE(SUM(amount),0) AS fleet FROM vehicle_invoices")
+                .catch(() => ({ rows: [{ fleet: 0 }] })),
         ]);
         return res.json({
-            users:    users.rows,
-            tickets:  tickets.rows,
-            finance:  finance.rows[0],
+            users:   users.rows,
+            tickets: tickets.rows,
+            finance: {
+                total_income:   Number(records.rows[0].income)   + Number(payRow.rows[0].pay),
+                total_expenses: Number(records.rows[0].expenses) + Number(fleetRow.rows[0].fleet),
+            },
         });
     } catch (err) {
         console.error(err);

@@ -24,23 +24,35 @@ router.get('/', requireRole('accounting', 'admin'), async (req, res) => {
 /* GET /api/financials/summary — totals for dashboard */
 router.get('/summary', requireRole('accounting', 'admin'), async (req, res) => {
     try {
-        const result = await pool.query(
-            `WITH fr AS (
-                SELECT
-                    COALESCE(SUM(CASE WHEN type = 'income'  THEN amount ELSE 0 END), 0) AS income,
-                    COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS expenses
-                FROM financial_records
-             ), pay AS (
-                SELECT COALESCE(SUM(amount), 0) AS income
-                FROM client_transactions WHERE type = 'payment'
-             )
-             SELECT
-                (fr.income + pay.income)             AS total_income,
-                fr.expenses                          AS total_expenses,
-                (fr.income + pay.income - fr.expenses) AS net
-             FROM fr, pay`
-        );
-        return res.json(result.rows[0]);
+        const [base, fleetRes] = await Promise.all([
+            pool.query(
+                `WITH fr AS (
+                    SELECT
+                        COALESCE(SUM(CASE WHEN type = 'income'  THEN amount ELSE 0 END), 0) AS income,
+                        COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS expenses
+                    FROM financial_records
+                 ), pay AS (
+                    SELECT COALESCE(SUM(amount), 0) AS income
+                    FROM client_transactions WHERE type = 'payment'
+                 )
+                 SELECT (fr.income + pay.income) AS income, fr.expenses AS expenses
+                 FROM fr, pay`
+            ),
+            pool.query("SELECT COALESCE(SUM(amount), 0) AS fleet FROM vehicle_invoices")
+                .catch(() => ({ rows: [{ fleet: 0 }] })),   /* graceful if table missing */
+        ]);
+
+        const income     = Number(base.rows[0].income);
+        const recordExp  = Number(base.rows[0].expenses);
+        const fleetExp   = Number(fleetRes.rows[0].fleet);
+        const totalExp   = recordExp + fleetExp;   /* fleet counts against revenue */
+
+        return res.json({
+            total_income:   income,
+            total_expenses: totalExp,
+            fleet_expenses: fleetExp,
+            net:            income - totalExp,
+        });
     } catch (err) {
         console.error(err);
         return res.status(500).json({ error: 'Server error.' });

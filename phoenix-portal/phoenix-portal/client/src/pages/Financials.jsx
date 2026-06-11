@@ -480,6 +480,11 @@ export default function Financials() {
                             <div className="stat-value" style={{ color: 'var(--red)' }}>
                                 ${Number(summary.total_expenses).toLocaleString()}
                             </div>
+                            {Number(summary.fleet_expenses) > 0 && (
+                                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>
+                                    incl. ${Number(summary.fleet_expenses).toLocaleString()} fleet
+                                </div>
+                            )}
                         </div>
                         <div className="stat-card">
                             <div className="stat-label">Net</div>

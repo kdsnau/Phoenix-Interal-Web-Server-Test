@@ -122,11 +122,18 @@ router.post('/query', authenticate, async (req, res) => {
             FROM service_tickets GROUP BY status
         `).catch(() => ({ rows: [] })),
 
+        /* Canonical totals — matches /financials/summary: records + client payments
+           as income, records + fleet (vehicle_invoices) as expenses. */
         pool.query(`
             SELECT
-                COALESCE(SUM(amount) FILTER (WHERE type = 'income'),  0)::numeric AS total_income,
-                COALESCE(SUM(amount) FILTER (WHERE type = 'expense'), 0)::numeric AS total_expenses
-            FROM financials
+                (
+                    (SELECT COALESCE(SUM(amount), 0) FROM financial_records WHERE type = 'income')
+                  + (SELECT COALESCE(SUM(amount), 0) FROM client_transactions WHERE type = 'payment')
+                )::numeric AS total_income,
+                (
+                    (SELECT COALESCE(SUM(amount), 0) FROM financial_records WHERE type = 'expense')
+                  + (SELECT COALESCE(SUM(amount), 0) FROM vehicle_invoices)
+                )::numeric AS total_expenses
         `).catch(() => ({ rows: [{ total_income: 0, total_expenses: 0 }] })),
 
         fetchSlackProjects(60),
@@ -160,7 +167,7 @@ router.post('/query', authenticate, async (req, res) => {
         `  • Fleet: ${totalVehicles} vehicles, ${vehiclesWithIssues} with open issues (${totalOpenIssues} open issues total)`,
         `  • Service tickets: ${openTickets} open/in-progress`,
         `  • Projects in Slack: ${totalProjects} unique jobs, ${activeProjects} still active`,
-        `  • Monthly recurring revenue: $${Number(fin.total_income || 0).toLocaleString()} income / $${Number(fin.total_expenses || 0).toLocaleString()} expenses`,
+        `  • Financial totals: $${Number(fin.total_income || 0).toLocaleString()} income / $${Number(fin.total_expenses || 0).toLocaleString()} expenses`,
         ``,
         `════ CLIENTS (${clients.rows.length} total) ════`,
         ...clients.rows.map(c => {

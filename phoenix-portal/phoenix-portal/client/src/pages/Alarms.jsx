@@ -330,7 +330,7 @@ const STATUS_CLASS = {
     return_necessary: 'tag-red',
 };
 
-const SERVICE_TABS = ['all', 'alarm', 'fire', 'access_control', 'permits'];
+const SERVICE_TABS = ['all', 'alarm', 'fire', 'access_control', 'permits', 'unmonitored'];
 
 /* -----------------------------------------------------------------------
    Alarm Slack feed panel
@@ -924,6 +924,11 @@ export default function Alarms() {
     const [permits, setPermits]       = useState([]);
     const [permitsLoading, setPermitsLoading] = useState(false);
 
+    const [unmon,        setUnmon]        = useState([]);
+    const [unmonLoading, setUnmonLoading] = useState(false);
+    const [importMsg,    setImportMsg]    = useState('');
+    const [importing,    setImporting]    = useState(false);
+
     function fetchClients() {
         setLoading(true);
         const params = {};
@@ -945,6 +950,8 @@ export default function Alarms() {
                 .then(r => setPermits(r.data))
                 .catch(() => setPermits([]))
                 .finally(() => setPermitsLoading(false));
+        } else if (serviceTab === 'unmonitored') {
+            loadUnmonitored();
         } else {
             fetchClients();
         }
@@ -960,6 +967,39 @@ export default function Alarms() {
         const r = await api.get(`/clients/${selected.id}`);
         setSelected(r.data);
         fetchClients();
+    }
+
+    function loadUnmonitored() {
+        setUnmonLoading(true);
+        api.get('/clients/unmonitored')
+            .then(r => setUnmon(r.data))
+            .catch(() => setUnmon([]))
+            .finally(() => setUnmonLoading(false));
+    }
+
+    async function uploadQuickbooks(e) {
+        const files = Array.from(e.target.files || []);
+        if (files.length === 0) return;
+        setImporting(true); setImportMsg('');
+        const fd = new FormData();
+        files.forEach(f => fd.append('files', f));
+        try {
+            const { data } = await api.post('/clients/import-quickbooks', fd, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            setImportMsg(`${data.qb_customers} customers found · ${data.added} new · ${data.total} unmonitored total`);
+            loadUnmonitored();
+        } catch (err) {
+            setImportMsg(err.response?.data?.error || 'Import failed.');
+        } finally {
+            setImporting(false);
+            e.target.value = '';
+        }
+    }
+
+    async function dismissUnmonitored(id) {
+        await api.delete(`/clients/unmonitored/${id}`);
+        setUnmon(prev => prev.filter(u => u.id !== id));
     }
 
     return (
@@ -990,7 +1030,7 @@ export default function Alarms() {
                             onClick={() => setServiceTab(t)}
                         >
                             {t === 'all' ? 'All' : t === 'access_control' ? 'Access Control' : t === 'permits' ? 'Permits' : t.charAt(0).toUpperCase() + t.slice(1)}
-                            {t !== 'permits' && (
+                            {t !== 'permits' && t !== 'unmonitored' && (
                                 <span className="alarm-tab-count">
                                     {t === 'all' ? clients.length : clients.filter(c => (c.services || []).includes(t)).length}
                                 </span>
@@ -1046,9 +1086,49 @@ export default function Alarms() {
                     </div>
                 )}
 
-                {serviceTab !== 'permits' && loading ? (
+                {/* Unmonitored clients (from QuickBooks) */}
+                {serviceTab === 'unmonitored' && (
+                    <div className="permit-report">
+                        {user.role === 'admin' && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14, flexWrap: 'wrap' }}>
+                                <label className="btn btn-primary" style={{ cursor: 'pointer' }}>
+                                    {importing ? 'Importing…' : 'Upload QuickBooks CSVs'}
+                                    <input type="file" accept=".csv" multiple hidden disabled={importing} onChange={uploadQuickbooks} />
+                                </label>
+                                {importMsg && <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>{importMsg}</span>}
+                            </div>
+                        )}
+                        {unmonLoading ? (
+                            <div className="alarm-empty">Loading…</div>
+                        ) : (
+                            <div className="table-card">
+                                <table className="data-table">
+                                    <thead><tr><th>Customer</th><th>First seen</th><th></th></tr></thead>
+                                    <tbody>
+                                        {unmon.length === 0 && (
+                                            <tr><td colSpan={3} className="alarm-empty">No unmonitored clients yet. Upload QuickBooks CSV exports to populate this list.</td></tr>
+                                        )}
+                                        {unmon.map(u => (
+                                            <tr key={u.id}>
+                                                <td style={{ fontWeight: 500, color: 'var(--text-hi)' }}>{u.name}</td>
+                                                <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>{new Date(u.first_seen).toLocaleDateString()}</td>
+                                                <td style={{ textAlign: 'right' }}>
+                                                    {user.role === 'admin' && (
+                                                        <button className="btn btn-ghost" style={{ padding: '2px 10px', fontSize: 12 }} onClick={() => dismissUnmonitored(u.id)}>Dismiss</button>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {serviceTab !== 'permits' && serviceTab !== 'unmonitored' && loading ? (
                     <div className="alarm-empty">Loading…</div>
-                ) : serviceTab !== 'permits' && (
+                ) : serviceTab !== 'permits' && serviceTab !== 'unmonitored' && (
                     <div className="alarm-client-grid">
                         {clients.length === 0 && <div className="alarm-empty">No clients found.</div>}
                         {clients.map(c => (

@@ -1,8 +1,11 @@
 const express = require('express');
+const multer  = require('multer');
+const XLSX    = require('xlsx');
 const pool    = require('../db/pool');
 const { authenticate, requireRole } = require('../middleware/requireRole');
 
 const router = express.Router();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 /* ── Schema migrations ────────────────────────────────────────────────── */
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS permit_number   TEXT`).catch(() => {});
@@ -30,6 +33,35 @@ pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS maintenance_enabled   B
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS maintenance_frequency TEXT`).catch(() => {});
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS maintenance_next      DATE`).catch(() => {});
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS maintenance_last      DATE`).catch(() => {});
+
+/* Customers seen in QuickBooks exports that aren't in our client list */
+pool.query(`
+    CREATE TABLE IF NOT EXISTS unmonitored_clients (
+        id         SERIAL PRIMARY KEY,
+        name       TEXT NOT NULL,
+        first_seen TIMESTAMP NOT NULL DEFAULT NOW(),
+        last_seen  TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+`).catch(() => {});
+pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_unmon_name ON unmonitored_clients (lower(name))`).catch(() => {});
+
+/* QuickBooks "Customer" cells look like "** REP ** Acme:Job:Service".
+   The real top-level customer is the rep-prefix-stripped text before the first colon. */
+function topLevelCustomer(raw) {
+    let s = String(raw || '').trim();
+    if (!s) return null;
+    s = s.replace(/^\*\*[^*]*\*\*\s*/, '');   // drop "** REP **" prefix
+    s = s.split(':')[0].trim();               // top-level customer only
+    return s || null;
+}
+
+function isJunkCustomer(name) {
+    const n = name.toLowerCase();
+    if (n === 'customer') return true;                              // header row
+    if (n.startsWith('total')) return true;                        // subtotal rows
+    if (/^[a-z]{3,9} - [a-z]{3,9} \d{2,4}$/.test(n)) return true;   // "Jan - Dec 26"
+    return false;
+}
 
 /* POST /api/clients — admin only */
 router.post('/', requireRole('admin'), async (req, res) => {
@@ -88,6 +120,78 @@ router.get('/permits', requireRole('admin', 'accounting'), async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Failed to fetch permits.' });
+    }
+});
+
+/* ═══ QuickBooks → Unmonitored Clients ═══════════════════════════════════ */
+
+/* GET /api/clients/unmonitored — QB customers not in our client list */
+router.get('/unmonitored', authenticate, async (req, res) => {
+    try {
+        const r = await pool.query('SELECT id, name, first_seen, last_seen FROM unmonitored_clients ORDER BY name');
+        return res.json(r.rows);
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'Failed to load unmonitored clients.' });
+    }
+});
+
+/* POST /api/clients/import-quickbooks — upload QB CSV(s); accumulate unmonitored */
+router.post('/import-quickbooks', requireRole('admin'), upload.array('files', 12), async (req, res) => {
+    if (!req.files || req.files.length === 0) return res.status(400).json({ error: 'No files uploaded.' });
+    try {
+        const customers = new Set();
+        let rows = 0;
+        for (const file of req.files) {
+            const wb = XLSX.read(file.buffer, { type: 'buffer' });
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            for (const row of XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })) {
+                rows++;
+                const name = topLevelCustomer(row[0]);
+                if (name && !isJunkCustomer(name)) customers.add(name);
+            }
+        }
+
+        const existing = await pool.query('SELECT name FROM clients');
+        const have = new Set(existing.rows.map(r => (r.name || '').trim().toLowerCase()));
+
+        const before = (await pool.query('SELECT COUNT(*)::int AS n FROM unmonitored_clients')).rows[0].n;
+        for (const name of customers) {
+            if (have.has(name.toLowerCase())) continue;
+            await pool.query(
+                `INSERT INTO unmonitored_clients (name) VALUES ($1)
+                 ON CONFLICT (lower(name)) DO UPDATE SET last_seen = NOW()`,
+                [name]
+            );
+        }
+        /* Self-clean: drop any that are now real clients */
+        await pool.query(
+            `DELETE FROM unmonitored_clients
+             WHERE lower(trim(name)) IN (SELECT lower(trim(name)) FROM clients)`
+        );
+        const after = (await pool.query('SELECT COUNT(*)::int AS n FROM unmonitored_clients')).rows[0].n;
+
+        return res.json({
+            files: req.files.length,
+            rows,
+            qb_customers: customers.size,
+            added: Math.max(0, after - before),
+            total: after,
+        });
+    } catch (err) {
+        console.error('QuickBooks import error:', err);
+        return res.status(500).json({ error: 'Import failed — make sure these are QuickBooks CSV exports.' });
+    }
+});
+
+/* DELETE /api/clients/unmonitored/:id — dismiss one */
+router.delete('/unmonitored/:id', requireRole('admin'), async (req, res) => {
+    try {
+        await pool.query('DELETE FROM unmonitored_clients WHERE id = $1', [req.params.id]);
+        return res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'Failed to dismiss.' });
     }
 });
 

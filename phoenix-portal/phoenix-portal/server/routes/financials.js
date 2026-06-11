@@ -25,12 +25,20 @@ router.get('/', requireRole('accounting', 'admin'), async (req, res) => {
 router.get('/summary', requireRole('accounting', 'admin'), async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT
-                COALESCE(SUM(CASE WHEN type = 'income'  THEN amount ELSE 0 END), 0) AS total_income,
-                COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS total_expenses,
-                COALESCE(SUM(CASE WHEN type = 'income'  THEN amount
-                                  WHEN type = 'expense' THEN -amount END), 0) AS net
-             FROM financial_records`
+            `WITH fr AS (
+                SELECT
+                    COALESCE(SUM(CASE WHEN type = 'income'  THEN amount ELSE 0 END), 0) AS income,
+                    COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS expenses
+                FROM financial_records
+             ), pay AS (
+                SELECT COALESCE(SUM(amount), 0) AS income
+                FROM client_transactions WHERE type = 'payment'
+             )
+             SELECT
+                (fr.income + pay.income)             AS total_income,
+                fr.expenses                          AS total_expenses,
+                (fr.income + pay.income - fr.expenses) AS net
+             FROM fr, pay`
         );
         return res.json(result.rows[0]);
     } catch (err) {
@@ -54,7 +62,7 @@ router.get('/monthly', requireRole('accounting', 'admin'), async (req, res) => {
             months.push(d.toISOString().slice(0, 7));   /* 'YYYY-MM' */
         }
 
-        const [finRows, fleetRows, mrrRow] = await Promise.all([
+        const [finRows, payRows, fleetRows, mrrRow] = await Promise.all([
             pool.query(`
                 SELECT TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM') AS month,
                        COALESCE(SUM(CASE WHEN type = 'income'  THEN amount ELSE 0 END), 0) AS income,
@@ -64,6 +72,14 @@ router.get('/monthly', requireRole('accounting', 'admin'), async (req, res) => {
                 GROUP BY 1
                 ORDER BY 1
             `),
+            pool.query(`
+                SELECT TO_CHAR(DATE_TRUNC('month', date), 'YYYY-MM') AS month,
+                       COALESCE(SUM(amount), 0) AS income
+                FROM client_transactions
+                WHERE type = 'payment' AND date >= (NOW() - INTERVAL '12 months')::date
+                GROUP BY 1
+                ORDER BY 1
+            `).catch(() => ({ rows: [] })),   /* graceful if table missing */
             pool.query(`
                 SELECT TO_CHAR(DATE_TRUNC('month', invoice_date::date), 'YYYY-MM') AS month,
                        COALESCE(SUM(amount), 0) AS fleet
@@ -83,11 +99,12 @@ router.get('/monthly', requireRole('accounting', 'admin'), async (req, res) => {
         ]);
 
         const finMap   = Object.fromEntries(finRows.rows.map(r   => [r.month, r]));
+        const payMap   = Object.fromEntries(payRows.rows.map(r   => [r.month, r]));
         const fleetMap = Object.fromEntries(fleetRows.rows.map(r => [r.month, r]));
 
         const data = months.map(m => ({
             month:    m,
-            income:   Number(finMap[m]?.income   || 0),
+            income:   Number(finMap[m]?.income || 0) + Number(payMap[m]?.income || 0),
             expenses: Number(finMap[m]?.expenses || 0),
             fleet:    Number(fleetMap[m]?.fleet  || 0),
         }));

@@ -247,17 +247,17 @@ router.get('/:id/items', requireRole('technician', 'admin'), async (req, res) =>
 
 /* POST /api/tickets/:id/items  { inventory_item_id, quantity } */
 router.post('/:id/items', requireRole('technician', 'admin'), async (req, res) => {
-    const { inventory_item_id, quantity } = req.body;
+    const { inventory_item_id, quantity, used } = req.body;
     if (!inventory_item_id) return res.status(400).json({ error: 'inventory_item_id is required.' });
     try {
         await assertTicketAccess(req, req.params.id);
         const ins = await pool.query(
-            `INSERT INTO ticket_items (ticket_id, inventory_item_id, quantity)
-             VALUES ($1, $2, $3)
+            `INSERT INTO ticket_items (ticket_id, inventory_item_id, quantity, used)
+             VALUES ($1, $2, $3, $4)
              ON CONFLICT (ticket_id, inventory_item_id)
-             DO UPDATE SET quantity = EXCLUDED.quantity
+             DO UPDATE SET quantity = EXCLUDED.quantity, used = EXCLUDED.used
              RETURNING id`,
-            [req.params.id, inventory_item_id, quantity > 0 ? quantity : 1]
+            [req.params.id, inventory_item_id, quantity > 0 ? quantity : 1, !!used]
         );
         const full = await pool.query(`${ITEM_SELECT} WHERE ti.id = $1`, [ins.rows[0].id]);
         return res.status(201).json(full.rows[0]);

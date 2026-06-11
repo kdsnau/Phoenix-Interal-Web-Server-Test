@@ -19,6 +19,53 @@ function fmt(ts, opts) {
 const DATE_OPTS  = { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' };
 const TIME_OPTS  = { hour: 'numeric', minute: '2-digit' };
 
+/* Searchable, height-capped inventory picker — replaces a giant <select> so
+   long item names wrap and the list stays a reasonable length. */
+function InventoryItemPicker({ inv, exclude = [], onPick, placeholder = 'Search inventory…' }) {
+    const [q, setQ] = useState('');
+    const list = inv
+        .filter(i => !exclude.includes(i.id))
+        .filter(i => {
+            if (!q) return true;
+            const s = q.toLowerCase();
+            return i.name.toLowerCase().includes(s) || (i.sku || '').toLowerCase().includes(s);
+        })
+        .slice(0, 40);
+    return (
+        <div style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+            <input
+                value={q}
+                onChange={e => setQ(e.target.value)}
+                placeholder={placeholder}
+                style={{ width: '100%', border: 'none', borderBottom: '1px solid var(--border)', borderRadius: 0, padding: '8px 10px', fontSize: 13 }}
+            />
+            <div style={{ maxHeight: 200, overflowY: 'auto' }}>
+                {list.length === 0 && (
+                    <div style={{ padding: 10, color: 'var(--text-dim)', fontSize: 13 }}>No matching items.</div>
+                )}
+                {list.map(i => (
+                    <button
+                        type="button"
+                        key={i.id}
+                        onClick={() => onPick(i)}
+                        style={{
+                            display: 'flex', justifyContent: 'space-between', gap: 10, width: '100%',
+                            textAlign: 'left', background: 'none', border: 'none',
+                            borderBottom: '1px solid var(--border)', color: 'var(--text)',
+                            padding: '8px 10px', fontSize: 12, cursor: 'pointer', whiteSpace: 'normal', lineHeight: 1.4,
+                        }}
+                    >
+                        <span>{i.name}{i.sku ? ` (${i.sku})` : ''}</span>
+                        <span style={{ color: i.quantity <= 0 ? 'var(--red)' : 'var(--text-dim)', whiteSpace: 'nowrap', fontFamily: 'var(--font-mono)' }}>
+                            {i.quantity} in stock
+                        </span>
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 function NewTicketModal({ onClose, onCreated, technicians }) {
     const [title,       setTitle]       = useState('');
     const [desc,        setDesc]        = useState('');
@@ -28,6 +75,12 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
     const [location,    setLocation]    = useState('');
     const [error,       setError]       = useState('');
     const [loading,     setLoading]     = useState(false);
+    const [inv,         setInv]         = useState([]);
+    const [pendingItems, setPendingItems] = useState([]);
+
+    useEffect(() => {
+        api.get('/inventory').then(r => setInv(r.data)).catch(() => {});
+    }, []);
 
     const submit = async (e) => {
         e.preventDefault();
@@ -42,6 +95,10 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
                 event_end:      eventEnd    || undefined,
                 event_location: location    || undefined,
             });
+            for (const it of pendingItems) {
+                await api.post(`/tickets/${data.id}/items`,
+                    { inventory_item_id: it.id, quantity: it.quantity, used: it.used }).catch(() => {});
+            }
             onCreated(data);
             onClose();
         } catch (err) {
@@ -111,6 +168,37 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
                         </div>
                     </div>
 
+                    {/* ── Inventory items (optional) ── */}
+                    <div style={{ borderTop: '1px solid var(--border)', margin: '14px 0 12px', paddingTop: 12 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>
+                            Inventory Items (optional)
+                        </div>
+                        {pendingItems.length > 0 && (
+                            <div style={{ marginBottom: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                {pendingItems.map(it => (
+                                    <div key={it.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                                        <span style={{ flex: 1, minWidth: 0 }}>{it.name}{it.sku ? ` (${it.sku})` : ''}</span>
+                                        <input type="number" min="1" value={it.quantity}
+                                            onChange={e => setPendingItems(p => p.map(x => x.id === it.id ? { ...x, quantity: Math.max(1, Number(e.target.value) || 1) } : x))}
+                                            style={{ width: 56, padding: '4px 6px', fontSize: 12 }} />
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, whiteSpace: 'nowrap' }}>
+                                            <input type="checkbox" checked={it.used}
+                                                onChange={e => setPendingItems(p => p.map(x => x.id === it.id ? { ...x, used: e.target.checked } : x))} />
+                                            used
+                                        </label>
+                                        <button type="button" className="btn btn-ghost" style={{ padding: '2px 8px', fontSize: 12 }}
+                                            onClick={() => setPendingItems(p => p.filter(x => x.id !== it.id))}>✕</button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        <InventoryItemPicker
+                            inv={inv}
+                            exclude={pendingItems.map(p => p.id)}
+                            onPick={item => setPendingItems(p => [...p, { id: item.id, name: item.name, sku: item.sku, quantity: 1, used: false }])}
+                        />
+                    </div>
+
                     <div className="modal-actions">
                         <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
                         <button type="submit" className="btn btn-primary" disabled={loading}>
@@ -128,8 +216,6 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
 function TicketItemsModal({ ticket, onClose }) {
     const [items,   setItems]   = useState([]);
     const [inv,     setInv]     = useState([]);
-    const [pick,    setPick]    = useState('');
-    const [qty,     setQty]     = useState(1);
     const [loading, setLoading] = useState(true);
     const [error,   setError]   = useState('');
 
@@ -155,12 +241,10 @@ function TicketItemsModal({ ticket, onClose }) {
         })();
     }, [ticket.id]);
 
-    const add = async () => {
-        if (!pick) return;
+    const addItem = async (item) => {
         setError('');
         try {
-            await api.post(`/tickets/${ticket.id}/items`, { inventory_item_id: Number(pick), quantity: Number(qty) || 1 });
-            setPick(''); setQty(1);
+            await api.post(`/tickets/${ticket.id}/items`, { inventory_item_id: item.id, quantity: 1 });
             await reload();
         } catch (e) { setError(e.response?.data?.error || 'Failed to add item.'); }
     };
@@ -228,23 +312,9 @@ function TicketItemsModal({ ticket, onClose }) {
                             </table>
                         )}
 
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                            <div className="form-group" style={{ margin: 0, flex: 1, minWidth: 220 }}>
-                                <label className="form-label">Add inventory item</label>
-                                <select value={pick} onChange={e => setPick(e.target.value)}>
-                                    <option value="">Select an item…</option>
-                                    {inv.map(i => (
-                                        <option key={i.id} value={i.id}>
-                                            {i.name}{i.sku ? ` (${i.sku})` : ''} — {i.quantity} in stock
-                                        </option>
-                                    ))}
-                                </select>
-                            </div>
-                            <div className="form-group" style={{ margin: 0, width: 80 }}>
-                                <label className="form-label">Qty</label>
-                                <input type="number" min="1" value={qty} onChange={e => setQty(e.target.value)} />
-                            </div>
-                            <button className="btn btn-primary" onClick={add} disabled={!pick}>Add</button>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Add inventory item</label>
+                            <InventoryItemPicker inv={inv} exclude={items.map(i => i.inventory_item_id)} onPick={addItem} />
                         </div>
 
                         <p style={{ color: 'var(--text-dim)', fontSize: 12, marginTop: 14 }}>

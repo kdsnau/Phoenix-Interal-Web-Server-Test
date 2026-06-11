@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 import './Dashboard.css';
 
 /* -----------------------------------------------------------------------
@@ -247,6 +248,7 @@ export default function Dashboard() {
                 <h1 className="page-title">
                     Dashboard
                     <span>{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</span>
+                    <PageHelp id="dashboard" />
                 </h1>
                 <button
                     className={`btn btn-ghost board-btn ${hasUnread ? 'board-btn--unread' : ''}`}

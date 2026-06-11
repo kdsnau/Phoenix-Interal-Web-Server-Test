@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 import './Dashboard.css';
 
 const ROLE_TAG = { admin: 'tag-red', accounting: 'tag-blue', technician: 'tag-green' };
@@ -216,7 +217,7 @@ export default function Admin() {
     return (
         <Layout>
             <div className="page-header">
-                <h1 className="page-title">Admin</h1>
+                <h1 className="page-title">Admin<PageHelp id="admin" /></h1>
                 {tab === 'users' && (
                     <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Create User</button>
                 )}

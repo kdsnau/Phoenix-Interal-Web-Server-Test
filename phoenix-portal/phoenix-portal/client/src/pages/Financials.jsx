@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 import { useAuth } from '../context/AuthContext';
 import './Financials.css';
 
@@ -456,7 +457,7 @@ export default function Financials() {
         <Layout>
             <div className="fin-page">
                 <div className="fin-header">
-                    <h1 className="page-title">Financials</h1>
+                    <h1 className="page-title">Financials<PageHelp id="financials" /></h1>
                     <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ Add Record</button>
                 </div>
 

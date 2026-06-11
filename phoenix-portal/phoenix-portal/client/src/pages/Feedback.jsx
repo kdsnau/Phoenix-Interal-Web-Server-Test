@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 import './Feedback.css';
 
 const CATEGORIES = [
@@ -41,7 +42,7 @@ export default function Feedback() {
     return (
         <Layout>
             <div className="page-header">
-                <h1 className="page-title">Feedback</h1>
+                <h1 className="page-title">Feedback<PageHelp id="feedback" /></h1>
             </div>
 
             <p className="fb-subtitle">

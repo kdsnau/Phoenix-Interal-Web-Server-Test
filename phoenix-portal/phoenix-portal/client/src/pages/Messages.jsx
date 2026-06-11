@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 import './Messages.css';
 
 const ROLE_COLOR = { admin: 'tag-red', accounting: 'tag-blue', technician: 'tag-green' };
@@ -118,7 +119,7 @@ export default function Messages() {
     return (
         <Layout>
             <div className="page-header">
-                <h1 className="page-title">Messages</h1>
+                <h1 className="page-title">Messages<PageHelp id="messages" /></h1>
             </div>
             <div className={`msg-shell ${active ? 'thread-active' : ''}`}>
 

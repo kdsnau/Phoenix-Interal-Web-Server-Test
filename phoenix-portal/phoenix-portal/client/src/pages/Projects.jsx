@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 import './Projects.css';
 
 /* -----------------------------------------------------------------------
@@ -381,7 +382,7 @@ export default function Projects() {
         <Layout>
             <div className="proj-page">
                 <div className="proj-page-header">
-                    <h1 className="page-title">Projects</h1>
+                    <h1 className="page-title">Projects<PageHelp id="projects" /></h1>
                     <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                     {user.role === 'admin' && (
                         <button className="btn btn-primary" onClick={() => setShowAddProject(true)}>

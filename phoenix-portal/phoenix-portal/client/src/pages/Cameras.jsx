@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 import './Cameras.css';
 
 /* ── Helpers ──────────────────────────────────────────────────────────── */
@@ -714,6 +715,7 @@ export default function Cameras() {
                 <h1 className="page-title">
                     Camera Systems
                     <span>{servers.length} system{servers.length !== 1 ? 's' : ''}</span>
+                    <PageHelp id="cameras" />
                 </h1>
                 {user.role === 'admin' && (
                     <button className="btn btn-primary" onClick={openAdd}>+ Add System</button>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 import './Fleet.css';
 
 const VEHICLE_IMAGES = {
@@ -819,7 +820,7 @@ export default function Fleet() {
     return (
         <Layout>
             <div className="page-header">
-                <h1 className="page-title">Fleet <span>{vehicles.length} vehicles</span></h1>
+                <h1 className="page-title">Fleet <span>{vehicles.length} vehicles</span><PageHelp id="fleet" /></h1>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     {importMsg && <span style={{ fontSize: 12, color: 'var(--green)', fontFamily: 'var(--font-mono)' }}>{importMsg}</span>}
                     <button className="btn btn-ghost" onClick={runImport} disabled={importing}>

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 import './AI.css';
 
 const QUICK = [
@@ -44,7 +45,7 @@ export default function AI() {
     return (
         <Layout>
             <div className="page-header">
-                <h1 className="page-title">AI Assistant</h1>
+                <h1 className="page-title">AI Assistant<PageHelp id="ai" /></h1>
             </div>
 
             <p className="ai-subtitle">

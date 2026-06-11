@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 import './Compliance.css';
 
 /* What each renewal category looks like in the UI */
@@ -84,7 +85,7 @@ export default function Compliance() {
         <Layout>
             <div className="comp-page">
                 <div className="comp-header">
-                    <h1 className="page-title">Compliance &amp; Renewals</h1>
+                    <h1 className="page-title">Compliance &amp; Renewals<PageHelp id="compliance" /></h1>
                     <div className="comp-windows">
                         {WINDOWS.map(w => (
                             <button

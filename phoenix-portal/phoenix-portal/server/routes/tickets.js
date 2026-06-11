@@ -33,7 +33,8 @@ router.get('/', requireRole('technician', 'admin'), async (req, res) => {
 });
 
 /* ── POST /api/tickets ────────────────────────────────────────────────── */
-router.post('/', requireRole('technician', 'admin'), async (req, res) => {
+/* Admin only — technicians can work tickets but not create them. */
+router.post('/', requireRole('admin'), async (req, res) => {
     const { title, description, assigned_to, event_start, event_end, event_location } = req.body;
 
     if (!title) return res.status(400).json({ error: 'Title is required.' });
@@ -95,7 +96,8 @@ router.post('/', requireRole('technician', 'admin'), async (req, res) => {
 
 /* ── PATCH /api/tickets/:id ───────────────────────────────────────────── */
 router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
-    const { status, assigned_to, event_start, event_end, event_location } = req.body;
+    const isTech = req.user.role === 'technician';
+    let { status, assigned_to, event_start, event_end, event_location } = req.body;
     const validStatuses = ['open', 'in_progress', 'resolved', 'closed'];
 
     if (status && !validStatuses.includes(status)) {
@@ -103,6 +105,18 @@ router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
     }
 
     try {
+        /* Technicians may only change the STATUS of tickets assigned to them —
+           no editing details (assignee, schedule, location). */
+        if (isTech) {
+            const own = await pool.query('SELECT assigned_to FROM service_tickets WHERE id = $1', [req.params.id]);
+            if (own.rowCount === 0) return res.status(404).json({ error: 'Ticket not found.' });
+            if (own.rows[0].assigned_to !== req.user.id) {
+                return res.status(403).json({ error: 'Technicians can only update tickets assigned to them.' });
+            }
+            if (!status) return res.status(403).json({ error: 'Technicians can only change ticket status.' });
+            assigned_to = event_start = event_end = event_location = undefined;
+        }
+
         await pool.query(
             `UPDATE service_tickets
              SET status         = COALESCE($1, status),

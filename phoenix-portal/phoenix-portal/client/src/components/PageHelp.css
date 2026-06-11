@@ -1,0 +1,82 @@
+/* Small "?" button that sits next to a page title */
+.page-help-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 1px solid var(--border, #2a3040);
+    background: var(--bg-2, #13171b);
+    color: var(--text-dim, #5c6e82);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    padding: 0;
+    margin-left: 10px;
+    vertical-align: middle;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.page-help-btn:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+/* Help modal (uses the global .modal-overlay for the backdrop) */
+.help-modal {
+    background: var(--bg-2, #13171b);
+    border: 1px solid var(--border, #2a3040);
+    border-radius: 6px;
+    width: min(440px, 92vw);
+    max-height: 85vh;
+    overflow-y: auto;
+    padding-bottom: 18px;
+}
+.help-modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--border, #2a3040);
+}
+.help-modal-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-hi, #eaf0f8);
+}
+.help-close {
+    background: none;
+    border: none;
+    color: var(--text-dim, #5c6e82);
+    font-size: 18px;
+    cursor: pointer;
+    padding: 0 4px;
+    line-height: 1;
+}
+.help-close:hover { color: var(--text-hi, #eaf0f8); }
+
+.help-what {
+    padding: 14px 18px 4px;
+    margin: 0;
+    color: var(--text, #c9d4e0);
+    font-size: 13px;
+    line-height: 1.5;
+}
+.help-steps {
+    margin: 6px 0 0;
+    padding: 0 18px 0 36px;
+    color: var(--text, #c9d4e0);
+    font-size: 13px;
+    line-height: 1.6;
+}
+.help-steps li { margin-bottom: 6px; }
+.help-tip {
+    padding: 12px 18px 0;
+    margin: 0;
+    color: var(--text-dim, #5c6e82);
+    font-size: 12px;
+    font-style: italic;
+}

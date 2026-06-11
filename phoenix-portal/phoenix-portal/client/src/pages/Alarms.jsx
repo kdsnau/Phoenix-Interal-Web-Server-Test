@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 import './Alarms.css';
 
 /* -----------------------------------------------------------------------
@@ -329,7 +330,7 @@ const STATUS_CLASS = {
     return_necessary: 'tag-red',
 };
 
-const SERVICE_TABS = ['all', 'alarm', 'fire', 'access_control', 'permits'];
+const SERVICE_TABS = ['all', 'alarm', 'fire', 'access_control', 'maintenance', 'permits'];
 
 /* -----------------------------------------------------------------------
    Alarm Slack feed panel
@@ -382,6 +383,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
     const [tab, setTab]           = useState('system');
     const [notes, setNotes]         = useState(client.notes || '');
     const [billing, setBilling]     = useState(client.billing_amount || '');
+    const [billingFreq, setBillingFreq] = useState(client.billing_frequency || 'monthly');
     const [permitNum, setPermitNum] = useState(client.permit_number || '');
     const [permitExp, setPermitExp] = useState(client.permit_expires ? client.permit_expires.slice(0, 10) : '');
     const [savingNotes, setSavingNotes] = useState(false);
@@ -420,6 +422,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
         await api.patch(`/clients/${client.id}`, {
             notes,
             billing_amount: billing   || null,
+            billing_frequency: billingFreq || 'monthly',
             permit_number:  permitNum || null,
             permit_expires: permitExp || null,
             site_address:   siteAddress   || null,
@@ -491,7 +494,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                             <span>{client.customer_id}</span>
                             <span className="alarm-sep">·</span>
                             <span>{client.vendor}</span>
-                            {svc.map(s => <span key={s} className={`tag-${s === 'fire' ? 'red' : s === 'access_control' ? 'blue' : 'yellow'} alarm-svc-tag`}>{s}</span>)}
+                            {svc.map(s => <span key={s} className={`tag-${s === 'fire' ? 'red' : s === 'access_control' ? 'blue' : s === 'maintenance' ? 'green' : 'yellow'} alarm-svc-tag`}>{s}</span>)}
                         </div>
                     </div>
                     <button className="alarm-close-btn" onClick={onClose}>✕</button>
@@ -701,7 +704,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                     {/* BILLING TAB */}
                     {tab === 'billing' && canBilling && (
                         <div className="alarm-section">
-                            <div className="alarm-label">Monthly Billing Amount</div>
+                            <div className="alarm-label">Recurring Billing Amount</div>
                             <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
                                 <input
                                     className="alarm-input"
@@ -712,6 +715,15 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                                     onChange={e => setBilling(e.target.value)}
                                     style={{ width: '160px' }}
                                 />
+                                <select
+                                    className="alarm-select"
+                                    value={billingFreq}
+                                    onChange={e => setBillingFreq(e.target.value)}
+                                >
+                                    <option value="monthly">Monthly</option>
+                                    <option value="quarterly">Quarterly</option>
+                                    <option value="yearly">Yearly</option>
+                                </select>
                                 <button className="btn btn-primary" onClick={saveNotes}>Save</button>
                             </div>
                         </div>
@@ -838,7 +850,7 @@ function NewClientModal({ onClose, onCreated }) {
                     <div className="form-group" style={{ margin: 0 }}>
                         <label className="form-label">Services</label>
                         <div style={{ display: 'flex', gap: 16, marginTop: 6 }}>
-                            {['alarm', 'fire', 'access_control'].map(s => (
+                            {['alarm', 'fire', 'access_control', 'maintenance'].map(s => (
                                 <label key={s} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', fontWeight: 400 }}>
                                     <input type="checkbox" checked={form.services.includes(s)} onChange={() => toggleService(s)} />
                                     {s === 'access_control' ? 'Access Control' : s.charAt(0).toUpperCase() + s.slice(1)}
@@ -915,7 +927,7 @@ export default function Alarms() {
         <Layout>
             <div className="alarm-page">
                 <div className="alarm-page-header">
-                    <h1 className="page-title">Clients</h1>
+                    <h1 className="page-title">Clients<PageHelp id="clients" /></h1>
                     <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                         <input
                             className="alarm-search"
@@ -1006,7 +1018,7 @@ export default function Alarms() {
                                 <div className="alarm-client-meta">
                                     <span className="tag-dim">{c.customer_id}</span>
                                     {(c.services || []).map(s => (
-                                        <span key={s} className={`${s === 'fire' ? 'tag-red' : s === 'access_control' ? 'tag-blue' : 'tag-yellow'}`}>{s}</span>
+                                        <span key={s} className={`${s === 'fire' ? 'tag-red' : s === 'access_control' ? 'tag-blue' : s === 'maintenance' ? 'tag-green' : 'tag-yellow'}`}>{s}</span>
                                     ))}
                                     {c.monitoring_enabled && <span className="tag-green">monitored</span>}
                                     {c.permit_expires && (() => {

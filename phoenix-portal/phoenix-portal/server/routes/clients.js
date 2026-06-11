@@ -23,6 +23,8 @@ pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS contract_start  DATE`).
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS contract_end    DATE`).catch(() => {});
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_inspection DATE`).catch(() => {});
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS next_inspection DATE`).catch(() => {});
+/* Recurring billing frequency: monthly | quarterly | yearly */
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS billing_frequency TEXT DEFAULT 'monthly'`).catch(() => {});
 
 /* POST /api/clients — admin only */
 router.post('/', requireRole('admin'), async (req, res) => {
@@ -131,7 +133,7 @@ router.patch('/billing/bulk', requireRole('admin', 'accounting'), async (req, re
 /* PATCH /api/clients/:id */
 router.patch('/:id', authenticate, async (req, res) => {
     const FIELDS = [
-        'notes', 'billing_amount',
+        'notes', 'billing_amount', 'billing_frequency',
         'permit_number', 'permit_expires',
         'site_address', 'contact_name', 'contact_phone', 'contact_email',
         'panel_brand', 'panel_model', 'camera_count', 'zone_count',

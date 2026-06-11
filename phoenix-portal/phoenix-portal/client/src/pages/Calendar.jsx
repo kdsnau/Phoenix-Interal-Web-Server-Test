@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 import './Calendar.css';
 
 const STATUS_TAG = {
@@ -90,7 +91,7 @@ export default function Calendar() {
     return (
         <Layout>
             <div className="page-header">
-                <h1 className="page-title">Calendar</h1>
+                <h1 className="page-title">Calendar<PageHelp id="calendar" /></h1>
                 {tab === 'tickets' && (
                     <button
                         className="btn btn-primary"

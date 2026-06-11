@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 import { useAuth } from '../context/AuthContext';
 
 const STATUS_TAG = {
@@ -171,8 +172,10 @@ export default function Tickets() {
     return (
         <Layout>
             <div className="page-header">
-                <h1 className="page-title">Tickets <span>{tickets.length} records</span></h1>
-                <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ New Ticket</button>
+                <h1 className="page-title">Tickets <span>{tickets.length} records</span><PageHelp id="tickets" /></h1>
+                {user.role === 'admin' && (
+                    <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ New Ticket</button>
+                )}
             </div>
 
             {loading && <p style={{ color: 'var(--text-dim)' }}>Loading...</p>}

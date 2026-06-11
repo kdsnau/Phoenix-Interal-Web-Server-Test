@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 import './Inventory.css';
 
 const CATEGORIES = [
@@ -331,7 +332,7 @@ export default function Inventory() {
         <Layout>
             <div className="inv-page">
                 <div className="inv-header">
-                    <h1 className="page-title">Inventory</h1>
+                    <h1 className="page-title">Inventory<PageHelp id="inventory" /></h1>
                     {canEdit && (
                         <button className="btn btn-primary" onClick={() => setShowAdd(true)}>+ Add Item</button>
                     )}

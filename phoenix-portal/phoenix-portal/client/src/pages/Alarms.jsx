@@ -988,7 +988,7 @@ export default function Alarms() {
                 headers: { 'Content-Type': 'multipart/form-data' },
             });
             const txBits = data.tx_added > 0
-                ? ` · ${data.tx_added} transactions → ${data.clients_matched} clients`
+                ? ` · ${data.tx_added} transactions (${data.tx_matched} to ${data.clients_matched} clients, ${data.tx_unmonitored} unmonitored)`
                 : '';
             setImportMsg(`${data.qb_customers} customers${txBits} · ${data.added} new unmonitored · ${data.total} total`);
             loadUnmonitored();

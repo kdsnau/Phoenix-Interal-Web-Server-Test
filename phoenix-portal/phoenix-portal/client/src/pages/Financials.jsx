@@ -208,7 +208,12 @@ function ClientTransactionsTable({ transactions }) {
                     {transactions.map(t => (
                         <tr key={t.id}>
                             <td>
-                                <div className="fin-name">{t.client_name}</div>
+                                <div className="fin-name">
+                                    {t.client_name}
+                                    {t.unmonitored && (
+                                        <span className="tag-dim" style={{ marginLeft: 6, fontSize: 10 }}>unmonitored</span>
+                                    )}
+                                </div>
                                 {t.customer_id && <div className="fin-mono">{t.customer_id}</div>}
                             </td>
                             <td style={{ color: '#c9d4e0' }}>{t.description}</td>

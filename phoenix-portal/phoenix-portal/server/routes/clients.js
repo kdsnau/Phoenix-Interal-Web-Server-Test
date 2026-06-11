@@ -34,9 +34,13 @@ pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS maintenance_frequency T
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS maintenance_next      DATE`).catch(() => {});
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS maintenance_last      DATE`).catch(() => {});
 
-/* QuickBooks provenance on client_transactions — lets the import dedupe on re-run */
-pool.query(`ALTER TABLE client_transactions ADD COLUMN IF NOT EXISTS source  TEXT`).catch(() => {});
-pool.query(`ALTER TABLE client_transactions ADD COLUMN IF NOT EXISTS ref_num TEXT`).catch(() => {});
+/* QuickBooks provenance on client_transactions — lets the import dedupe on re-run.
+   client_id is nullable + customer_name carries the QB name so transactions for
+   customers we don't yet have as clients (Unmonitored) can still be ledgered. */
+pool.query(`ALTER TABLE client_transactions ADD COLUMN IF NOT EXISTS source        TEXT`).catch(() => {});
+pool.query(`ALTER TABLE client_transactions ADD COLUMN IF NOT EXISTS ref_num       TEXT`).catch(() => {});
+pool.query(`ALTER TABLE client_transactions ADD COLUMN IF NOT EXISTS customer_name TEXT`).catch(() => {});
+pool.query(`ALTER TABLE client_transactions ALTER COLUMN client_id DROP NOT NULL`).catch(() => {});
 
 /* Customers seen in QuickBooks exports that aren't in our client list */
 pool.query(`
@@ -254,42 +258,49 @@ router.post('/import-quickbooks', requireRole('admin'), upload.array('files', 12
         const idByName = new Map(existing.rows.map(r => [(r.name || '').trim().toLowerCase(), r.id]));
         const have     = new Set(idByName.keys());
 
-        /* ── Ledger: insert invoice/payment rows for matched clients, deduped on re-run ── */
+        /* ── Ledger: insert invoice/payment rows, deduped on re-run. Matched customers
+              attach to a client_id; unmatched ones are stored by customer_name so they
+              still appear (flagged "unmonitored") on the Financials Client Billing tab. ── */
         const existingRefs = await pool.query(
-            "SELECT client_id, type, ref_num, date, amount FROM client_transactions WHERE source = 'quickbooks'"
+            "SELECT client_id, customer_name, type, description, date, amount FROM client_transactions WHERE source = 'quickbooks'"
         );
+        const today = new Date().toISOString().slice(0, 10);
+        const ymd   = d => (d instanceof Date ? d.toISOString().slice(0, 10) : d);
+        /* Dedupe key. The description carries the QB doc number + sub-job + pay method,
+           so distinct line items that share one check/invoice number across sub-jobs stay
+           separate, while a true re-import of the same row collapses. */
+        const txKey = (cid, name, kind, date, amount, desc) =>
+            `${cid ? `c|${cid}` : `u|${(name || '').toLowerCase()}`}|${kind}|${ymd(date)}|${Number(amount)}|${desc}`;
+
         const seen = new Set(existingRefs.rows.map(r =>
-            r.ref_num
-                ? `${r.client_id}|${r.type}|${r.ref_num}`
-                : `${r.client_id}|${r.type}|${r.date instanceof Date ? r.date.toISOString().slice(0, 10) : r.date}|${Number(r.amount)}`
+            txKey(r.client_id, r.customer_name, r.type, r.date, r.amount, r.description)
         ));
-        const today      = new Date().toISOString().slice(0, 10);
-        const toInsert   = [];
-        const matched    = new Set();
+        const toInsert = [];
+        const matched  = new Set();
         for (const t of parsedTx) {
-            const cid = idByName.get(t.name.toLowerCase());
-            if (!cid) continue;                                // unmatched → Unmonitored only
-            matched.add(cid);
-            const key = t.num
-                ? `${cid}|${t.kind}|${t.num}`
-                : `${cid}|${t.kind}|${t.date || today}|${t.amount}`;
+            const cid  = idByName.get(t.name.toLowerCase()) || null;
+            const date = t.date || today;
+            if (cid) matched.add(cid);
+            const key = txKey(cid, t.name, t.kind, date, t.amount, t.desc);
             if (seen.has(key)) continue;
             seen.add(key);
-            toInsert.push([cid, t.desc, t.amount, t.kind, t.date || today, req.user.id, 'quickbooks', t.num]);
+            toInsert.push([cid, cid ? null : t.name, t.desc, t.amount, t.kind, date, req.user.id, 'quickbooks', t.num]);
         }
         for (let i = 0; i < toInsert.length; i += 500) {
             const chunk = toInsert.slice(i, i + 500);
             const ph = chunk.map((_, j) => {
-                const b = j * 8;
-                return `($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8})`;
+                const b = j * 9;
+                return `($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8},$${b + 9})`;
             }).join(',');
             await pool.query(
                 `INSERT INTO client_transactions
-                    (client_id, description, amount, type, date, created_by, source, ref_num)
+                    (client_id, customer_name, description, amount, type, date, created_by, source, ref_num)
                  VALUES ${ph}`,
                 chunk.flat()
             );
         }
+        const txMatched     = toInsert.filter(r => r[0] !== null).length;
+        const txUnmonitored = toInsert.length - txMatched;
 
         /* ── Unmonitored: accumulate every customer not already a client ── */
         const before = (await pool.query('SELECT COUNT(*)::int AS n FROM unmonitored_clients')).rows[0].n;
@@ -313,8 +324,8 @@ router.post('/import-quickbooks', requireRole('admin'), upload.array('files', 12
             rows,
             qb_customers: customers.size,
             tx_added: toInsert.length,
-            tx_invoices: toInsert.filter(r => r[3] === 'invoice').length,
-            tx_payments: toInsert.filter(r => r[3] === 'payment').length,
+            tx_matched: txMatched,
+            tx_unmonitored: txUnmonitored,
             clients_matched: matched.size,
             added: Math.max(0, after - before),
             total: after,

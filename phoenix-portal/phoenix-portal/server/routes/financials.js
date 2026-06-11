@@ -143,11 +143,13 @@ router.get('/client-transactions', requireRole('accounting', 'admin'), async (re
     try {
         const result = await pool.query(`
             SELECT ct.id, ct.description, ct.amount, ct.type, ct.date, ct.created_at,
-                   c.name AS client_name, c.customer_id
+                   COALESCE(c.name, ct.customer_name) AS client_name,
+                   c.customer_id,
+                   (ct.client_id IS NULL) AS unmonitored
             FROM client_transactions ct
-            JOIN clients c ON ct.client_id = c.id
+            LEFT JOIN clients c ON ct.client_id = c.id
             ORDER BY ct.date DESC, ct.created_at DESC
-            LIMIT 500
+            LIMIT 2000
         `).catch(() => ({ rows: [] }));
         return res.json(result.rows);
     } catch (err) {

@@ -19,49 +19,50 @@ function fmt(ts, opts) {
 const DATE_OPTS  = { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' };
 const TIME_OPTS  = { hour: 'numeric', minute: '2-digit' };
 
-/* Searchable, height-capped inventory picker — replaces a giant <select> so
-   long item names wrap and the list stays a reasonable length. */
+/* Searchable inventory picker. Collapses to a single search box; the results
+   list only renders while you're typing, so it doesn't bloat the modal. */
 function InventoryItemPicker({ inv, exclude = [], onPick, placeholder = 'Search inventory…' }) {
     const [q, setQ] = useState('');
     const list = inv
         .filter(i => !exclude.includes(i.id))
         .filter(i => {
-            if (!q) return true;
             const s = q.toLowerCase();
             return i.name.toLowerCase().includes(s) || (i.sku || '').toLowerCase().includes(s);
         })
         .slice(0, 40);
     return (
-        <div style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+        <div>
             <input
                 value={q}
                 onChange={e => setQ(e.target.value)}
                 placeholder={placeholder}
-                style={{ width: '100%', border: 'none', borderBottom: '1px solid var(--border)', borderRadius: 0, padding: '8px 10px', fontSize: 13 }}
+                style={{ width: '100%' }}
             />
-            <div style={{ maxHeight: 200, overflowY: 'auto' }}>
-                {list.length === 0 && (
-                    <div style={{ padding: 10, color: 'var(--text-dim)', fontSize: 13 }}>No matching items.</div>
-                )}
-                {list.map(i => (
-                    <button
-                        type="button"
-                        key={i.id}
-                        onClick={() => onPick(i)}
-                        style={{
-                            display: 'flex', justifyContent: 'space-between', gap: 10, width: '100%',
-                            textAlign: 'left', background: 'none', border: 'none',
-                            borderBottom: '1px solid var(--border)', color: 'var(--text)',
-                            padding: '8px 10px', fontSize: 12, cursor: 'pointer', whiteSpace: 'normal', lineHeight: 1.4,
-                        }}
-                    >
-                        <span>{i.name}{i.sku ? ` (${i.sku})` : ''}</span>
-                        <span style={{ color: i.quantity <= 0 ? 'var(--red)' : 'var(--text-dim)', whiteSpace: 'nowrap', fontFamily: 'var(--font-mono)' }}>
-                            {i.quantity} in stock
-                        </span>
-                    </button>
-                ))}
-            </div>
+            {q && (
+                <div style={{ border: '1px solid var(--border)', borderRadius: 4, marginTop: 6, maxHeight: 180, overflowY: 'auto' }}>
+                    {list.length === 0 && (
+                        <div style={{ padding: 10, color: 'var(--text-dim)', fontSize: 13 }}>No matching items.</div>
+                    )}
+                    {list.map(i => (
+                        <button
+                            type="button"
+                            key={i.id}
+                            onClick={() => { onPick(i); setQ(''); }}
+                            style={{
+                                display: 'flex', justifyContent: 'space-between', gap: 10, width: '100%',
+                                textAlign: 'left', background: 'none', border: 'none',
+                                borderBottom: '1px solid var(--border)', color: 'var(--text)',
+                                padding: '8px 10px', fontSize: 12, cursor: 'pointer', whiteSpace: 'normal', lineHeight: 1.4,
+                            }}
+                        >
+                            <span>{i.name}{i.sku ? ` (${i.sku})` : ''}</span>
+                            <span style={{ color: i.quantity <= 0 ? 'var(--red)' : 'var(--text-dim)', whiteSpace: 'nowrap', fontFamily: 'var(--font-mono)' }}>
+                                {i.quantity} in stock
+                            </span>
+                        </button>
+                    ))}
+                </div>
+            )}
         </div>
     );
 }
@@ -206,7 +207,7 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
                     </div>
                     <div className="form-group">
                         <label className="form-label">Description</label>
-                        <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={3} style={{ resize: 'vertical' }} />
+                        <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={2} style={{ resize: 'vertical' }} />
                     </div>
                     <div className="form-group">
                         <label className="form-label">Assign To</label>

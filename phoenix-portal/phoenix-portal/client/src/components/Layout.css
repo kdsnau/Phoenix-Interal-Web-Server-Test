@@ -285,9 +285,11 @@
     background: var(--bg-2);
     border: 1px solid var(--border-hi);
     border-radius: var(--radius);
-    padding: 28px;
+    padding: 22px;
     width: 100%;
     max-width: 480px;
+    max-height: calc(100vh - 40px);
+    overflow-y: auto;
     box-shadow: var(--shadow);
 }
 .modal-title {

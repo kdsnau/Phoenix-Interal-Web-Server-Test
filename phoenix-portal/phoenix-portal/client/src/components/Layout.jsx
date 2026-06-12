@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
+import ChangePasswordModal from './ChangePasswordModal';
 import './Layout.css';
 
 const NAV = {
@@ -67,6 +68,7 @@ export default function Layout({ children }) {
     const navigate              = useNavigate();
     const location              = useLocation();
     const [open, setOpen]       = useState(false);
+    const [pwOpen, setPwOpen]   = useState(false);
 
     /* Close sidebar whenever the route changes (user tapped a link) */
     useEffect(() => { setOpen(false); }, [location.pathname]);
@@ -120,7 +122,10 @@ export default function Layout({ children }) {
                         <div className="user-name">{user?.name}</div>
                         <div className="user-role">{user?.role}</div>
                     </div>
-                    <button className="logout-btn" onClick={handleLogout}>Logout</button>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
+                        <button className="logout-btn" onClick={() => setPwOpen(true)}>Password</button>
+                        <button className="logout-btn" onClick={handleLogout}>Logout</button>
+                    </div>
                 </div>
             </aside>
 
@@ -141,6 +146,8 @@ export default function Layout({ children }) {
                     Portal data is aggregated from connected systems — always verify critical information from primary sources before acting on it.
                 </div>
             </main>
+
+            {pwOpen && <ChangePasswordModal onClose={() => setPwOpen(false)} />}
         </div>
     );
 }

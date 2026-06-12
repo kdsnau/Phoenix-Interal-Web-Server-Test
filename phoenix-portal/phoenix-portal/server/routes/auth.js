@@ -3,6 +3,7 @@ const bcrypt   = require('bcryptjs');
 const jwt      = require('jsonwebtoken');
 const pool     = require('../db/pool');
 const { sendMail } = require('../config/mailer');
+const { authenticate } = require('../middleware/requireRole');
 
 const router = express.Router();
 
@@ -82,6 +83,45 @@ router.post('/login', async (req, res) => {
         );
 
         return res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'Server error.' });
+    }
+});
+
+/* POST /api/auth/change-password — any signed-in user changes their own password */
+router.post('/change-password', authenticate, async (req, res) => {
+    const { current_password, new_password } = req.body;
+
+    if (!current_password || !new_password) {
+        return res.status(400).json({ error: 'Current and new password are required.' });
+    }
+    if (new_password.length < 8) {
+        return res.status(400).json({ error: 'New password must be at least 8 characters.' });
+    }
+    if (new_password === current_password) {
+        return res.status(400).json({ error: 'New password must be different from the current one.' });
+    }
+
+    try {
+        const result = await pool.query('SELECT password_hash FROM users WHERE id = $1', [req.user.id]);
+        const user = result.rows[0];
+        if (!user) return res.status(404).json({ error: 'User not found.' });
+
+        const match = await bcrypt.compare(current_password, user.password_hash);
+        if (!match) return res.status(401).json({ error: 'Current password is incorrect.' });
+
+        const hash = await bcrypt.hash(new_password, 10);
+        await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user.id]);
+
+        /* Security heads-up — best effort */
+        sendMail(
+            req.user.email,
+            'Your Phoenix SecTech password was changed',
+            `Hi ${req.user.name},\n\nYour portal password was just changed. If this wasn't you, contact an administrator immediately.\n\nPhoenix Security & Technology`
+        ).catch(err => console.error('Password-change email failed:', err));
+
+        return res.json({ message: 'Password updated.' });
     } catch (err) {
         console.error(err);
         return res.status(500).json({ error: 'Server error.' });

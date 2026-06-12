@@ -66,10 +66,12 @@ function InventoryItemPicker({ inv, exclude = [], onPick, placeholder = 'Search 
     );
 }
 
-/* Searchable client dropdown — picking one fills the ticket title and links the
-   ticket to that client (so it shows on the client's detail page). */
+/* Searchable client autocomplete — picking one fills the ticket title and links
+   the ticket to that client. The results float over the form (absolute) so the
+   list never pushes the rest of the modal around. */
 function ClientPicker({ clients, onPick, placeholder = 'Search clients…' }) {
-    const [q, setQ] = useState('');
+    const [q, setQ]       = useState('');
+    const [open, setOpen] = useState(false);
     const list = clients
         .filter(c => {
             if (!q) return true;
@@ -78,36 +80,44 @@ function ClientPicker({ clients, onPick, placeholder = 'Search clients…' }) {
         })
         .slice(0, 40);
     return (
-        <div style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+        <div style={{ position: 'relative' }}>
             <input
                 value={q}
-                onChange={e => setQ(e.target.value)}
+                onChange={e => { setQ(e.target.value); setOpen(true); }}
+                onFocus={() => setOpen(true)}
+                onBlur={() => setTimeout(() => setOpen(false), 150)}
                 placeholder={placeholder}
-                style={{ width: '100%', border: 'none', borderBottom: '1px solid var(--border)', borderRadius: 0, padding: '8px 10px', fontSize: 13 }}
+                style={{ width: '100%' }}
             />
-            <div style={{ maxHeight: 180, overflowY: 'auto' }}>
-                {list.length === 0 && (
-                    <div style={{ padding: 10, color: 'var(--text-dim)', fontSize: 13 }}>No matching clients.</div>
-                )}
-                {list.map(c => (
-                    <button
-                        type="button"
-                        key={c.id}
-                        onClick={() => onPick(c)}
-                        style={{
-                            display: 'flex', justifyContent: 'space-between', gap: 10, width: '100%',
-                            textAlign: 'left', background: 'none', border: 'none',
-                            borderBottom: '1px solid var(--border)', color: 'var(--text)',
-                            padding: '8px 10px', fontSize: 12, cursor: 'pointer', whiteSpace: 'normal', lineHeight: 1.4,
-                        }}
-                    >
-                        <span>{c.name}</span>
-                        {c.customer_id && (
-                            <span style={{ color: 'var(--text-dim)', whiteSpace: 'nowrap', fontFamily: 'var(--font-mono)' }}>{c.customer_id}</span>
-                        )}
-                    </button>
-                ))}
-            </div>
+            {open && (
+                <div style={{
+                    position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, marginTop: 2,
+                    background: 'var(--bg-3)', border: '1px solid var(--border-hi)', borderRadius: 4,
+                    maxHeight: 220, overflowY: 'auto', boxShadow: 'var(--shadow)',
+                }}>
+                    {list.length === 0 && (
+                        <div style={{ padding: 10, color: 'var(--text-dim)', fontSize: 13 }}>No matching clients.</div>
+                    )}
+                    {list.map(c => (
+                        <button
+                            type="button"
+                            key={c.id}
+                            onMouseDown={() => { onPick(c); setQ(''); setOpen(false); }}
+                            style={{
+                                display: 'flex', justifyContent: 'space-between', gap: 10, width: '100%',
+                                textAlign: 'left', background: 'none', border: 'none',
+                                borderBottom: '1px solid var(--border)', color: 'var(--text)',
+                                padding: '8px 10px', fontSize: 12, cursor: 'pointer', whiteSpace: 'normal', lineHeight: 1.4,
+                            }}
+                        >
+                            <span>{c.name}</span>
+                            {c.customer_id && (
+                                <span style={{ color: 'var(--text-dim)', whiteSpace: 'nowrap', fontFamily: 'var(--font-mono)' }}>{c.customer_id}</span>
+                            )}
+                        </button>
+                    ))}
+                </div>
+            )}
         </div>
     );
 }

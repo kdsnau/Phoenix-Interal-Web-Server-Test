@@ -66,6 +66,52 @@ function InventoryItemPicker({ inv, exclude = [], onPick, placeholder = 'Search 
     );
 }
 
+/* Searchable client dropdown — picking one fills the ticket title and links the
+   ticket to that client (so it shows on the client's detail page). */
+function ClientPicker({ clients, onPick, placeholder = 'Search clients…' }) {
+    const [q, setQ] = useState('');
+    const list = clients
+        .filter(c => {
+            if (!q) return true;
+            const s = q.toLowerCase();
+            return c.name.toLowerCase().includes(s) || (c.customer_id || '').toLowerCase().includes(s);
+        })
+        .slice(0, 40);
+    return (
+        <div style={{ border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+            <input
+                value={q}
+                onChange={e => setQ(e.target.value)}
+                placeholder={placeholder}
+                style={{ width: '100%', border: 'none', borderBottom: '1px solid var(--border)', borderRadius: 0, padding: '8px 10px', fontSize: 13 }}
+            />
+            <div style={{ maxHeight: 180, overflowY: 'auto' }}>
+                {list.length === 0 && (
+                    <div style={{ padding: 10, color: 'var(--text-dim)', fontSize: 13 }}>No matching clients.</div>
+                )}
+                {list.map(c => (
+                    <button
+                        type="button"
+                        key={c.id}
+                        onClick={() => onPick(c)}
+                        style={{
+                            display: 'flex', justifyContent: 'space-between', gap: 10, width: '100%',
+                            textAlign: 'left', background: 'none', border: 'none',
+                            borderBottom: '1px solid var(--border)', color: 'var(--text)',
+                            padding: '8px 10px', fontSize: 12, cursor: 'pointer', whiteSpace: 'normal', lineHeight: 1.4,
+                        }}
+                    >
+                        <span>{c.name}</span>
+                        {c.customer_id && (
+                            <span style={{ color: 'var(--text-dim)', whiteSpace: 'nowrap', fontFamily: 'var(--font-mono)' }}>{c.customer_id}</span>
+                        )}
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+}
+
 function NewTicketModal({ onClose, onCreated, technicians }) {
     const [title,       setTitle]       = useState('');
     const [desc,        setDesc]        = useState('');
@@ -77,10 +123,25 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
     const [loading,     setLoading]     = useState(false);
     const [inv,         setInv]         = useState([]);
     const [pendingItems, setPendingItems] = useState([]);
+    const [clients,     setClients]     = useState([]);
+    const [clientId,    setClientId]    = useState('');
+    const [clientName,  setClientName]  = useState('');
 
     useEffect(() => {
         api.get('/inventory').then(r => setInv(r.data)).catch(() => {});
+        api.get('/clients').then(r => setClients(r.data)).catch(() => {});
     }, []);
+
+    /* Pick a client → autofill the title and link the ticket to that client. */
+    const pickClient = (c) => {
+        setClientId(c.id);
+        setClientName(c.name);
+        setTitle(c.name);
+    };
+    const clearClient = () => {
+        setClientId('');
+        setClientName('');
+    };
 
     const submit = async (e) => {
         e.preventDefault();
@@ -94,6 +155,7 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
                 event_start:    eventStart  || undefined,
                 event_end:      eventEnd    || undefined,
                 event_location: location    || undefined,
+                client_id:      clientId    || undefined,
             });
             for (const it of pendingItems) {
                 await api.post(`/tickets/${data.id}/items`,
@@ -115,6 +177,19 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
                 {error && <div className="error-msg">{error}</div>}
                 <form onSubmit={submit}>
                     {/* ── Core fields ── */}
+                    <div className="form-group">
+                        <label className="form-label">Client (optional — autofills the title)</label>
+                        {clientName ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13,
+                                          border: '1px solid var(--border)', borderRadius: 4, padding: '8px 10px' }}>
+                                <span style={{ flex: 1, minWidth: 0 }}>🔗 {clientName}</span>
+                                <button type="button" className="btn btn-ghost" style={{ padding: '2px 8px', fontSize: 12 }}
+                                    onClick={clearClient}>✕ unlink</button>
+                            </div>
+                        ) : (
+                            <ClientPicker clients={clients} onPick={pickClient} />
+                        )}
+                    </div>
                     <div className="form-group">
                         <label className="form-label">Title *</label>
                         <input value={title} onChange={e => setTitle(e.target.value)} required autoFocus />

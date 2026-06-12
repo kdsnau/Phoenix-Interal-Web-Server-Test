@@ -59,7 +59,7 @@ router.get('/', requireRole('technician', 'admin'), async (req, res) => {
 /* ── POST /api/tickets ────────────────────────────────────────────────── */
 /* Admin only — technicians can work tickets but not create them. */
 router.post('/', requireRole('admin'), async (req, res) => {
-    const { title, description, assigned_to, event_start, event_end, event_location } = req.body;
+    const { title, description, assigned_to, event_start, event_end, event_location, client_id } = req.body;
 
     if (!title) return res.status(400).json({ error: 'Title is required.' });
 
@@ -69,8 +69,8 @@ router.post('/', requireRole('admin'), async (req, res) => {
 
         const result = await pool.query(
             `INSERT INTO service_tickets
-             (title, description, created_by, assigned_to, source, event_start, event_end, event_location)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+             (title, description, created_by, assigned_to, source, event_start, event_end, event_location, client_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
              RETURNING *`,
             [
                 title,
@@ -81,6 +81,7 @@ router.post('/', requireRole('admin'), async (req, res) => {
                 event_start  || null,
                 event_end    || null,
                 event_location || null,
+                client_id || null,
             ]
         );
         let ticket = result.rows[0];

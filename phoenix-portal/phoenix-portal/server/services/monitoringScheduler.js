@@ -200,12 +200,69 @@ async function runReminderDigest() {
     }
 }
 
+/* Weekly digest of unresolved vehicle issues. Drivers get their own vehicle's
+   issues; accounting + admin get the full fleet rundown. */
+async function runFleetIssuesDigest() {
+    try {
+        const rows = await pool.query(
+            `SELECT v.id, v.name AS vehicle, v.vehicle_id, v.driver_id,
+                    du.email AS driver_email, du.name AS driver_name,
+                    n.category, n.content, n.created_at
+             FROM vehicles v
+             JOIN vehicle_notes n ON n.vehicle_id = v.id AND n.resolved = FALSE
+             LEFT JOIN users du ON du.id = v.driver_id
+             ORDER BY v.name, n.created_at DESC`
+        );
+        if (rows.rowCount === 0) return;
+
+        /* Group issues by vehicle */
+        const byVehicle = new Map();
+        for (const r of rows.rows) {
+            if (!byVehicle.has(r.id)) byVehicle.set(r.id, { vehicle: r.vehicle, driver_email: r.driver_email, issues: [] });
+            byVehicle.get(r.id).issues.push(`    • [${r.category}] ${r.content}`);
+        }
+
+        const fullLines = [];
+        const byDriver  = new Map();   /* email → lines */
+        for (const v of byVehicle.values()) {
+            const block = `${v.vehicle}:\n${v.issues.join('\n')}`;
+            fullLines.push(block);
+            if (v.driver_email) {
+                if (!byDriver.has(v.driver_email)) byDriver.set(v.driver_email, []);
+                byDriver.get(v.driver_email).push(block);
+            }
+        }
+
+        const footer = '\n\n— Phoenix Security & Technology portal';
+
+        /* Full rundown → accounting + admin */
+        const staff = await pool.query("SELECT email FROM users WHERE role IN ('accounting', 'admin')");
+        const to = staff.rows.map(r => r.email);
+        if (to.length > 0) {
+            await sendMail(to, 'Fleet — Weekly Unresolved Issues',
+                `Unresolved vehicle issues across the fleet:\n\n${fullLines.join('\n\n')}${footer}`
+            ).catch(err => console.error('Fleet digest (staff) failed:', err));
+        }
+
+        /* Per-driver → just their vehicle(s) */
+        for (const [email, lines] of byDriver) {
+            await sendMail(email, 'Fleet — Your Vehicle Has Unresolved Issues',
+                `Open issues on the vehicle(s) assigned to you:\n\n${lines.join('\n\n')}${footer}`
+            ).catch(err => console.error('Fleet digest (driver) failed:', err));
+        }
+        console.log(`Fleet issues digest sent — ${byVehicle.size} vehicle(s) with open issues.`);
+    } catch (err) {
+        console.error('Fleet issues digest error:', err);
+    }
+}
+
 function startScheduler() {
     cron.schedule('0 8 * * *',    runMonitoringCheck);
     cron.schedule('0 8 * * *',    runMaintenanceCheck);
     cron.schedule('0 8 * * *',    runReminderDigest);
     cron.schedule('*/15 * * * *', runAppointmentReminders);
-    console.log('Schedulers started — monitoring/maintenance/digest daily 8 AM; appointment reminders every 15 min');
+    cron.schedule('0 8 * * 1',    runFleetIssuesDigest);   /* Mondays 8 AM */
+    console.log('Schedulers started — daily 8 AM jobs, weekly fleet digest (Mon), appointment reminders every 15 min');
 }
 
 module.exports = { startScheduler };

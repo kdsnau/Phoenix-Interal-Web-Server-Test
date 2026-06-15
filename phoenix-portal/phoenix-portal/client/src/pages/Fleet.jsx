@@ -40,9 +40,9 @@ function VehicleCard({ vehicle, onClick }) {
             <div className="vehicle-card-body">
                 <div className="vehicle-card-name">{vehicle.name}</div>
                 <div className="vehicle-card-sub">{vehicle.year} {vehicle.make} {vehicle.model}</div>
-                {vehicle.driver && (
+                {(vehicle.driver_name || vehicle.driver) && (
                     <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 4 }}>
-                        👤 {vehicle.driver}
+                        👤 {vehicle.driver_name || vehicle.driver}
                     </div>
                 )}
                 <div className="vehicle-card-meta">
@@ -209,7 +209,8 @@ function VehicleDetail({ vehicleId, onClose }) {
     const [editMileage, setEditMileage]     = useState('');
     const [editReg,     setEditReg]         = useState('');
     const [editTags,    setEditTags]        = useState('');
-    const [editDriver,  setEditDriver]      = useState('');
+    const [editDriverId, setEditDriverId]   = useState('');
+    const [drivers,     setDrivers]         = useState([]);
     const [saving, setSaving]               = useState(false);
     const [noteCategory, setNoteCategory]   = useState('service');
     const [noteContent, setNoteContent]     = useState('');
@@ -230,13 +231,14 @@ function VehicleDetail({ vehicleId, onClose }) {
             setEditMileage(data.mileage);
             setEditReg(data.registration || '');
             setEditTags(data.tags_renewal ? data.tags_renewal.slice(0, 10) : '');
-            setEditDriver(data.driver || '');
+            setEditDriverId(data.driver_id || '');
         } finally {
             setLoading(false);
         }
     };
 
     useEffect(() => { load(); }, [vehicleId]);
+    useEffect(() => { api.get('/fleet/drivers').then(r => setDrivers(r.data)).catch(() => {}); }, []);
 
     const saveVehicle = async () => {
         setSaving(true);
@@ -245,7 +247,7 @@ function VehicleDetail({ vehicleId, onClose }) {
                 mileage:      Number(editMileage),
                 registration: editReg      || null,
                 tags_renewal: editTags     || null,
-                driver:       editDriver   || null,
+                driver_id:    editDriverId || null,
             });
             setV(prev => ({ ...prev, ...data }));
             setMsg('Saved.');
@@ -404,7 +406,10 @@ function VehicleDetail({ vehicleId, onClose }) {
                             </div>
                             <div className="fleet-field">
                                 <label className="form-label">Driver</label>
-                                <input value={editDriver} onChange={e => setEditDriver(e.target.value)} placeholder="Assigned driver" />
+                                <select value={editDriverId} onChange={e => setEditDriverId(e.target.value)}>
+                                    <option value="">Unassigned</option>
+                                    {drivers.map(d => <option key={d.id} value={d.id}>{d.name} ({d.role})</option>)}
+                                </select>
                             </div>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
@@ -704,10 +709,13 @@ function VehicleDetail({ vehicleId, onClose }) {
 function NewVehicleModal({ onClose, onCreated }) {
     const [form, setForm] = useState({
         name: '', vehicle_id: '', make: '', model: '',
-        year: '', mileage: '0', tags_renewal: '', slack_name: '', driver: '',
+        year: '', mileage: '0', tags_renewal: '', slack_name: '', driver_id: '',
     });
+    const [drivers, setDrivers] = useState([]);
     const [error,  setError]  = useState('');
     const [saving, setSaving] = useState(false);
+
+    useEffect(() => { api.get('/fleet/drivers').then(r => setDrivers(r.data)).catch(() => {}); }, []);
 
     function set(k, v) { setForm(f => ({ ...f, [k]: v })); }
 
@@ -769,7 +777,10 @@ function NewVehicleModal({ onClose, onCreated }) {
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                         <div className="form-group" style={{ margin: 0 }}>
                             <label className="form-label">Driver</label>
-                            <input value={form.driver} onChange={e => set('driver', e.target.value)} placeholder="Assigned driver" />
+                            <select value={form.driver_id} onChange={e => set('driver_id', e.target.value)}>
+                                <option value="">Unassigned</option>
+                                {drivers.map(d => <option key={d.id} value={d.id}>{d.name} ({d.role})</option>)}
+                            </select>
                         </div>
                         <div className="form-group" style={{ margin: 0 }}>
                             <label className="form-label">Slack Name</label>

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
+import api from '../api/client';
 import ChangePasswordModal from './ChangePasswordModal';
 import './Layout.css';
 
@@ -69,6 +70,19 @@ export default function Layout({ children }) {
     const location              = useLocation();
     const [open, setOpen]       = useState(false);
     const [pwOpen, setPwOpen]   = useState(false);
+    const [msgUnread, setMsgUnread] = useState(0);
+
+    /* Poll total unread message count for the sidebar badge. Refetches on every
+       navigation (so it clears right after you read a thread) and every 30s. */
+    useEffect(() => {
+        let alive = true;
+        const fetchUnread = () => api.get('/messages/unread')
+            .then(r => { if (alive) setMsgUnread(r.data?.count || 0); })
+            .catch(() => {});
+        fetchUnread();
+        const t = setInterval(fetchUnread, 30000);
+        return () => { alive = false; clearInterval(t); };
+    }, [location.pathname]);
 
     /* Close sidebar whenever the route changes (user tapped a link) */
     useEffect(() => { setOpen(false); }, [location.pathname]);
@@ -112,6 +126,13 @@ export default function Layout({ children }) {
                             >
                                 <span className="nav-indicator" />
                                 {item.label}
+                                {item.path === '/messages' && msgUnread > 0 && (
+                                    <span style={{
+                                        marginLeft: 'auto', background: 'var(--red)', color: '#fff',
+                                        fontSize: 10, fontWeight: 700, minWidth: 18, height: 18, borderRadius: 9,
+                                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px',
+                                    }}>{msgUnread > 99 ? '99+' : msgUnread}</span>
+                                )}
                             </Link>
                         )
                     )}

@@ -34,11 +34,27 @@ pool.query(`ALTER TABLE vehicle_notes ADD COLUMN IF NOT EXISTS resolved    BOOLE
 pool.query(`ALTER TABLE vehicle_notes ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMP`).catch(() => {});
 pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS driver         VARCHAR(100)`).catch(() => {});
 pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS insurance_file VARCHAR(255)`).catch(() => {});
+/* Drivers are real user accounts now (driver text kept for legacy display). */
+pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS driver_id INTEGER REFERENCES users(id) ON DELETE SET NULL`).catch(() => {});
+
+/* GET /api/fleet/drivers — users that can be assigned to a vehicle (defined
+   before /:id so it isn't captured as a vehicle id). */
+router.get('/drivers', async (req, res) => {
+    try {
+        const r = await pool.query('SELECT id, name, role FROM users ORDER BY name');
+        res.json(r.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to load drivers.' });
+    }
+});
 
 router.get('/', async (req, res) => {
     try {
         const result = await pool.query(
             `SELECT v.*,
+                    du.name  AS driver_name,
+                    du.email AS driver_email,
                     sn.enabled AS service_notify_enabled,
                     sn.last_sent_at,
                     sn.next_due_at,
@@ -46,6 +62,7 @@ router.get('/', async (req, res) => {
                      WHERE vehicle_id = v.id AND resolved = FALSE) AS open_issues
              FROM vehicles v
              LEFT JOIN vehicle_service_notifications sn ON sn.vehicle_id = v.id
+             LEFT JOIN users du ON du.id = v.driver_id
              ORDER BY v.id ASC`
         );
         return res.json(result.rows);
@@ -60,12 +77,15 @@ router.get('/:id', async (req, res) => {
         const [vehicle, notes, invoices, inventory] = await Promise.all([
             pool.query(
                 `SELECT v.*,
+                        du.name  AS driver_name,
+                        du.email AS driver_email,
                         sn.enabled AS service_notify_enabled,
                         sn.last_sent_at,
                         sn.next_due_at,
                         sn.id AS sn_id
                  FROM vehicles v
                  LEFT JOIN vehicle_service_notifications sn ON sn.vehicle_id = v.id
+                 LEFT JOIN users du ON du.id = v.driver_id
                  WHERE v.id = $1`,
                 [req.params.id]
             ),
@@ -96,12 +116,12 @@ router.get('/:id', async (req, res) => {
 
 /* POST /api/fleet — create a new vehicle (admin only) */
 router.post('/', requireRole('admin'), async (req, res) => {
-    const { name, vehicle_id, make, model, year, mileage, tags_renewal, slack_name, driver } = req.body;
+    const { name, vehicle_id, make, model, year, mileage, tags_renewal, slack_name, driver_id } = req.body;
     if (!name || !vehicle_id)
         return res.status(400).json({ error: 'name and vehicle_id are required.' });
     try {
         const result = await pool.query(
-            `INSERT INTO vehicles (name, vehicle_id, make, model, year, mileage, tags_renewal, slack_name, driver)
+            `INSERT INTO vehicles (name, vehicle_id, make, model, year, mileage, tags_renewal, slack_name, driver_id)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
             [name.trim(), vehicle_id.trim(),
              make || null, model || null,
@@ -109,7 +129,7 @@ router.post('/', requireRole('admin'), async (req, res) => {
              mileage ? Number(mileage) : 0,
              tags_renewal || null,
              slack_name || null,
-             driver || null]
+             driver_id ? Number(driver_id) : null]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
@@ -121,17 +141,20 @@ router.post('/', requireRole('admin'), async (req, res) => {
 });
 
 router.patch('/:id', async (req, res) => {
-    const { mileage, registration, tags_renewal, driver } = req.body;
+    const { mileage, registration, tags_renewal } = req.body;
+    /* driver_id present (incl. null) → set it; absent → leave unchanged */
+    const setDriver = 'driver_id' in req.body;
+    const driverId  = req.body.driver_id ? Number(req.body.driver_id) : null;
     try {
         const result = await pool.query(
             `UPDATE vehicles
              SET mileage      = COALESCE($1, mileage),
                  registration  = COALESCE($2, registration),
                  tags_renewal  = COALESCE($3::date, tags_renewal),
-                 driver        = COALESCE($4, driver)
-             WHERE id = $5
+                 driver_id     = CASE WHEN $4::boolean THEN $5::int ELSE driver_id END
+             WHERE id = $6
              RETURNING *`,
-            [mileage ?? null, registration ?? null, tags_renewal ?? null, driver ?? null, req.params.id]
+            [mileage ?? null, registration ?? null, tags_renewal ?? null, setDriver, driverId, req.params.id]
         );
         if (result.rowCount === 0) return res.status(404).json({ error: 'Vehicle not found.' });
         return res.json(result.rows[0]);
@@ -281,24 +304,24 @@ router.delete('/:id/inventory/:assignId', async (req, res) => {
 router.post('/:id/send-service-email', async (req, res) => {
     try {
         const vehicle = await pool.query(
-            `SELECT v.*, sn.id AS sn_id FROM vehicles v
+            `SELECT v.*, sn.id AS sn_id, du.email AS driver_email FROM vehicles v
              LEFT JOIN vehicle_service_notifications sn ON sn.vehicle_id = v.id
+             LEFT JOIN users du ON du.id = v.driver_id
              WHERE v.id = $1`,
             [req.params.id]
         );
         if (vehicle.rowCount === 0) return res.status(404).json({ error: 'Vehicle not found.' });
         const v = vehicle.rows[0];
-        const admins = await pool.query("SELECT email FROM users WHERE role = ANY(ARRAY['admin','accounting']::user_role[])");
-const recipients = new Set(admins.rows.map(a => a.email));
-recipients.add(req.user.email);
-console.log('Recipients:', [...recipients]);
-	for (const email of recipients) {
-    try {
-        await sendServiceReminder(email, v);
-    } catch (e) {
-        console.error('Failed to send to', email, e.message);
-    }
-}
+        const staff = await pool.query("SELECT email FROM users WHERE role = ANY(ARRAY['admin','accounting']::user_role[])");
+        const recipients = new Set(staff.rows.map(a => a.email));
+        if (v.driver_email) recipients.add(v.driver_email);   // the assigned driver
+        for (const email of recipients) {
+            try {
+                await sendServiceReminder(email, v);
+            } catch (e) {
+                console.error('Failed to send to', email, e.message);
+            }
+        }
         await pool.query(
             `UPDATE vehicle_service_notifications
              SET last_sent_at = NOW(), next_due_at = NOW() + INTERVAL '3 months'
@@ -333,15 +356,19 @@ router.post('/:id/insurance', requireRole('admin'), (req, res) => {
 
 router.post('/:id/send-tags-email', async (req, res) => {
     try {
-        const vehicle = await pool.query('SELECT * FROM vehicles WHERE id = $1', [req.params.id]);
+        const vehicle = await pool.query(
+            `SELECT v.*, du.email AS driver_email FROM vehicles v
+             LEFT JOIN users du ON du.id = v.driver_id WHERE v.id = $1`,
+            [req.params.id]
+        );
         if (vehicle.rowCount === 0) return res.status(404).json({ error: 'Vehicle not found.' });
         const v = vehicle.rows[0];
-        const admins = await pool.query("SELECT email FROM users WHERE role = ANY(ARRAY['admin','accounting']::user_role[])");
-const recipients = new Set(admins.rows.map(a => a.email));
-recipients.add(req.user.email);
-for (const email of recipients) {
-    await sendTagsReminder(email, v);
-}
+        const staff = await pool.query("SELECT email FROM users WHERE role = ANY(ARRAY['admin','accounting']::user_role[])");
+        const recipients = new Set(staff.rows.map(a => a.email));
+        if (v.driver_email) recipients.add(v.driver_email);
+        for (const email of recipients) {
+            await sendTagsReminder(email, v);
+        }
         return res.json({ message: 'Tags renewal reminder sent.' });
     } catch (err) {
         console.error(err);

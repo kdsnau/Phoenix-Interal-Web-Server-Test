@@ -187,6 +187,27 @@ router.post('/sync', requireRole('admin', 'technician'), async (req, res) => {
     res.json({ created, updated, total: gEvents.length, source });
 });
 
+/* ── GET /api/calendar/oauth/url — consent URL as JSON (admin, header-auth)
+   Lets the Calendar page kick off the connect flow, since /oauth/start can't be
+   reached by a plain browser navigation (it carries no auth header).           */
+router.get('/oauth/url', requireRole('admin'), (req, res) => {
+    const clientId    = process.env.GOOGLE_CLIENT_ID;
+    const redirectUri = process.env.GOOGLE_OAUTH_REDIRECT_URI;
+    if (!clientId || !redirectUri) {
+        return res.status(503).json({
+            error: 'Google OAuth client not configured on the server. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and GOOGLE_OAUTH_REDIRECT_URI in the server .env first.',
+        });
+    }
+    const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+    url.searchParams.set('client_id',     clientId);
+    url.searchParams.set('redirect_uri',  redirectUri);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('scope',         'https://www.googleapis.com/auth/calendar');
+    url.searchParams.set('access_type',   'offline');
+    url.searchParams.set('prompt',        'consent');
+    return res.json({ url: url.toString() });
+});
+
 /* ── GET /api/calendar/oauth/start — visit once in browser to authorize ── */
 router.get('/oauth/start', requireRole('admin'), (req, res) => {
     const clientId    = process.env.GOOGLE_CLIENT_ID;

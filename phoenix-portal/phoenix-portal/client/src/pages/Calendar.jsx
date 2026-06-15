@@ -74,6 +74,16 @@ export default function Calendar() {
         }
     };
 
+    const connectGoogle = async () => {
+        setCalsError('');
+        try {
+            const { data } = await api.get('/calendar/oauth/url');
+            window.location.href = data.url;   /* off to Google's consent screen */
+        } catch (e) {
+            setCalsError(e.response?.data?.error || 'Could not start the Google connection.');
+        }
+    };
+
     const listCals = async () => {
         setCals(null);
         setCalsError('');
@@ -122,6 +132,11 @@ export default function Calendar() {
                         >
                             {syncing ? 'Syncing…' : '↻ Sync from Google'}
                         </button>
+                        {user.role === 'admin' && (
+                            <button className="btn btn-ghost" onClick={connectGoogle} title="Authorize a Google account so the portal can read private calendars and write tickets">
+                                🔗 Connect Google
+                            </button>
+                        )}
                         {user.role === 'admin' && (
                             <button className="btn btn-ghost" onClick={listCals} title="Show which calendars the portal's Google account can read">
                                 ⚙ Diagnose access

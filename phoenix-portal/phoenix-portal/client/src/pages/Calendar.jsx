@@ -56,12 +56,12 @@ export default function Calendar() {
         }
     };
 
-    const sync = async () => {
+    const sync = async (source) => {
         setSyncing(true);
         setSyncResult(null);
         setSyncError('');
         try {
-            const { data } = await api.post('/calendar/sync');
+            const { data } = await api.post('/calendar/sync', source ? { source } : {});
             setSyncResult(data);
             await loadTickets();
         } catch (e) {
@@ -93,13 +93,23 @@ export default function Calendar() {
             <div className="page-header">
                 <h1 className="page-title">Calendar<PageHelp id="calendar" /></h1>
                 {tab === 'tickets' && (
-                    <button
-                        className="btn btn-primary"
-                        onClick={sync}
-                        disabled={syncing}
-                    >
-                        {syncing ? 'Syncing…' : '↻ Sync from Google'}
-                    </button>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                            className="btn btn-ghost"
+                            onClick={() => sync('official')}
+                            disabled={syncing}
+                            title="Import events from the Official Calendar as tickets"
+                        >
+                            {syncing ? '…' : '⤓ Pull from Official Calendar'}
+                        </button>
+                        <button
+                            className="btn btn-primary"
+                            onClick={() => sync()}
+                            disabled={syncing}
+                        >
+                            {syncing ? 'Syncing…' : '↻ Sync from Google'}
+                        </button>
+                    </div>
                 )}
             </div>
 
@@ -120,7 +130,7 @@ export default function Calendar() {
             {/* ── Sync status bar ─────────────────────────────────────── */}
             {syncResult && (
                 <div className="cal-sync-banner">
-                    ✓ Sync complete — <strong>{syncResult.created}</strong> new ticket{syncResult.created !== 1 ? 's' : ''}, <strong>{syncResult.updated}</strong> updated.
+                    ✓ {syncResult.source === 'official' ? 'Official Calendar' : 'Google'} sync complete — <strong>{syncResult.created}</strong> new ticket{syncResult.created !== 1 ? 's' : ''}, <strong>{syncResult.updated}</strong> updated.
                 </div>
             )}
             {syncError && (

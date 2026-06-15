@@ -21,6 +21,14 @@ const path   = require('path');
 
 const TZ = 'America/Phoenix';
 
+/* Format a Date as a naive "YYYY-MM-DDTHH:MM:SS" wall-clock string (no timezone
+   suffix). Paired with an explicit timeZone field, this avoids the UTC drift you
+   get from toISOString() when the server clock isn't on Phoenix time. */
+function localISO(d) {
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
 /* ── Token cache ───────────────────────────────────────────────────────── */
 let _cache = { token: null, exp: 0 };
 
@@ -140,10 +148,13 @@ function buildBody(ticket, assigneeName) {
     if (ticket.event_location) body.location = ticket.event_location;
 
     if (start && end) {
-        body.start = { dateTime: start.toISOString(), timeZone: TZ };
-        body.end   = { dateTime: end.toISOString(),   timeZone: TZ };
+        /* Send the wall-clock time + an explicit timeZone instead of a UTC ('Z')
+           instant, so the event lands at the entry/departure time the user picked
+           regardless of what timezone the server runs in. */
+        body.start = { dateTime: localISO(start), timeZone: TZ };
+        body.end   = { dateTime: localISO(end),   timeZone: TZ };
     } else {
-        const d = (start || new Date()).toISOString().slice(0, 10);
+        const d = localISO(start || new Date()).slice(0, 10);
         body.start = { date: d };
         body.end   = { date: d };
     }

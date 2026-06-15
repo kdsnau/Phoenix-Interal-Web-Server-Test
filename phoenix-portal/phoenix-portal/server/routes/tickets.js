@@ -23,12 +23,34 @@ pool.query(`
     )
 `).catch(() => {});
 
+/* Multiple technicians per ticket. assigned_to stays in sync with assignee_ids[1]
+   for backward compatibility (calendar label, legacy reads). */
+pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS assignee_ids INTEGER[] NOT NULL DEFAULT '{}'`).catch(() => {});
+pool.query(`UPDATE service_tickets SET assignee_ids = ARRAY[assigned_to]
+            WHERE assigned_to IS NOT NULL AND (assignee_ids IS NULL OR assignee_ids = '{}')`).catch(() => {});
+
+/* Normalize an assignee payload (array of ids, or a single id) → clean int[]. */
+function normalizeAssigneeIds(body) {
+    let ids = [];
+    if (Array.isArray(body.assignee_ids))      ids = body.assignee_ids;
+    else if (body.assigned_to != null && body.assigned_to !== '' && body.assigned_to !== '__unassign__')
+        ids = [body.assigned_to];
+    return [...new Set(ids.map(Number).filter(n => Number.isInteger(n) && n > 0))];
+}
+
+/* Comma-joined assignee names for the Google Calendar event label. */
+async function assigneeLabel(ids) {
+    if (!ids || ids.length === 0) return null;
+    const r = await pool.query('SELECT name FROM users WHERE id = ANY($1) ORDER BY name', [ids]).catch(() => ({ rows: [] }));
+    return r.rows.map(x => x.name).join(', ') || null;
+}
+
 /* Technicians may only touch tickets assigned to them; admins, any ticket. */
 async function assertTicketAccess(req, ticketId) {
     if (req.user.role === 'admin') return;
-    const r = await pool.query('SELECT assigned_to FROM service_tickets WHERE id = $1', [ticketId]);
+    const r = await pool.query('SELECT assignee_ids FROM service_tickets WHERE id = $1', [ticketId]);
     if (r.rowCount === 0) throw Object.assign(new Error('Ticket not found.'), { status: 404 });
-    if (r.rows[0].assigned_to !== req.user.id) {
+    if (!(r.rows[0].assignee_ids || []).includes(req.user.id)) {
         throw Object.assign(new Error('You can only manage tickets assigned to you.'), { status: 403 });
     }
 }
@@ -36,16 +58,17 @@ async function assertTicketAccess(req, ticketId) {
 /* ── GET /api/tickets ─────────────────────────────────────────────────── */
 router.get('/', requireRole('technician', 'admin'), async (req, res) => {
     try {
-        const q = `SELECT t.*, u.name AS creator_name, a.name AS assignee_name
+        const q = `SELECT t.*, u.name AS creator_name,
+                          COALESCE((SELECT array_agg(x.name ORDER BY x.name)
+                                    FROM users x WHERE x.id = ANY(t.assignee_ids)), '{}') AS assignee_names
                    FROM service_tickets t
-                   LEFT JOIN users u ON t.created_by = u.id
-                   LEFT JOIN users a ON t.assigned_to = a.id`;
+                   LEFT JOIN users u ON t.created_by = u.id`;
         let result;
         if (req.user.role === 'admin') {
             result = await pool.query(q + ` ORDER BY t.created_at DESC`);
         } else {
             result = await pool.query(
-                q + ` WHERE t.created_by = $1 OR t.assigned_to = $1 ORDER BY t.created_at DESC`,
+                q + ` WHERE t.created_by = $1 OR $1 = ANY(t.assignee_ids) ORDER BY t.created_at DESC`,
                 [req.user.id]
             );
         }
@@ -59,24 +82,27 @@ router.get('/', requireRole('technician', 'admin'), async (req, res) => {
 /* ── POST /api/tickets ────────────────────────────────────────────────── */
 /* Admin only — technicians can work tickets but not create them. */
 router.post('/', requireRole('admin'), async (req, res) => {
-    const { title, description, assigned_to, event_start, event_end, event_location, client_id } = req.body;
+    const { title, description, event_start, event_end, event_location, client_id } = req.body;
 
     if (!title) return res.status(400).json({ error: 'Title is required.' });
 
     try {
         /* Tickets with a scheduled date are treated as calendar entries */
         const source = event_start ? 'calendar' : 'manual';
+        const ids     = normalizeAssigneeIds(req.body);
+        const primary = ids[0] || null;
 
         const result = await pool.query(
             `INSERT INTO service_tickets
-             (title, description, created_by, assigned_to, source, event_start, event_end, event_location, client_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             (title, description, created_by, assigned_to, assignee_ids, source, event_start, event_end, event_location, client_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
              RETURNING *`,
             [
                 title,
                 description || null,
                 req.user.id,
-                assigned_to || null,
+                primary,
+                ids,
                 source,
                 event_start  || null,
                 event_end    || null,
@@ -88,10 +114,7 @@ router.post('/', requireRole('admin'), async (req, res) => {
 
         /* Push to Google Calendar when a date is provided */
         if (source === 'calendar') {
-            const techRow = assigned_to
-                ? await pool.query('SELECT name FROM users WHERE id = $1', [assigned_to]).catch(() => ({ rows: [] }))
-                : { rows: [] };
-            const techName  = techRow.rows[0]?.name || null;
+            const techName  = await assigneeLabel(ids);
             const gEventId  = await gcalCreate(ticket, techName).catch(() => null);
             if (gEventId) {
                 await pool.query(
@@ -122,32 +145,43 @@ router.post('/', requireRole('admin'), async (req, res) => {
 /* ── PATCH /api/tickets/:id ───────────────────────────────────────────── */
 router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
     const isTech = req.user.role === 'technician';
-    let { status, assigned_to, event_start, event_end, event_location } = req.body;
+    let { status, event_start, event_end, event_location } = req.body;
     const validStatuses = ['open', 'in_progress', 'resolved', 'closed'];
 
     if (status && !validStatuses.includes(status)) {
         return res.status(400).json({ error: 'Invalid status.' });
     }
 
+    /* Assignee change (admins only). null → leave unchanged; [] → unassign all.
+       Accepts a new `assignee_ids` array or the legacy single `assigned_to`. */
+    let assigneeIds = null;
+    if (!isTech) {
+        if (Array.isArray(req.body.assignee_ids)) {
+            assigneeIds = normalizeAssigneeIds(req.body);
+        } else if (req.body.assigned_to !== undefined) {
+            assigneeIds = (req.body.assigned_to === '__unassign__' || req.body.assigned_to === '' || req.body.assigned_to == null)
+                ? [] : normalizeAssigneeIds(req.body);
+        }
+    }
+
     try {
         /* Technicians may only change the STATUS of tickets assigned to them —
-           no editing details (assignee, schedule, location). */
+           no editing details (assignees, schedule, location). */
         if (isTech) {
-            const own = await pool.query('SELECT assigned_to FROM service_tickets WHERE id = $1', [req.params.id]);
+            const own = await pool.query('SELECT assignee_ids FROM service_tickets WHERE id = $1', [req.params.id]);
             if (own.rowCount === 0) return res.status(404).json({ error: 'Ticket not found.' });
-            if (own.rows[0].assigned_to !== req.user.id) {
+            if (!(own.rows[0].assignee_ids || []).includes(req.user.id)) {
                 return res.status(403).json({ error: 'Technicians can only update tickets assigned to them.' });
             }
             if (!status) return res.status(403).json({ error: 'Technicians can only change ticket status.' });
-            assigned_to = event_start = event_end = event_location = undefined;
+            event_start = event_end = event_location = undefined;
         }
 
         await pool.query(
             `UPDATE service_tickets
              SET status         = COALESCE($1, status),
-                 assigned_to    = CASE WHEN $2::text = '__unassign__' THEN NULL
-                                       WHEN $2 IS NOT NULL           THEN $2::int
-                                       ELSE assigned_to END,
+                 assignee_ids   = COALESCE($2::int[], assignee_ids),
+                 assigned_to    = CASE WHEN $2::int[] IS NOT NULL THEN ($2::int[])[1] ELSE assigned_to END,
                  event_start    = COALESCE($3::timestamp, event_start),
                  event_end      = COALESCE($4::timestamp, event_end),
                  event_location = COALESCE($5, event_location),
@@ -156,7 +190,7 @@ router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
              WHERE id = $6`,
             [
                 status         || null,
-                assigned_to !== undefined ? String(assigned_to) : null,
+                assigneeIds,
                 event_start    || null,
                 event_end      || null,
                 event_location || null,
@@ -183,10 +217,11 @@ router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
         }
 
         const full = await pool.query(
-            `SELECT t.*, u.name AS creator_name, a.name AS assignee_name
+            `SELECT t.*, u.name AS creator_name,
+                    COALESCE((SELECT array_agg(x.name ORDER BY x.name)
+                              FROM users x WHERE x.id = ANY(t.assignee_ids)), '{}') AS assignee_names
              FROM service_tickets t
              LEFT JOIN users u ON t.created_by = u.id
-             LEFT JOIN users a ON t.assigned_to = a.id
              WHERE t.id = $1`,
             [req.params.id]
         );
@@ -196,7 +231,8 @@ router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
 
         /* Keep Google Calendar event in sync */
         if (ticket.google_event_id) {
-            gcalUpdate(ticket.google_event_id, ticket, ticket.assignee_name || null).catch(() => {});
+            const label = (ticket.assignee_names || []).join(', ') || null;
+            gcalUpdate(ticket.google_event_id, ticket, label).catch(() => {});
         }
 
         return res.json(ticket);

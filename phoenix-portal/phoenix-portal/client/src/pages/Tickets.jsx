@@ -123,10 +123,57 @@ function ClientPicker({ clients, onPick, placeholder = 'Search clients…' }) {
     );
 }
 
+/* Multi-select technician assignment — a compact dropdown of checkboxes.
+   value/onChange work with an array of technician ids. */
+function AssigneeMultiSelect({ technicians, value = [], onChange }) {
+    const [open, setOpen] = useState(false);
+    const sel   = new Set(value);
+    const names = technicians.filter(t => sel.has(t.id)).map(t => t.name);
+    const label = names.length ? names.join(', ') : 'Unassigned';
+    const toggle = (id) => onChange(sel.has(id) ? value.filter(x => x !== id) : [...value, id]);
+    return (
+        <div style={{ position: 'relative' }}>
+            <button
+                type="button"
+                onClick={() => setOpen(o => !o)}
+                title={label}
+                style={{
+                    width: '100%', maxWidth: 200, textAlign: 'left', background: 'var(--bg-2)',
+                    border: '1px solid var(--border)', borderRadius: 4, color: names.length ? 'var(--text)' : 'var(--text-dim)',
+                    padding: '6px 10px', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap',
+                    overflow: 'hidden', textOverflow: 'ellipsis',
+                }}
+            >
+                {label} ▾
+            </button>
+            {open && (
+                <>
+                    <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+                    <div style={{
+                        position: 'absolute', top: '100%', left: 0, zIndex: 41, minWidth: 190, marginTop: 2,
+                        background: 'var(--bg-3)', border: '1px solid var(--border-hi)', borderRadius: 4,
+                        boxShadow: 'var(--shadow)', maxHeight: 240, overflowY: 'auto', padding: 4,
+                    }}>
+                        {technicians.length === 0 && (
+                            <div style={{ padding: 8, color: 'var(--text-dim)', fontSize: 12 }}>No technicians.</div>
+                        )}
+                        {technicians.map(t => (
+                            <label key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                                <input type="checkbox" checked={sel.has(t.id)} onChange={() => toggle(t.id)} />
+                                {t.name}
+                            </label>
+                        ))}
+                    </div>
+                </>
+            )}
+        </div>
+    );
+}
+
 function NewTicketModal({ onClose, onCreated, technicians }) {
     const [title,       setTitle]       = useState('');
     const [desc,        setDesc]        = useState('');
-    const [assignedTo,  setAssignedTo]  = useState('');
+    const [assigneeIds, setAssigneeIds] = useState([]);
     const [eventStart,  setEventStart]  = useState('');
     const [eventEnd,    setEventEnd]    = useState('');
     const [location,    setLocation]    = useState('');
@@ -162,7 +209,7 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
             const { data } = await api.post('/tickets', {
                 title,
                 description:    desc        || undefined,
-                assigned_to:    assignedTo  || undefined,
+                assignee_ids:   assigneeIds,
                 event_start:    eventStart  || undefined,
                 event_end:      eventEnd    || undefined,
                 event_location: location    || undefined,
@@ -210,13 +257,8 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
                         <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={2} style={{ resize: 'vertical' }} />
                     </div>
                     <div className="form-group">
-                        <label className="form-label">Assign To</label>
-                        <select value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>
-                            <option value="">Unassigned</option>
-                            {technicians.map(t => (
-                                <option key={t.id} value={t.id}>{t.name}</option>
-                            ))}
-                        </select>
+                        <label className="form-label">Assign To (one or more)</label>
+                        <AssigneeMultiSelect technicians={technicians} value={assigneeIds} onChange={setAssigneeIds} />
                     </div>
 
                     {/* ── Schedule fields ── */}
@@ -449,11 +491,9 @@ export default function Tickets() {
         } catch (e) { console.error(e); }
     };
 
-    const updateAssignee = async (id, assigned_to) => {
+    const updateAssignees = async (id, assignee_ids) => {
         try {
-            const { data } = await api.patch(`/tickets/${id}`, {
-                assigned_to: assigned_to === '' ? '__unassign__' : assigned_to,
-            });
+            const { data } = await api.patch(`/tickets/${id}`, { assignee_ids });
             setTickets(prev => prev.map(t => t.id === id ? data : t));
         } catch (e) { console.error(e); }
     };
@@ -541,19 +581,14 @@ export default function Tickets() {
 
                                     <td>
                                         {user.role === 'admin' ? (
-                                            <select
-                                                value={t.assigned_to || ''}
-                                                onChange={e => updateAssignee(t.id, e.target.value)}
-                                                style={{ width: 'auto', padding: '4px 8px', fontSize: 12 }}
-                                            >
-                                                <option value="">Unassigned</option>
-                                                {technicians.map(tech => (
-                                                    <option key={tech.id} value={tech.id}>{tech.name}</option>
-                                                ))}
-                                            </select>
+                                            <AssigneeMultiSelect
+                                                technicians={technicians}
+                                                value={t.assignee_ids || []}
+                                                onChange={ids => updateAssignees(t.id, ids)}
+                                            />
                                         ) : (
-                                            <span style={{ color: t.assignee_name ? 'var(--text-dim)' : 'var(--border-hi)' }}>
-                                                {t.assignee_name || 'Unassigned'}
+                                            <span style={{ color: (t.assignee_names || []).length ? 'var(--text-dim)' : 'var(--border-hi)' }}>
+                                                {(t.assignee_names || []).join(', ') || 'Unassigned'}
                                             </span>
                                         )}
                                     </td>

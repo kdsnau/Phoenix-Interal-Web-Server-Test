@@ -67,10 +67,15 @@ router.get('/events', authenticate, async (req, res) => {
     }
 });
 
-/* ── POST /api/calendar/sync  — pull events → upsert as tickets ────────── */
+/* ── POST /api/calendar/sync  — pull events → upsert as tickets ──────────
+   Body { source }: 'official' pulls the company Official Calendar; anything
+   else (default) pulls the Ticket Calendar that we push tickets to.          */
 router.post('/sync', requireRole('admin', 'technician'), async (req, res) => {
-    const calId = process.env.GOOGLE_CALENDAR_ID;
-    const key   = process.env.GOOGLE_API_KEY;
+    const source = req.body?.source === 'official' ? 'official' : 'ticket';
+    const calId  = source === 'official'
+        ? (process.env.GOOGLE_OFFICIAL_CALENDAR_ID || 'phxcalender@gmail.com')
+        : process.env.GOOGLE_CALENDAR_ID;
+    const key    = process.env.GOOGLE_API_KEY;
     if (!calId || !key) return res.status(503).json({ error: 'Google Calendar not configured. Add GOOGLE_CALENDAR_ID and GOOGLE_API_KEY to server .env.', unconfigured: true });
 
     /* Fetch upcoming 90 days */
@@ -133,7 +138,7 @@ router.post('/sync', requireRole('admin', 'technician'), async (req, res) => {
         }
     }
 
-    res.json({ created, updated, total: gEvents.length });
+    res.json({ created, updated, total: gEvents.length, source });
 });
 
 /* ── GET /api/calendar/oauth/start — visit once in browser to authorize ── */

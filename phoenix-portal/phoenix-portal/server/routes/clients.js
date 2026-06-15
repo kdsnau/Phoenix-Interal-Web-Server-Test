@@ -354,9 +354,10 @@ router.get('/:id', authenticate, async (req, res) => {
         if (client.rowCount === 0) return res.status(404).json({ error: 'Client not found.' });
 
         const tickets = await pool.query(
-            `SELECT st.*, u.name AS assigned_name
+            `SELECT st.*,
+                    COALESCE((SELECT array_agg(x.name ORDER BY x.name)
+                              FROM users x WHERE x.id = ANY(st.assignee_ids)), '{}') AS assignee_names
              FROM service_tickets st
-             LEFT JOIN users u ON st.assigned_to = u.id
              WHERE st.client_id = $1
              ORDER BY st.created_at DESC`,
             [req.params.id]
@@ -457,15 +458,25 @@ router.post('/:id/monitoring', requireRole('admin', 'accounting'), async (req, r
     }
 });
 
+/* Array of ids from either `assignee_ids` (array) or legacy single `assigned_to`. */
+function ticketAssigneeIds(body) {
+    const raw = Array.isArray(body.assignee_ids)
+        ? body.assignee_ids
+        : (body.assigned_to != null && body.assigned_to !== '' ? [body.assigned_to] : []);
+    return [...new Set(raw.map(Number).filter(n => Number.isInteger(n) && n > 0))];
+}
+
 /* POST /api/clients/:id/tickets */
 router.post('/:id/tickets', authenticate, async (req, res) => {
-    const { title, description, assigned_to } = req.body;
+    const { title, description } = req.body;
     if (!title) return res.status(400).json({ error: 'Title is required.' });
     try {
+        const ids     = ticketAssigneeIds(req.body);
+        const primary = ids[0] || null;
         const result = await pool.query(
-            `INSERT INTO service_tickets (title, description, status, created_by, assigned_to, client_id)
-             VALUES ($1,$2,'open',$3,$4,$5) RETURNING *`,
-            [title, description || null, req.user.id, assigned_to || null, req.params.id]
+            `INSERT INTO service_tickets (title, description, status, created_by, assigned_to, assignee_ids, client_id)
+             VALUES ($1,$2,'open',$3,$4,$5,$6) RETURNING *`,
+            [title, description || null, req.user.id, primary, ids, req.params.id]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
@@ -476,15 +487,19 @@ router.post('/:id/tickets', authenticate, async (req, res) => {
 
 /* PATCH /api/clients/tickets/:ticketId */
 router.patch('/tickets/:ticketId', authenticate, async (req, res) => {
-    const { status, assigned_to } = req.body;
+    const { status } = req.body;
+    /* null → leave assignees unchanged */
+    const ids = (Array.isArray(req.body.assignee_ids) || req.body.assigned_to !== undefined)
+        ? ticketAssigneeIds(req.body) : null;
     try {
         const result = await pool.query(
             `UPDATE service_tickets SET
-                status      = COALESCE($1, status),
-                assigned_to = COALESCE($2, assigned_to),
-                updated_at  = NOW()
+                status       = COALESCE($1, status),
+                assignee_ids = COALESCE($2::int[], assignee_ids),
+                assigned_to  = CASE WHEN $2::int[] IS NOT NULL THEN ($2::int[])[1] ELSE assigned_to END,
+                updated_at   = NOW()
              WHERE id = $3 RETURNING *`,
-            [status, assigned_to, req.params.ticketId]
+            [status, ids, req.params.ticketId]
         );
         if (result.rowCount === 0) return res.status(404).json({ error: 'Ticket not found.' });
         res.json(result.rows[0]);

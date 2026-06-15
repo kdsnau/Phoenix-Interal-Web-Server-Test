@@ -721,7 +721,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                                         <div className="alarm-ticket-title">{tk.title}</div>
                                         <div className="alarm-ticket-meta">
                                             <span className={STATUS_CLASS[tk.status] || 'tag-dim'}>{tk.status}</span>
-                                            {tk.assigned_name && <span className="tag-dim">{tk.assigned_name}</span>}
+                                            {(tk.assignee_names || []).length > 0 && <span className="tag-dim">{tk.assignee_names.join(', ')}</span>}
                                             <span className="tag-dim">{new Date(tk.created_at).toLocaleDateString()}</span>
                                         </div>
                                     </div>

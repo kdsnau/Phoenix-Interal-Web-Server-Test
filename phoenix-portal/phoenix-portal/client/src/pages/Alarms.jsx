@@ -411,6 +411,11 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
     const [newTicket, setNewTicket] = useState({ title: '', description: '', assigned_to: '' });
     const [togglingMon, setTogglingMon] = useState(false);
     const [monEnabled, setMonEnabled] = useState(client.monitoring_enabled);
+    /* Site maps (network-drive DWG files) */
+    const [siteMaps,        setSiteMaps]        = useState(null);   // { root, folder, files } | { error, root }
+    const [siteMapsLoading, setSiteMapsLoading] = useState(false);
+    const [smRoot,          setSmRoot]          = useState('');     // admin: editable drive root
+    const [smRootMsg,       setSmRootMsg]       = useState('');
 
     useEffect(() => {
         if (tab === 'transactions' && canBilling) {
@@ -421,6 +426,18 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                 .finally(() => setTxLoading(false));
         }
     }, [tab, client.id, canBilling]);
+
+    useEffect(() => {
+        if (tab !== 'sitemap') return;
+        setSiteMapsLoading(true);
+        api.get(`/clients/${client.id}/site-maps`)
+            .then(r => setSiteMaps(r.data))
+            .catch(e => setSiteMaps({ error: e.response?.data?.error || 'Failed to load site maps.', root: e.response?.data?.root }))
+            .finally(() => setSiteMapsLoading(false));
+        if (user.role === 'admin') {
+            api.get('/clients/site-map-root').then(r => setSmRoot(r.data.root)).catch(() => {});
+        }
+    }, [tab, client.id, user.role]);
 
     async function saveNotes() {
         setSavingNotes(true);
@@ -503,6 +520,41 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
         onRefresh();
     }
 
+    /* DWG files can't render in a browser — fetch as a blob (sends the auth
+       header) and trigger a download. */
+    async function downloadSiteMap(file) {
+        try {
+            const res = await api.get(`/clients/${client.id}/site-maps/download`, {
+                params: { file: file.rel },
+                responseType: 'blob',
+            });
+            const url = URL.createObjectURL(res.data);
+            const a = document.createElement('a');
+            a.href = url; a.download = file.name;
+            document.body.appendChild(a); a.click(); a.remove();
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            alert(e.response?.data?.error || 'Download failed.');
+        }
+    }
+
+    async function saveSmRoot() {
+        setSmRootMsg('Saving…');
+        try {
+            await api.put('/clients/site-map-root', { root: smRoot });
+            setSiteMapsLoading(true);
+            const r = await api.get(`/clients/${client.id}/site-maps`);
+            setSiteMaps(r.data);
+            setSmRootMsg('Saved.');
+        } catch (e) {
+            setSmRootMsg(e.response?.data?.error || 'Save failed.');
+        } finally {
+            setSiteMapsLoading(false);
+        }
+    }
+
+    const fmtSize = b => b == null ? '' : (b >= 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`);
+
     const svc = (client.services || []);
 
     return (
@@ -522,9 +574,9 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                 </div>
 
                 <div className="alarm-tabs">
-                    {['system', 'panel', 'contract', 'tickets', 'slack', ...(canBilling ? ['billing', 'transactions'] : [])].map(t => (
+                    {['system', 'panel', 'contract', 'tickets', 'sitemap', 'slack', ...(canBilling ? ['billing', 'transactions'] : [])].map(t => (
                         <button key={t} className={`alarm-tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
-                            {t.charAt(0).toUpperCase() + t.slice(1)}
+                            {t === 'sitemap' ? 'Site Map' : t.charAt(0).toUpperCase() + t.slice(1)}
                         </button>
                     ))}
                 </div>
@@ -852,6 +904,57 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                                         ))}
                                     </tbody>
                                 </table>
+                            )}
+                        </div>
+                    )}
+
+                    {/* SITE MAP TAB */}
+                    {tab === 'sitemap' && (
+                        <div className="alarm-section">
+                            <div className="alarm-label" style={{ marginBottom: 8, fontWeight: 600 }}>
+                                Site Maps (DWG) — pulled from the network drive
+                            </div>
+
+                            {siteMapsLoading ? (
+                                <div className="alarm-empty">Loading…</div>
+                            ) : siteMaps?.error ? (
+                                <div className="error-msg" style={{ marginBottom: 10 }}>{siteMaps.error}</div>
+                            ) : siteMaps?.files?.length ? (
+                                <table className="data-table">
+                                    <thead><tr><th>File</th><th>Size</th><th>Modified</th><th></th></tr></thead>
+                                    <tbody>
+                                        {siteMaps.files.map(f => (
+                                            <tr key={f.rel}>
+                                                <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{f.rel}</td>
+                                                <td style={{ color: 'var(--text-dim)', fontSize: 12 }}>{fmtSize(f.size)}</td>
+                                                <td style={{ color: 'var(--text-dim)', fontSize: 12 }}>{f.modified ? new Date(f.modified).toLocaleDateString() : ''}</td>
+                                                <td><button className="btn btn-ghost" style={{ padding: '2px 10px', fontSize: 12 }} onClick={() => downloadSiteMap(f)}>Download</button></td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            ) : (
+                                <div className="alarm-empty">
+                                    {siteMaps?.folder
+                                        ? 'No DWG files found in this client’s folder.'
+                                        : `No matching site-map folder found for this client${siteMaps?.root ? ` on ${siteMaps.root}` : ''}.`}
+                                </div>
+                            )}
+
+                            {user.role === 'admin' && (
+                                <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
+                                    <div className="alarm-label" style={{ marginBottom: 6 }}>Network drive root (admin)</div>
+                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                        <input className="alarm-input" value={smRoot} onChange={e => setSmRoot(e.target.value)}
+                                            placeholder="\\PHX-Security\SiteMaps"
+                                            style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12 }} />
+                                        <button className="btn btn-primary" onClick={saveSmRoot}>Save</button>
+                                    </div>
+                                    {smRootMsg && <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6 }}>{smRootMsg}</div>}
+                                    <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>
+                                        Each client needs its own subfolder here (matched by name or account #); DWG files inside are listed above.
+                                    </div>
+                                </div>
                             )}
                         </div>
                     )}

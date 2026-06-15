@@ -2,7 +2,7 @@ const express  = require('express');
 const bcrypt   = require('bcryptjs');
 const jwt      = require('jsonwebtoken');
 const pool     = require('../db/pool');
-const { sendMail } = require('../config/mailer');
+const { sendTemplated } = require('../config/mailer');
 const { authenticate } = require('../middleware/requireRole');
 
 const router = express.Router();
@@ -29,19 +29,35 @@ router.post('/register', async (req, res) => {
         const user = result.rows[0];
 
         /* Welcome email */
-        await sendMail(
+        await sendTemplated(
             email,
             'Welcome to Phoenix SecTech Portal',
-            `Hi ${name},\n\nYour account has been created with role: ${role}.\n\nPhoenix Security & Technology`
+            'Welcome to the Portal',
+            {
+                intro: `Hi ${name}, your account has been created.`,
+                fields: [
+                    { label: 'Email', value: email },
+                    { label: 'Role',  value: role, badge: 'badge-orange' },
+                ],
+                note: 'Log in at your portal URL and change your password.',
+            }
         ).catch(err => console.error('Welcome email failed:', err));
 
         /* Notify admin */
         const admins = await pool.query("SELECT email FROM users WHERE role = 'admin'");
         for (const admin of admins.rows) {
-            await sendMail(
+            await sendTemplated(
                 admin.email,
                 'New User Registered',
-                `A new user registered:\nName: ${name}\nEmail: ${email}\nRole: ${role}`
+                'New User Registered',
+                {
+                    intro: 'A new user account was just created.',
+                    fields: [
+                        { label: 'Name',  value: name, hi: true },
+                        { label: 'Email', value: email },
+                        { label: 'Role',  value: role, badge: 'badge-orange' },
+                    ],
+                }
             ).catch(err => console.error('Admin notify failed:', err));
         }
 
@@ -115,10 +131,14 @@ router.post('/change-password', authenticate, async (req, res) => {
         await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, req.user.id]);
 
         /* Security heads-up — best effort */
-        sendMail(
+        sendTemplated(
             req.user.email,
             'Your Phoenix SecTech password was changed',
-            `Hi ${req.user.name},\n\nYour portal password was just changed. If this wasn't you, contact an administrator immediately.\n\nPhoenix Security & Technology`
+            'Password Changed',
+            {
+                intro: `Hi ${req.user.name}, your portal password was just changed.`,
+                note: "If this wasn't you, contact an administrator immediately.",
+            }
         ).catch(err => console.error('Password-change email failed:', err));
 
         return res.json({ message: 'Password updated.' });

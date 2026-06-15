@@ -1,5 +1,7 @@
 const express = require('express');
 const multer  = require('multer');
+const fs      = require('fs');
+const path    = require('path');
 const XLSX    = require('xlsx');
 const pool    = require('../db/pool');
 const { authenticate, requireRole } = require('../middleware/requireRole');
@@ -7,6 +9,66 @@ const { runMaintenanceCheck } = require('../services/monitoringScheduler');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+/* ── Site-map network drive ───────────────────────────────────────────────
+   Site maps are AutoCAD drawings (filenames contain "DWG") stored one folder
+   per client under a network share that Saturn can reach. The root is admin-
+   configurable (app_settings 'sitemap_root'); falls back to env / a default. */
+const SITEMAP_ROOT_KEY     = 'sitemap_root';
+const DEFAULT_SITEMAP_ROOT = process.env.SITEMAP_ROOT || '\\\\PHX-Security';
+
+async function getSetting(key) {
+    try {
+        const r = await pool.query('SELECT value FROM app_settings WHERE key = $1', [key]);
+        return r.rows[0]?.value ?? null;
+    } catch { return null; }
+}
+async function setSetting(key, value) {
+    await pool.query(`CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT, updated_at TIMESTAMP DEFAULT NOW())`).catch(() => {});
+    await pool.query(
+        `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+        [key, value]
+    );
+}
+const getSitemapRoot = async () => (await getSetting(SITEMAP_ROOT_KEY)) || DEFAULT_SITEMAP_ROOT;
+
+const normName = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const isDwg    = name => /dwg/i.test(name);
+
+/* Find the subfolder under `root` that belongs to a client (exact name → name
+   contains → customer-id contains). Throws if the drive can't be read. */
+async function resolveClientFolder(root, client) {
+    const entries = await fs.promises.readdir(root, { withFileTypes: true });
+    const dirs  = entries.filter(e => e.isDirectory());
+    const cName = normName(client.name);
+    const cId   = normName(client.customer_id);
+    const hit =
+        (cName && dirs.find(d => normName(d.name) === cName)) ||
+        (cName && dirs.find(d => normName(d.name).includes(cName) || cName.includes(normName(d.name)))) ||
+        (cId   && dirs.find(d => normName(d.name).includes(cId)));
+    return hit ? path.join(root, hit.name) : null;
+}
+
+/* Collect DWG files within a client folder (a few levels deep), each with its
+   path relative to that folder so downloads can resolve safely. */
+async function walkDwg(dir, base = dir, depth = 0, out = []) {
+    if (depth > 4) return out;
+    let entries;
+    try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); }
+    catch { return out; }
+    for (const e of entries) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) {
+            await walkDwg(full, base, depth + 1, out);
+        } else if (isDwg(e.name)) {
+            let stat = null;
+            try { stat = await fs.promises.stat(full); } catch { /* ignore */ }
+            out.push({ name: e.name, rel: path.relative(base, full), size: stat?.size ?? null, modified: stat?.mtime ?? null });
+        }
+    }
+    return out;
+}
 
 /* ── Schema migrations ────────────────────────────────────────────────── */
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS permit_number   TEXT`).catch(() => {});
@@ -359,6 +421,77 @@ router.post('/run-maintenance', requireRole('admin'), async (req, res) => {
     } catch (err) {
         console.error('run-maintenance error:', err);
         return res.status(500).json({ error: 'Maintenance run failed.' });
+    }
+});
+
+/* ── Site maps (network drive) ───────────────────────────────────────────── */
+
+/* GET /api/clients/site-map-root — current configured drive root (admin). */
+router.get('/site-map-root', requireRole('admin'), async (_req, res) => {
+    res.json({ root: await getSitemapRoot(), default: DEFAULT_SITEMAP_ROOT });
+});
+
+/* PUT /api/clients/site-map-root  { root } — set the drive root (admin). */
+router.put('/site-map-root', requireRole('admin'), async (req, res) => {
+    const root = (req.body.root || '').trim();
+    if (!root) return res.status(400).json({ error: 'root is required.' });
+    try {
+        await setSetting(SITEMAP_ROOT_KEY, root);
+        res.json({ root });
+    } catch (err) {
+        console.error('set site-map-root error:', err);
+        res.status(500).json({ error: 'Failed to save drive root.' });
+    }
+});
+
+/* GET /api/clients/:id/site-maps — list the client's DWG site maps. */
+router.get('/:id/site-maps', authenticate, async (req, res) => {
+    try {
+        const c = await pool.query('SELECT id, name, customer_id FROM clients WHERE id = $1', [req.params.id]);
+        if (c.rowCount === 0) return res.status(404).json({ error: 'Client not found.' });
+
+        const root = await getSitemapRoot();
+        let folder;
+        try {
+            folder = await resolveClientFolder(root, c.rows[0]);
+        } catch (e) {
+            return res.status(502).json({ error: `Cannot reach the site-map drive at ${root} (${e.code || e.message}).`, root });
+        }
+        if (!folder) return res.json({ root, folder: null, files: [] });
+
+        const files = (await walkDwg(folder)).sort((a, b) => a.name.localeCompare(b.name));
+        res.json({ root, folder, files });
+    } catch (err) {
+        console.error('site-maps list error:', err);
+        res.status(500).json({ error: 'Failed to list site maps.' });
+    }
+});
+
+/* GET /api/clients/:id/site-maps/download?file=<rel> — stream one DWG. */
+router.get('/:id/site-maps/download', authenticate, async (req, res) => {
+    try {
+        const rel = req.query.file;
+        if (!rel) return res.status(400).json({ error: 'file is required.' });
+
+        const c = await pool.query('SELECT id, name, customer_id FROM clients WHERE id = $1', [req.params.id]);
+        if (c.rowCount === 0) return res.status(404).json({ error: 'Client not found.' });
+
+        const root   = await getSitemapRoot();
+        const folder = await resolveClientFolder(root, c.rows[0]).catch(() => null);
+        if (!folder) return res.status(404).json({ error: 'No site-map folder for this client.' });
+
+        /* Block path traversal — resolved file must stay inside the client folder. */
+        const folderResolved = path.resolve(folder);
+        const abs = path.resolve(folder, rel);
+        if (abs !== folderResolved && !abs.startsWith(folderResolved + path.sep)) {
+            return res.status(400).json({ error: 'Invalid file path.' });
+        }
+        res.download(abs, path.basename(abs), err => {
+            if (err && !res.headersSent) res.status(404).json({ error: 'File not found.' });
+        });
+    } catch (err) {
+        console.error('site-map download error:', err);
+        if (!res.headersSent) res.status(500).json({ error: 'Download failed.' });
     }
 });
 

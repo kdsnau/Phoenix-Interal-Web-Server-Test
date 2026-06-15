@@ -83,6 +83,65 @@ async function sendMail(to, subject, text, html) {
     });
 }
 
+function esc(s) {
+    return String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+
+/* Render a structured email spec into the shared branded template (the same
+   look fleet/feedback mail uses) plus a plaintext mirror so every message has a
+   clean text fallback. spec = {
+     intro,                                          // greeting / lead line
+     fields:   [{ label, value, hi, badge, rawHtml }], // key/value rows
+     sections: [{ heading, items: [string] }],         // bulleted groups (digests)
+     note,                                             // closing line
+   } */
+function renderEmail(title, spec = {}) {
+    const { intro, fields = [], sections = [], note } = spec;
+    let html = '';
+    let text = '';
+
+    if (intro) {
+        html += `<p style="font-size:14px;color:#c9d4e0;margin:0 0 20px;line-height:1.6">${esc(intro)}</p>`;
+        text += `${intro}\n\n`;
+    }
+
+    for (const f of fields) {
+        const valHtml = f.rawHtml != null
+            ? f.rawHtml
+            : (f.badge ? `<span class="badge ${f.badge}">${esc(f.value)}</span>` : esc(f.value));
+        const cls = f.hi ? 'field-value hi' : 'field-value';
+        html += `<div class="field"><div class="field-label">${esc(f.label)}</div><div class="${cls}">${valHtml}</div></div>`;
+        text += `${f.label}: ${f.value}\n`;
+    }
+
+    sections.forEach((s, i) => {
+        if (i === 0 && fields.length) html += `<hr class="divider"/>`;
+        if (s.heading) {
+            html += `<div class="field-label" style="margin:0 0 8px">${esc(s.heading)}</div>`;
+            text += `\n${s.heading}:\n`;
+        }
+        html += `<ul style="margin:0 0 18px;padding-left:18px;color:#c9d4e0;font-size:14px;line-height:1.7">`;
+        for (const it of (s.items || [])) {
+            html += `<li>${esc(it)}</li>`;
+            text += `  • ${it}\n`;
+        }
+        html += `</ul>`;
+    });
+
+    if (note) {
+        html += `<hr class="divider"/><p style="font-size:12px;color:#5c6e82;margin:0">${esc(note)}</p>`;
+        text += `\n${note}\n`;
+    }
+
+    return { html: htmlWrap(title, html), text: text.trimEnd() };
+}
+
+/* Convenience: build + send a branded email from a structured spec. */
+async function sendTemplated(to, subject, title, spec) {
+    const { html, text } = renderEmail(title, spec);
+    await sendMail(to, subject, text, html);
+}
+
 async function sendServiceReminder(to, vehicle) {
     const subject = `Service Reminder: ${vehicle.name} (${vehicle.year} ${vehicle.make} ${vehicle.model})`;
     const text = `Service reminder for ${vehicle.name}.\n\nVehicle: ${vehicle.year} ${vehicle.make} ${vehicle.model}\nID: ${vehicle.vehicle_id}\nMileage: ${vehicle.mileage} mi\n\nPlease schedule a service appointment.`;
@@ -175,4 +234,4 @@ async function sendFeedback(to, { category, subject, message, fromName, fromEmai
     await sendMail(to, emailSubject, text, html);
 }
 
-module.exports = { sendMail, sendServiceReminder, sendTagsReminder, sendNewTicket, sendNewFinancialRecord, sendNewUser, sendFeedback };
+module.exports = { sendMail, sendTemplated, renderEmail, htmlWrap, sendServiceReminder, sendTagsReminder, sendNewTicket, sendNewFinancialRecord, sendNewUser, sendFeedback };

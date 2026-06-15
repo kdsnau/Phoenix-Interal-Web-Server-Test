@@ -1,7 +1,7 @@
 const express  = require('express');
 const pool     = require('../db/pool');
 const { requireRole } = require('../middleware/requireRole');
-const { sendMail }    = require('../config/mailer');
+const { sendTemplated } = require('../config/mailer');
 
 const router = express.Router();
 
@@ -233,10 +233,19 @@ router.post('/', requireRole('accounting', 'admin'), async (req, res) => {
             "SELECT email FROM users WHERE role IN ('admin', 'accounting')"
         );
         for (const admin of admins.rows) {
-            await sendMail(
+            await sendTemplated(
                 admin.email,
                 `New Financial Record: ${type}`,
-                `A new financial record was added.\n\nDescription: ${description}\nAmount: $${amount}\nType: ${type}\nAdded by: ${req.user.name}`
+                'New Financial Record',
+                {
+                    intro: 'A new financial record was added.',
+                    fields: [
+                        { label: 'Description', value: description, hi: true },
+                        { label: 'Amount',      value: `${type === 'income' ? '+' : '-'}$${Number(amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}`, hi: true },
+                        { label: 'Type',        value: type, badge: type === 'income' ? 'badge-green' : 'badge-orange' },
+                        { label: 'Added By',    value: req.user.name },
+                    ],
+                }
             ).catch(err => console.error('Finance notify failed:', err));
         }
 

@@ -4,10 +4,13 @@ const fs       = require('fs');
 const multer   = require('multer');
 const pool     = require('../db/pool');
 const { requireRole } = require('../middleware/requireRole');
-const { sendMail }    = require('../config/mailer');
+const { sendTemplated } = require('../config/mailer');
 const { gcalCreate, gcalUpdate, gcalDelete } = require('../config/gcal');
 
 const router = express.Router();
+
+/* Allowed ticket types (kept in sync with the client dropdown). */
+const TICKET_TYPES = ['Service', 'Service Warranty', 'Maintenance', 'Open Work Order', 'Errand', 'Bid (Site Walks)'];
 
 /* ── Site-map image upload setup ──────────────────────────────────────── */
 const SITEMAP_DIR = path.join(__dirname, '../../uploads/tickets');
@@ -27,6 +30,7 @@ const upload = multer({
 /* ── Schema migrations ────────────────────────────────────────────────── */
 pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS event_end TIMESTAMP`).catch(() => {});
 pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS site_map_file TEXT`).catch(() => {});
+pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS ticket_type TEXT NOT NULL DEFAULT 'Service'`).catch(() => {});
 
 /* Inventory items used on a ticket; stock is drawn down when the ticket is completed. */
 pool.query(`
@@ -107,6 +111,8 @@ router.post('/', requireRole('admin'), async (req, res) => {
 
     if (!title) return res.status(400).json({ error: 'Title is required.' });
 
+    const ticketType = TICKET_TYPES.includes(req.body.ticket_type) ? req.body.ticket_type : 'Service';
+
     try {
         /* Tickets with a scheduled date are treated as calendar entries */
         const source = event_start ? 'calendar' : 'manual';
@@ -115,8 +121,8 @@ router.post('/', requireRole('admin'), async (req, res) => {
 
         const result = await pool.query(
             `INSERT INTO service_tickets
-             (title, description, created_by, assigned_to, assignee_ids, source, event_start, event_end, event_location, client_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+             (title, description, created_by, assigned_to, assignee_ids, source, event_start, event_end, event_location, client_id, ticket_type)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              RETURNING *`,
             [
                 title,
@@ -129,6 +135,7 @@ router.post('/', requireRole('admin'), async (req, res) => {
                 event_end    || null,
                 event_location || null,
                 client_id || null,
+                ticketType,
             ]
         );
         let ticket = result.rows[0];
@@ -152,10 +159,21 @@ router.post('/', requireRole('admin'), async (req, res) => {
         if (ids.length > 0) {
             const techs = await pool.query('SELECT email, name FROM users WHERE id = ANY($1)', [ids]).catch(() => ({ rows: [] }));
             for (const t of techs.rows) {
-                await sendMail(
+                await sendTemplated(
                     t.email,
                     `You've been assigned a ticket: ${title}`,
-                    `Hi ${t.name},\n\nYou have been assigned a service ticket.\n\nTitle: ${title}\nDescription: ${description || 'N/A'}\nScheduled: ${sched}\nLocation: ${event_location || 'N/A'}\nAssigned by: ${req.user.name}\n\nPhoenix Security & Technology`
+                    'Ticket Assigned to You',
+                    {
+                        intro: `Hi ${t.name}, you've been assigned a service ticket.`,
+                        fields: [
+                            { label: 'Title',       value: title, hi: true },
+                            { label: 'Type',        value: ticketType, badge: 'badge-orange' },
+                            { label: 'Description', value: description || '—' },
+                            { label: 'Scheduled',   value: sched },
+                            { label: 'Location',    value: event_location || 'N/A' },
+                            { label: 'Assigned By', value: req.user.name },
+                        ],
+                    }
                 ).catch(err => console.error('Tech assign email failed:', err));
             }
         }
@@ -163,10 +181,21 @@ router.post('/', requireRole('admin'), async (req, res) => {
         /* Notify admins */
         const admins = await pool.query("SELECT email FROM users WHERE role = 'admin'");
         for (const admin of admins.rows) {
-            await sendMail(
+            await sendTemplated(
                 admin.email,
                 `New Ticket: ${title}`,
-                `A new service ticket was created.\n\nTitle: ${title}\nDescription: ${description || 'N/A'}\nScheduled: ${sched}\nLocation: ${event_location || 'N/A'}\nCreated by: ${req.user.name}`
+                'New Service Ticket',
+                {
+                    intro: 'A new service ticket was created.',
+                    fields: [
+                        { label: 'Title',       value: title, hi: true },
+                        { label: 'Type',        value: ticketType, badge: 'badge-orange' },
+                        { label: 'Description', value: description || '—' },
+                        { label: 'Scheduled',   value: sched },
+                        { label: 'Location',    value: event_location || 'N/A' },
+                        { label: 'Created By',  value: req.user.name },
+                    ],
+                }
             ).catch(err => console.error('Ticket notify failed:', err));
         }
 
@@ -180,11 +209,14 @@ router.post('/', requireRole('admin'), async (req, res) => {
 /* ── PATCH /api/tickets/:id ───────────────────────────────────────────── */
 router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
     const isTech = req.user.role === 'technician';
-    let { status, event_start, event_end, event_location, title, description, client_id } = req.body;
+    let { status, event_start, event_end, event_location, title, description, client_id, ticket_type } = req.body;
     const validStatuses = ['open', 'in_progress', 'resolved', 'closed'];
 
     if (status && !validStatuses.includes(status)) {
         return res.status(400).json({ error: 'Invalid status.' });
+    }
+    if (ticket_type != null && ticket_type !== '' && !TICKET_TYPES.includes(ticket_type)) {
+        return res.status(400).json({ error: 'Invalid ticket type.' });
     }
 
     /* Assignee change (admins only). null → leave unchanged; [] → unassign all.
@@ -209,7 +241,7 @@ router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
                 return res.status(403).json({ error: 'Technicians can only update tickets assigned to them.' });
             }
             if (!status) return res.status(403).json({ error: 'Technicians can only change ticket status.' });
-            event_start = event_end = event_location = title = description = client_id = undefined;
+            event_start = event_end = event_location = title = description = client_id = ticket_type = undefined;
         }
 
         await pool.query(
@@ -224,9 +256,10 @@ router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
                  title          = COALESCE($6, title),
                  description    = COALESCE($7, description),
                  client_id      = COALESCE($8::int, client_id),
+                 ticket_type    = COALESCE($9, ticket_type),
                  source         = CASE WHEN $3 IS NOT NULL THEN 'calendar' ELSE source END,
                  updated_at     = NOW()
-             WHERE id = $9`,
+             WHERE id = $10`,
             [
                 status         || null,
                 assigneeIds,
@@ -236,6 +269,7 @@ router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
                 title          || null,
                 description ?? null,
                 client_id      || null,
+                ticket_type    || null,
                 req.params.id,
             ]
         );

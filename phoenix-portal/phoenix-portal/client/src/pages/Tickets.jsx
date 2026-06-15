@@ -11,6 +11,8 @@ const STATUS_TAG = {
     closed:      'tag-dim',
 };
 
+const TICKET_TYPES = ['Service', 'Service Warranty', 'Maintenance', 'Open Work Order', 'Errand', 'Bid (Site Walks)'];
+
 function fmt(ts, opts) {
     if (!ts) return null;
     return new Date(ts).toLocaleString('en-US', opts);
@@ -172,6 +174,7 @@ function AssigneeMultiSelect({ technicians, value = [], onChange }) {
 
 function NewTicketModal({ onClose, onCreated, technicians }) {
     const [title,       setTitle]       = useState('');
+    const [ticketType,  setTicketType]  = useState('Service');
     const [desc,        setDesc]        = useState('');
     const [assigneeIds, setAssigneeIds] = useState([]);
     const [eventStart,  setEventStart]  = useState('');
@@ -208,6 +211,7 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
         try {
             const { data } = await api.post('/tickets', {
                 title,
+                ticket_type:    ticketType,
                 description:    desc        || undefined,
                 assignee_ids:   assigneeIds,
                 event_start:    eventStart  || undefined,
@@ -251,6 +255,12 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
                     <div className="form-group">
                         <label className="form-label">Title *</label>
                         <input value={title} onChange={e => setTitle(e.target.value)} required autoFocus />
+                    </div>
+                    <div className="form-group">
+                        <label className="form-label">Ticket Type</label>
+                        <select value={ticketType} onChange={e => setTicketType(e.target.value)}>
+                            {TICKET_TYPES.map(tt => <option key={tt} value={tt}>{tt}</option>)}
+                        </select>
                     </div>
                     <div className="form-group">
                         <label className="form-label">Description</label>
@@ -343,6 +353,7 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
 function EditTicketModal({ ticket, technicians, onClose, onUpdated }) {
     const toLocalInput = ts => ts ? new Date(ts).toISOString().slice(0, 16) : '';
     const [title,       setTitle]       = useState(ticket.title || '');
+    const [ticketType,  setTicketType]  = useState(ticket.ticket_type || 'Service');
     const [desc,        setDesc]        = useState(ticket.description || '');
     const [assigneeIds, setAssigneeIds] = useState(ticket.assignee_ids || []);
     const [eventStart,  setEventStart]  = useState(toLocalInput(ticket.event_start));
@@ -370,6 +381,7 @@ function EditTicketModal({ ticket, technicians, onClose, onUpdated }) {
         try {
             const { data } = await api.patch(`/tickets/${ticket.id}`, {
                 title,
+                ticket_type:   ticketType,
                 description:    desc,
                 assignee_ids:  assigneeIds,
                 event_start:   eventStart || undefined,
@@ -425,6 +437,12 @@ function EditTicketModal({ ticket, technicians, onClose, onUpdated }) {
                     <div className="form-group">
                         <label className="form-label">Title *</label>
                         <input value={title} onChange={e => setTitle(e.target.value)} required />
+                    </div>
+                    <div className="form-group">
+                        <label className="form-label">Ticket Type</label>
+                        <select value={ticketType} onChange={e => setTicketType(e.target.value)}>
+                            {TICKET_TYPES.map(tt => <option key={tt} value={tt}>{tt}</option>)}
+                        </select>
                     </div>
                     <div className="form-group">
                         <label className="form-label">Description</label>
@@ -695,6 +713,15 @@ export default function Tickets() {
                                             {t.event_start && <span title="Scheduled event">📅</span>}
                                             {t.title}
                                         </div>
+                                        {t.ticket_type && (
+                                            <div style={{ marginTop: 3 }}>
+                                                <span style={{
+                                                    fontSize: 10, fontFamily: 'var(--font-mono)', textTransform: 'uppercase',
+                                                    letterSpacing: 0.5, color: 'var(--accent)',
+                                                    border: '1px solid var(--border)', borderRadius: 3, padding: '1px 6px',
+                                                }}>{t.ticket_type}</span>
+                                            </div>
+                                        )}
                                         {t.event_location && (
                                             <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>
                                                 📍 {t.event_location}

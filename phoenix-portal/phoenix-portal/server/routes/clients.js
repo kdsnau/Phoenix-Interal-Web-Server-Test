@@ -3,6 +3,7 @@ const multer  = require('multer');
 const XLSX    = require('xlsx');
 const pool    = require('../db/pool');
 const { authenticate, requireRole } = require('../middleware/requireRole');
+const { runMaintenanceCheck } = require('../services/monitoringScheduler');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -33,6 +34,8 @@ pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS maintenance_enabled   B
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS maintenance_frequency TEXT`).catch(() => {});
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS maintenance_next      DATE`).catch(() => {});
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS maintenance_last      DATE`).catch(() => {});
+/* Tech the auto-generated maintenance ticket is assigned to. */
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS maintenance_assignee_id INTEGER REFERENCES users(id) ON DELETE SET NULL`).catch(() => {});
 
 /* QuickBooks provenance on client_transactions — lets the import dedupe on re-run.
    client_id is nullable + customer_name carries the QB name so transactions for
@@ -347,6 +350,18 @@ router.delete('/unmonitored/:id', requireRole('admin'), async (req, res) => {
     }
 });
 
+/* POST /api/clients/run-maintenance — run the maintenance check now (admin).
+   Creates/assigns tickets for any client whose maintenance is due today. */
+router.post('/run-maintenance', requireRole('admin'), async (req, res) => {
+    try {
+        const result = await runMaintenanceCheck();
+        return res.json(result);
+    } catch (err) {
+        console.error('run-maintenance error:', err);
+        return res.status(500).json({ error: 'Maintenance run failed.' });
+    }
+});
+
 /* GET /api/clients/:id */
 router.get('/:id', authenticate, async (req, res) => {
     try {
@@ -401,7 +416,7 @@ router.patch('/:id', authenticate, async (req, res) => {
         'panel_brand', 'panel_model', 'camera_count', 'zone_count',
         'contract_type', 'contract_start', 'contract_end',
         'last_inspection', 'next_inspection',
-        'maintenance_enabled', 'maintenance_frequency', 'maintenance_next', 'maintenance_last',
+        'maintenance_enabled', 'maintenance_frequency', 'maintenance_next', 'maintenance_last', 'maintenance_assignee_id',
     ];
     try {
         const sets = []; const params = [];

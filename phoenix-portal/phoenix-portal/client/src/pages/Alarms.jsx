@@ -402,6 +402,8 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
     const [maintEnabled,  setMaintEnabled]  = useState(client.maintenance_enabled || false);
     const [maintFreq,     setMaintFreq]     = useState(client.maintenance_frequency || 'quarterly');
     const [maintNext,     setMaintNext]     = useState(client.maintenance_next ? client.maintenance_next.slice(0, 10) : '');
+    const [maintAssignee, setMaintAssignee] = useState(client.maintenance_assignee_id || '');
+    const [maintRunMsg,   setMaintRunMsg]   = useState('');
     const [savingContract, setSavingContract] = useState(false);
     const [transactions, setTransactions] = useState([]);
     const [txLoading, setTxLoading]       = useState(false);
@@ -448,9 +450,22 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
             maintenance_enabled:   maintEnabled,
             maintenance_frequency: maintFreq,
             maintenance_next:      maintNext || null,
+            maintenance_assignee_id: maintAssignee || null,
         });
         setSavingContract(false);
         onRefresh();
+    }
+
+    async function runMaintenanceNow() {
+        setMaintRunMsg('Running…');
+        try {
+            const { data } = await api.post('/clients/run-maintenance');
+            setMaintRunMsg(data.created > 0
+                ? `Created ${data.created} ticket(s): ${data.names.join(', ')}`
+                : 'No maintenance due right now.');
+        } catch (e) {
+            setMaintRunMsg(e.response?.data?.error || 'Run failed.');
+        }
     }
 
     async function toggleMonitoring() {
@@ -672,6 +687,13 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                                             <input className="alarm-input" type="date" value={maintNext} onChange={e => setMaintNext(e.target.value)} />
                                         </div>
                                     </div>
+                                    <div className="alarm-field" style={{ marginBottom: 16 }}>
+                                        <div className="alarm-label">Assign maintenance ticket to</div>
+                                        <select className="alarm-input" value={maintAssignee} onChange={e => setMaintAssignee(e.target.value)}>
+                                            <option value="">Unassigned</option>
+                                            {technicians.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                        </select>
+                                    </div>
                                     {maintNext && (() => {
                                         const days = Math.ceil((new Date(maintNext) - new Date()) / 86400000);
                                         if (days < 0)   return <div style={{ marginBottom: 12 }}><span className="tag tag-red">Maintenance OVERDUE by {Math.abs(days)}d</span></div>;
@@ -681,9 +703,18 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                                 </>
                             )}
 
-                            <button className="btn btn-primary" onClick={saveContract} disabled={savingContract}>
-                                {savingContract ? 'Saving…' : 'Save Contract'}
-                            </button>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                <button className="btn btn-primary" onClick={saveContract} disabled={savingContract}>
+                                    {savingContract ? 'Saving…' : 'Save Contract'}
+                                </button>
+                                {maintEnabled && (
+                                    <button type="button" className="btn btn-ghost" onClick={runMaintenanceNow}
+                                        title="Generate tickets now for any client whose maintenance is due">
+                                        Run maintenance check now
+                                    </button>
+                                )}
+                            </div>
+                            {maintRunMsg && <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 8 }}>{maintRunMsg}</div>}
                         </div>
                     )}
 

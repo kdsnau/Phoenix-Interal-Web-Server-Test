@@ -1,4 +1,7 @@
 const express  = require('express');
+const path     = require('path');
+const fs       = require('fs');
+const multer   = require('multer');
 const pool     = require('../db/pool');
 const { requireRole } = require('../middleware/requireRole');
 const { sendMail }    = require('../config/mailer');
@@ -6,8 +9,24 @@ const { gcalCreate, gcalUpdate, gcalDelete } = require('../config/gcal');
 
 const router = express.Router();
 
+/* ── Site-map image upload setup ──────────────────────────────────────── */
+const SITEMAP_DIR = path.join(__dirname, '../../uploads/tickets');
+fs.mkdirSync(SITEMAP_DIR, { recursive: true });
+const upload = multer({
+    storage: multer.diskStorage({
+        destination: (_req, _file, cb) => cb(null, SITEMAP_DIR),
+        filename: (req, file, cb) => cb(null, `ticket-${req.params.id}-sitemap${path.extname(file.originalname).toLowerCase() || '.jpg'}`),
+    }),
+    limits: { fileSize: 15 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+        const ok = /^image\/(jpeg|png|webp|gif)$/.test(file.mimetype);
+        cb(ok ? null : new Error('Only image files are allowed.'), ok);
+    },
+});
+
 /* ── Schema migrations ────────────────────────────────────────────────── */
 pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS event_end TIMESTAMP`).catch(() => {});
+pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS site_map_file TEXT`).catch(() => {});
 
 /* Inventory items used on a ticket; stock is drawn down when the ticket is completed. */
 pool.query(`
@@ -161,7 +180,7 @@ router.post('/', requireRole('admin'), async (req, res) => {
 /* ── PATCH /api/tickets/:id ───────────────────────────────────────────── */
 router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
     const isTech = req.user.role === 'technician';
-    let { status, event_start, event_end, event_location } = req.body;
+    let { status, event_start, event_end, event_location, title, description, client_id } = req.body;
     const validStatuses = ['open', 'in_progress', 'resolved', 'closed'];
 
     if (status && !validStatuses.includes(status)) {
@@ -190,7 +209,7 @@ router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
                 return res.status(403).json({ error: 'Technicians can only update tickets assigned to them.' });
             }
             if (!status) return res.status(403).json({ error: 'Technicians can only change ticket status.' });
-            event_start = event_end = event_location = undefined;
+            event_start = event_end = event_location = title = description = client_id = undefined;
         }
 
         await pool.query(
@@ -202,15 +221,21 @@ router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
                  event_start    = COALESCE($3::timestamp, event_start),
                  event_end      = COALESCE($4::timestamp, event_end),
                  event_location = COALESCE($5, event_location),
+                 title          = COALESCE($6, title),
+                 description    = COALESCE($7, description),
+                 client_id      = COALESCE($8::int, client_id),
                  source         = CASE WHEN $3 IS NOT NULL THEN 'calendar' ELSE source END,
                  updated_at     = NOW()
-             WHERE id = $6`,
+             WHERE id = $9`,
             [
                 status         || null,
                 assigneeIds,
                 event_start    || null,
                 event_end      || null,
                 event_location || null,
+                title          || null,
+                description ?? null,
+                client_id      || null,
                 req.params.id,
             ]
         );
@@ -351,6 +376,37 @@ router.delete('/:id/items/:itemId', requireRole('technician', 'admin'), async (r
     } catch (err) {
         if (err.status) return res.status(err.status).json({ error: err.message });
         console.error(err); return res.status(500).json({ error: 'Failed to remove item.' });
+    }
+});
+
+/* POST /api/tickets/:id/site-map — upload a site-map image (admin or assigned tech) */
+router.post('/:id/site-map', requireRole('technician', 'admin'), async (req, res) => {
+    try { await assertTicketAccess(req, req.params.id); }
+    catch (e) { return res.status(e.status || 403).json({ error: e.message }); }
+    upload.single('sitemap')(req, res, async (err) => {
+        if (err) return res.status(400).json({ error: err.message });
+        if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+        try {
+            await pool.query('UPDATE service_tickets SET site_map_file = $1, updated_at = NOW() WHERE id = $2', [req.file.filename, req.params.id]);
+            return res.json({ site_map_file: req.file.filename });
+        } catch (e) {
+            console.error(e); return res.status(500).json({ error: 'Failed to save site map.' });
+        }
+    });
+});
+
+/* DELETE /api/tickets/:id/site-map */
+router.delete('/:id/site-map', requireRole('technician', 'admin'), async (req, res) => {
+    try {
+        await assertTicketAccess(req, req.params.id);
+        const r = await pool.query('SELECT site_map_file FROM service_tickets WHERE id = $1', [req.params.id]);
+        const file = r.rows[0]?.site_map_file;
+        await pool.query('UPDATE service_tickets SET site_map_file = NULL WHERE id = $1', [req.params.id]);
+        if (file) fs.unlink(path.join(SITEMAP_DIR, file), () => {});
+        return res.json({ success: true });
+    } catch (err) {
+        if (err.status) return res.status(err.status).json({ error: err.message });
+        console.error(err); return res.status(500).json({ error: 'Failed to remove site map.' });
     }
 });
 

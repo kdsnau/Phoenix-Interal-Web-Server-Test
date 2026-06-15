@@ -339,6 +339,155 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
     );
 }
 
+/* Admin: edit a ticket's details + upload a site-map image. */
+function EditTicketModal({ ticket, technicians, onClose, onUpdated }) {
+    const toLocalInput = ts => ts ? new Date(ts).toISOString().slice(0, 16) : '';
+    const [title,       setTitle]       = useState(ticket.title || '');
+    const [desc,        setDesc]        = useState(ticket.description || '');
+    const [assigneeIds, setAssigneeIds] = useState(ticket.assignee_ids || []);
+    const [eventStart,  setEventStart]  = useState(toLocalInput(ticket.event_start));
+    const [eventEnd,    setEventEnd]    = useState(toLocalInput(ticket.event_end));
+    const [location,    setLocation]    = useState(ticket.event_location || '');
+    const [clients,     setClients]     = useState([]);
+    const [clientId,    setClientId]    = useState(ticket.client_id || '');
+    const [clientName,  setClientName]  = useState('');
+    const [siteMap,     setSiteMap]     = useState(ticket.site_map_file || null);
+    const [uploading,   setUploading]   = useState(false);
+    const [error,       setError]       = useState('');
+    const [saving,      setSaving]      = useState(false);
+
+    useEffect(() => {
+        api.get('/clients').then(r => {
+            setClients(r.data);
+            const c = r.data.find(x => x.id === ticket.client_id);
+            if (c) setClientName(c.name);
+        }).catch(() => {});
+    }, []);
+
+    const save = async (e) => {
+        e.preventDefault();
+        setSaving(true); setError('');
+        try {
+            const { data } = await api.patch(`/tickets/${ticket.id}`, {
+                title,
+                description:    desc,
+                assignee_ids:  assigneeIds,
+                event_start:   eventStart || undefined,
+                event_end:     eventEnd   || undefined,
+                event_location: location,
+                client_id:     clientId || undefined,
+            });
+            onUpdated(data);
+            onClose();
+        } catch (err) {
+            setError(err.response?.data?.error || 'Failed to save ticket.');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const uploadSiteMap = async (file) => {
+        if (!file) return;
+        setUploading(true); setError('');
+        const fd = new FormData(); fd.append('sitemap', file);
+        try {
+            const { data } = await api.post(`/tickets/${ticket.id}/site-map`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+            setSiteMap(data.site_map_file);
+        } catch (err) {
+            setError(err.response?.data?.error || 'Upload failed.');
+        } finally {
+            setUploading(false);
+        }
+    };
+    const removeSiteMap = async () => {
+        await api.delete(`/tickets/${ticket.id}/site-map`).catch(() => {});
+        setSiteMap(null);
+    };
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
+                <div className="modal-title">Edit Ticket #{ticket.id}</div>
+                {error && <div className="error-msg">{error}</div>}
+                <form onSubmit={save}>
+                    <div className="form-group">
+                        <label className="form-label">Client</label>
+                        {clientName ? (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, border: '1px solid var(--border)', borderRadius: 4, padding: '8px 10px' }}>
+                                <span style={{ flex: 1, minWidth: 0 }}>🔗 {clientName}</span>
+                                <button type="button" className="btn btn-ghost" style={{ padding: '2px 8px', fontSize: 12 }}
+                                    onClick={() => { setClientId(''); setClientName(''); }}>✕ unlink</button>
+                            </div>
+                        ) : (
+                            <ClientPicker clients={clients} onPick={c => { setClientId(c.id); setClientName(c.name); }} />
+                        )}
+                    </div>
+                    <div className="form-group">
+                        <label className="form-label">Title *</label>
+                        <input value={title} onChange={e => setTitle(e.target.value)} required />
+                    </div>
+                    <div className="form-group">
+                        <label className="form-label">Description</label>
+                        <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={2} style={{ resize: 'vertical' }} />
+                    </div>
+                    <div className="form-group">
+                        <label className="form-label">Assigned To</label>
+                        <AssigneeMultiSelect technicians={technicians} value={assigneeIds} onChange={setAssigneeIds} />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Entry Date &amp; Time</label>
+                            <input type="datetime-local" value={eventStart} onChange={e => setEventStart(e.target.value)} />
+                        </div>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Departure Time</label>
+                            <input type="datetime-local" value={eventEnd} onChange={e => setEventEnd(e.target.value)} min={eventStart || undefined} />
+                        </div>
+                    </div>
+                    <div className="form-group" style={{ marginTop: 10 }}>
+                        <label className="form-label">Location / Address</label>
+                        <input value={location} onChange={e => setLocation(e.target.value)} placeholder="e.g. 123 Main St, Phoenix" />
+                    </div>
+
+                    {/* Site map image */}
+                    <div style={{ borderTop: '1px solid var(--border)', margin: '14px 0 12px', paddingTop: 12 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>
+                            Site Map
+                        </div>
+                        {siteMap ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                <a href={`/uploads/tickets/${siteMap}`} target="_blank" rel="noopener noreferrer">
+                                    <img src={`/uploads/tickets/${siteMap}`} alt="Site map"
+                                        style={{ maxWidth: '100%', maxHeight: 220, borderRadius: 4, border: '1px solid var(--border)' }} />
+                                </a>
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                    <label className="btn btn-ghost" style={{ fontSize: 12, cursor: 'pointer' }}>
+                                        {uploading ? 'Uploading…' : '↑ Replace'}
+                                        <input type="file" accept="image/*" hidden disabled={uploading}
+                                            onChange={e => uploadSiteMap(e.target.files?.[0])} />
+                                    </label>
+                                    <button type="button" className="btn btn-ghost" style={{ fontSize: 12 }} onClick={removeSiteMap}>Remove</button>
+                                </div>
+                            </div>
+                        ) : (
+                            <label className="btn btn-ghost" style={{ fontSize: 12, cursor: 'pointer' }}>
+                                {uploading ? 'Uploading…' : '↑ Upload site map image'}
+                                <input type="file" accept="image/*" hidden disabled={uploading}
+                                    onChange={e => uploadSiteMap(e.target.files?.[0])} />
+                            </label>
+                        )}
+                    </div>
+
+                    <div className="modal-actions">
+                        <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                        <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save Changes'}</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+}
+
 /* Inventory items used on a ticket. Techs/admins add items, mark them "used",
    and used items draw down stock when the ticket is marked complete. */
 function TicketItemsModal({ ticket, onClose }) {
@@ -468,6 +617,7 @@ export default function Tickets() {
     const [loading,     setLoading]     = useState(true);
     const [showModal,   setShowModal]   = useState(false);
     const [itemsTicket, setItemsTicket] = useState(null);
+    const [editTicket,  setEditTicket]  = useState(null);
 
     const load = async () => {
         try {
@@ -618,6 +768,15 @@ export default function Tickets() {
                                             </button>
                                             {user.role === 'admin' && (
                                                 <button
+                                                    className="btn btn-ghost"
+                                                    style={{ padding: '4px 10px', fontSize: 12 }}
+                                                    onClick={() => setEditTicket(t)}
+                                                >
+                                                    Edit
+                                                </button>
+                                            )}
+                                            {user.role === 'admin' && (
+                                                <button
                                                     className="btn btn-danger"
                                                     style={{ padding: '4px 10px', fontSize: 12 }}
                                                     onClick={() => deleteTicket(t.id)}
@@ -646,6 +805,15 @@ export default function Tickets() {
                 <TicketItemsModal
                     ticket={itemsTicket}
                     onClose={() => setItemsTicket(null)}
+                />
+            )}
+
+            {editTicket && (
+                <EditTicketModal
+                    ticket={editTicket}
+                    technicians={technicians}
+                    onClose={() => setEditTicket(null)}
+                    onUpdated={u => setTickets(prev => prev.map(t => t.id === u.id ? { ...t, ...u } : t))}
                 />
             )}
         </Layout>

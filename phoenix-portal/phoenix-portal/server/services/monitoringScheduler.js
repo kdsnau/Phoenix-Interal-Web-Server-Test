@@ -73,15 +73,16 @@ function ymd(d) {
 /* Auto-create a calendar ticket for each client whose scheduled maintenance is
    due, then advance their next-due date by the chosen interval. */
 async function runMaintenanceCheck() {
+    const names = [];
     try {
         const due = await pool.query(
-            `SELECT id, name, customer_id, site_address, maintenance_frequency, maintenance_next
+            `SELECT id, name, customer_id, site_address, maintenance_frequency, maintenance_next, maintenance_assignee_id
              FROM clients
              WHERE maintenance_enabled = TRUE
                AND maintenance_next IS NOT NULL
                AND maintenance_next <= CURRENT_DATE`
         );
-        if (due.rowCount === 0) return;
+        if (due.rowCount === 0) return { created: 0, names: [] };
 
         const adminRow = await pool.query("SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1");
         const creator  = adminRow.rows[0]?.id || null;
@@ -89,21 +90,36 @@ async function runMaintenanceCheck() {
 
         for (const c of due.rows) {
             const dueDate = c.maintenance_next;
+            const ids     = c.maintenance_assignee_id ? [c.maintenance_assignee_id] : [];
             const tk = await pool.query(
                 `INSERT INTO service_tickets
-                    (title, description, created_by, client_id, source, event_start, event_location)
-                 VALUES ($1, $2, $3, $4, 'calendar', $5, $6)
+                    (title, description, created_by, assigned_to, assignee_ids, client_id, source, event_start, event_location)
+                 VALUES ($1, $2, $3, $4, $5, $6, 'calendar', $7, $8)
                  RETURNING *`,
                 [
                     `Scheduled Maintenance — ${c.name}`,
                     `Recurring ${c.maintenance_frequency || ''} maintenance for ${c.name} (${c.customer_id}).`,
                     creator,
+                    ids[0] || null,
+                    ids,
                     c.id,
                     dueDate,
                     c.site_address || null,
                 ]
             );
             const ticket = tk.rows[0];
+
+            /* Email the assigned tech(s) */
+            if (ids.length > 0) {
+                const techs = await pool.query('SELECT email, name FROM users WHERE id = ANY($1)', [ids]).catch(() => ({ rows: [] }));
+                for (const u of techs.rows) {
+                    await sendMail(
+                        u.email,
+                        `Scheduled maintenance assigned: ${c.name}`,
+                        `Hi ${u.name},\n\nA recurring maintenance ticket has been created and assigned to you.\n\nClient: ${c.name} (${c.customer_id})\nDue: ${ymd(new Date(dueDate))}\nLocation: ${c.site_address || 'N/A'}\n\nPhoenix Security & Technology`
+                    ).catch(err => console.error('Maintenance assign email failed:', err));
+                }
+            }
 
             const gid = await gcalCreate(ticket, null).catch(() => null);
             if (gid) await pool.query('UPDATE service_tickets SET google_event_id = $1 WHERE id = $2', [gid, ticket.id]);
@@ -118,10 +134,13 @@ async function runMaintenanceCheck() {
                 `UPDATE clients SET maintenance_last = $1, maintenance_next = $2 WHERE id = $3`,
                 [ymd(new Date(dueDate)), ymd(next), c.id]
             );
+            names.push(c.name);
         }
-        console.log(`Maintenance scheduler: created ${due.rowCount} ticket(s).`);
+        console.log(`Maintenance scheduler: created ${names.length} ticket(s).`);
+        return { created: names.length, names };
     } catch (err) {
         console.error('Maintenance scheduler error:', err);
+        return { created: names.length, names, error: err.message };
     }
 }
 
@@ -265,4 +284,4 @@ function startScheduler() {
     console.log('Schedulers started — daily 8 AM jobs, weekly fleet digest (Mon), appointment reminders every 15 min');
 }
 
-module.exports = { startScheduler };
+module.exports = { startScheduler, runMaintenanceCheck };

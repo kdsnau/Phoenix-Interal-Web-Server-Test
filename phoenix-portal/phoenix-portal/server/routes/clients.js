@@ -455,7 +455,12 @@ router.get('/:id/site-maps', authenticate, async (req, res) => {
         try {
             folder = await resolveClientFolder(root, c.rows[0]);
         } catch (e) {
-            return res.status(502).json({ error: `Cannot reach the site-map drive at ${root} (${e.code || e.message}).`, root });
+            let who = 'unknown';
+            try { who = require('os').userInfo().username; } catch { /* ignore */ }
+            return res.status(502).json({
+                error: `Cannot reach the site-map drive at ${root} (${e.code || e.message}). The portal process is running as "${who}" — that account must be able to open the share.`,
+                root,
+            });
         }
         if (!folder) return res.json({ root, folder: null, files: [] });
 

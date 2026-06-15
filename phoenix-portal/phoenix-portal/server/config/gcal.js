@@ -18,8 +18,20 @@
 const crypto = require('crypto');
 const fs     = require('fs');
 const path   = require('path');
+const pool   = require('../db/pool');
 
 const TZ = 'America/Phoenix';
+
+/* Last token-exchange failure reason, surfaced by the auth-status diagnostic. */
+let _lastTokenError = null;
+function getTokenError() { return _lastTokenError; }
+function clearTokenCache() { _cache = { token: null, exp: 0 }; }
+
+/* Refresh token can live in app_settings (pasted via the UI) or fall back to .env. */
+async function getStoredRefreshToken() {
+    const r = await pool.query("SELECT value FROM app_settings WHERE key = 'google_refresh_token'").catch(() => ({ rows: [] }));
+    return (r.rows[0]?.value || '').trim() || null;
+}
 
 /* Format a Date as a naive "YYYY-MM-DDTHH:MM:SS" wall-clock string (no timezone
    suffix). Paired with an explicit timeZone field, this avoids the UTC drift you
@@ -36,8 +48,13 @@ let _cache = { token: null, exp: 0 };
 async function getOAuthToken() {
     const clientId     = process.env.GOOGLE_CLIENT_ID;
     const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-    const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
-    if (!clientId || !clientSecret || !refreshToken) return null;
+    const refreshToken = (await getStoredRefreshToken()) || process.env.GOOGLE_REFRESH_TOKEN;
+    if (!clientId || !clientSecret || !refreshToken) {
+        _lastTokenError = !refreshToken
+            ? 'No Google refresh token configured.'
+            : 'Missing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET in the server .env.';
+        return null;
+    }
 
     const resp = await fetch('https://oauth2.googleapis.com/token', {
         method:  'POST',
@@ -51,9 +68,15 @@ async function getOAuthToken() {
     });
     const data = await resp.json();
     if (!resp.ok) {
-        console.error('[gcal] OAuth token error:', data.error_description || data.error);
+        /* invalid_grant = refresh token expired or revoked (common in "Testing" apps
+           where refresh tokens die after 7 days). */
+        _lastTokenError = (data.error === 'invalid_grant')
+            ? 'Refresh token expired or revoked — generate a new one and paste it in (publish the OAuth app to Production to stop the 7-day expiry).'
+            : (data.error_description || data.error || 'OAuth token exchange failed.');
+        console.error('[gcal] OAuth token error:', _lastTokenError);
         return null;
     }
+    _lastTokenError = null;
     return { token: data.access_token, exp: Math.floor(Date.now() / 1000) + (data.expires_in || 3600) };
 }
 
@@ -111,12 +134,8 @@ async function getToken() {
     const now = Math.floor(Date.now() / 1000);
     if (_cache.token && _cache.exp > now + 60) return _cache.token;
 
-    let result = null;
-
-    /* Try OAuth refresh token first */
-    if (process.env.GOOGLE_REFRESH_TOKEN) {
-        result = await getOAuthToken().catch(() => null);
-    }
+    /* Try OAuth refresh token (DB or .env) first */
+    let result = await getOAuthToken().catch(() => null);
 
     /* Fall back to service account */
     if (!result) {
@@ -222,4 +241,4 @@ async function gcalDelete(googleEventId) {
     }
 }
 
-module.exports = { gcalCreate, gcalUpdate, gcalDelete, getToken };
+module.exports = { gcalCreate, gcalUpdate, gcalDelete, getToken, getTokenError, clearTokenCache };

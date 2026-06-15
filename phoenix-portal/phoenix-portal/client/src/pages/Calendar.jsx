@@ -40,10 +40,43 @@ export default function Calendar() {
     const [statusFilter, setStatusFilter]   = useState('active'); /* active | all */
     const [cals,         setCals]           = useState(null);     /* diagnostic list */
     const [calsError,    setCalsError]      = useState('');
+    const [icsUrl,       setIcsUrl]         = useState('');
+    const [icsMsg,       setIcsMsg]         = useState('');
+    const [auth,         setAuth]           = useState(null);    /* { ok, error } */
+    const [refreshTok,   setRefreshTok]     = useState('');
+    const [tokMsg,       setTokMsg]         = useState('');
 
     useEffect(() => {
         loadTickets();
+        if (user.role === 'admin') {
+            api.get('/calendar/ics-url').then(r => setIcsUrl(r.data.url || '')).catch(() => {});
+            api.get('/calendar/auth-status').then(r => setAuth(r.data)).catch(() => setAuth({ ok: false, error: 'Unknown' }));
+        }
     }, []);
+
+    const saveRefreshToken = async () => {
+        setTokMsg('Testing…');
+        try {
+            const { data } = await api.put('/calendar/refresh-token', { token: refreshTok });
+            setAuth(data);
+            setRefreshTok('');
+            setTokMsg(data.ok ? 'Connected ✓' : (data.error || 'Rejected.'));
+        } catch (e) {
+            setTokMsg(e.response?.data?.error || 'Could not save.');
+        }
+    };
+
+    const saveIcsUrl = async () => {
+        setIcsMsg('');
+        try {
+            const { data } = await api.put('/calendar/ics-url', { url: icsUrl });
+            setIcsUrl(data.url || '');
+            setIcsMsg('Saved ✓');
+            setTimeout(() => setIcsMsg(''), 2500);
+        } catch (e) {
+            setIcsMsg(e.response?.data?.error || 'Could not save.');
+        }
+    };
 
     const loadTickets = async () => {
         setLoading(true);
@@ -168,6 +201,46 @@ export default function Calendar() {
             )}
             {syncError && (
                 <div className="ai-error" style={{ marginBottom: 16 }}>{syncError}</div>
+            )}
+
+            {/* ── Admin: Google connection + Official iCal source ─────── */}
+            {tab === 'tickets' && user.role === 'admin' && (
+                <div style={{ border: '1px solid var(--border)', borderRadius: 4, padding: 12, marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {/* Google write/token connection */}
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 12, color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>Google calendar writes:</span>
+                        {auth && (
+                            <span className={`tag ${auth.ok ? 'tag-green' : 'tag-red'}`}>{auth.ok ? 'Connected' : 'Not connected'}</span>
+                        )}
+                        {auth && !auth.ok && auth.error && (
+                            <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{auth.error}</span>
+                        )}
+                    </div>
+                    {auth && !auth.ok && (
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                            <input
+                                value={refreshTok}
+                                onChange={e => setRefreshTok(e.target.value)}
+                                placeholder="Paste a fresh OAuth refresh token…"
+                                style={{ flex: 1, minWidth: 260, fontSize: 12, fontFamily: 'var(--font-mono)' }}
+                            />
+                            <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={saveRefreshToken} disabled={!refreshTok.trim()}>Save &amp; test</button>
+                            {tokMsg && <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{tokMsg}</span>}
+                        </div>
+                    )}
+                    {/* Official calendar iCal feed */}
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 12, color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>Official iCal URL:</span>
+                        <input
+                            value={icsUrl}
+                            onChange={e => setIcsUrl(e.target.value)}
+                            placeholder="https://calendar.google.com/calendar/ical/…/private-…/basic.ics"
+                            style={{ flex: 1, minWidth: 260, fontSize: 12, fontFamily: 'var(--font-mono)' }}
+                        />
+                        <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={saveIcsUrl}>Save</button>
+                        {icsMsg && <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{icsMsg}</span>}
+                    </div>
+                </div>
             )}
 
             {/* ── Calendar-access diagnostic ──────────────────────────── */}

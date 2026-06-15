@@ -2,7 +2,7 @@ const express  = require('express');
 const router   = express.Router();
 const pool     = require('../db/pool');
 const { authenticate, requireRole } = require('../middleware/requireRole');
-const { getToken } = require('../config/gcal');
+const { getToken, getTokenError, clearTokenCache } = require('../config/gcal');
 
 const GCAL = 'https://www.googleapis.com/calendar/v3/calendars';
 
@@ -46,6 +46,25 @@ pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uix_tickets_google_event_id
             ON service_tickets(google_event_id)
             WHERE google_event_id IS NOT NULL`).catch(() => {});
 
+/* Simple key/value store — holds the Official calendar's secret iCal URL. */
+pool.query(`CREATE TABLE IF NOT EXISTS app_settings (
+    key        TEXT PRIMARY KEY,
+    value      TEXT,
+    updated_at TIMESTAMP DEFAULT NOW()
+)`).catch(() => {});
+
+async function getSetting(key) {
+    const r = await pool.query('SELECT value FROM app_settings WHERE key = $1', [key]).catch(() => ({ rows: [] }));
+    return r.rows[0]?.value || null;
+}
+async function setSetting(key, value) {
+    await pool.query(
+        `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+        [key, value]
+    );
+}
+
 /* ── Helpers ──────────────────────────────────────────────────────────── */
 function parseEventStart(e) {
     const raw = e.start?.dateTime || e.start?.date;
@@ -55,6 +74,91 @@ function parseEventStart(e) {
 function parseEventEnd(e) {
     const raw = e.end?.dateTime || e.end?.date;
     return raw ? new Date(raw) : null;
+}
+
+/* ── iCal (.ics) feed support — for private calendars via their secret URL ── */
+const PHX_OFFSET_MIN = -420;   /* America/Phoenix is UTC-7 year-round (no DST) */
+
+function unescapeIcs(s) {
+    return String(s).replace(/\\n/gi, '\n').replace(/\\,/g, ',').replace(/\\;/g, ';').replace(/\\\\/g, '\\');
+}
+
+/* Offset (minutes from UTC) to assume for a floating / TZID-tagged time. We only
+   special-case UTC; everything else defaults to Phoenix since that's the company TZ. */
+function tzOffsetMin(tzid) {
+    if (!tzid) return PHX_OFFSET_MIN;
+    if (/UTC|GMT/i.test(tzid)) return 0;
+    return PHX_OFFSET_MIN;
+}
+
+/* "20260615T140000Z" | "20260615T140000" (+TZID) | "20260615" → absolute Date. */
+function icsToDate(raw, tzid, isDate) {
+    const m = String(raw).match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?/);
+    if (!m) return null;
+    const [, y, mo, d, h, mi, s, z] = m;
+    const Y = +y, Mo = +mo - 1, D = +d, H = +(h || 0), Mi = +(mi || 0), S = +(s || 0);
+    if (isDate || !h) return new Date(Date.UTC(Y, Mo, D, 0, 0, 0) - PHX_OFFSET_MIN * 60000); /* all-day → Phoenix midnight */
+    if (z === 'Z')    return new Date(Date.UTC(Y, Mo, D, H, Mi, S));
+    return new Date(Date.UTC(Y, Mo, D, H, Mi, S) - tzOffsetMin(tzid) * 60000);
+}
+
+/* Parse an iCal document → normalized event records within an upcoming window. */
+function parseIcs(text) {
+    const unfolded = text.replace(/\r\n[ \t]/g, '').replace(/\n[ \t]/g, '');  /* line unfolding */
+    const lines = unfolded.split(/\r\n|\n|\r/);
+    const out = [];
+    const now = Date.now();
+    const from = now - 86400000;            /* include yesterday */
+    const to   = now + 86400000 * 120;      /* ~4 months out */
+    let cur = null;
+
+    for (const line of lines) {
+        if (line === 'BEGIN:VEVENT') { cur = {}; continue; }
+        if (line === 'END:VEVENT') {
+            if (cur && cur.SUMMARY && cur.startRaw) {
+                const start = icsToDate(cur.startRaw, cur.startTzid, cur.startIsDate);
+                const end   = cur.endRaw ? icsToDate(cur.endRaw, cur.endTzid, cur.endIsDate) : null;
+                if (start && start.getTime() >= from && start.getTime() <= to) {
+                    const loc = cur.LOCATION ? unescapeIcs(cur.LOCATION) : null;
+                    const descParts = [];
+                    if (cur.DESCRIPTION) descParts.push(unescapeIcs(cur.DESCRIPTION));
+                    if (loc) descParts.push(`📍 ${loc}`);
+                    out.push({
+                        uid:      cur.UID || `${cur.SUMMARY}-${cur.startRaw}`,
+                        title:    unescapeIcs(cur.SUMMARY),
+                        desc:     descParts.join('\n') || null,
+                        start, end, location: loc,
+                    });
+                }
+            }
+            cur = null; continue;
+        }
+        if (!cur) continue;
+        const idx = line.indexOf(':');
+        if (idx === -1) continue;
+        const left = line.slice(0, idx);
+        const val  = line.slice(idx + 1);
+        const semi = left.indexOf(';');
+        const name = semi === -1 ? left : left.slice(0, semi);
+        const params = semi === -1 ? '' : left.slice(semi + 1);
+        const tzid = (params.match(/TZID=([^;]+)/) || [])[1] || null;
+        const isDate = /VALUE=DATE/.test(params);
+        if      (name === 'UID')         cur.UID = val;
+        else if (name === 'SUMMARY')     cur.SUMMARY = val;
+        else if (name === 'DESCRIPTION') cur.DESCRIPTION = val;
+        else if (name === 'LOCATION')    cur.LOCATION = val;
+        else if (name === 'DTSTART')     { cur.startRaw = val; cur.startTzid = tzid; cur.startIsDate = isDate; }
+        else if (name === 'DTEND')       { cur.endRaw = val;   cur.endTzid = tzid;   cur.endIsDate = isDate; }
+    }
+    return out;
+}
+
+async function fetchIcsEvents(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`iCal feed returned ${r.status} — check that the secret address is correct.`);
+    const text = await r.text();
+    if (!/BEGIN:VCALENDAR/.test(text)) throw new Error('That URL did not return an iCal feed.');
+    return parseIcs(text);
 }
 
 function buildDescription(e) {
@@ -127,40 +231,40 @@ router.get('/list', requireRole('admin'), async (req, res) => {
    else (default) pulls the Ticket Calendar that we push tickets to.          */
 router.post('/sync', requireRole('admin', 'technician'), async (req, res) => {
     const source = req.body?.source === 'official' ? 'official' : 'ticket';
-    const calId  = source === 'official'
-        ? (process.env.GOOGLE_OFFICIAL_CALENDAR_ID || 'phxcalender@gmail.com')
-        : process.env.GOOGLE_CALENDAR_ID;
-    if (!calId) return res.status(503).json({ error: 'Google Calendar not configured.', unconfigured: true });
 
-    /* Fetch upcoming 90 days */
-    const now    = new Date();
-    const future = new Date(now.getFullYear(), now.getMonth() + 3, now.getDate());
-
-    const result = await fetchEvents(calId, now.toISOString(), future.toISOString());
-    if (!result.ok) {
-        let error = result.error;
-        if (result.status === 404 && source === 'official') {
-            error = `Couldn't read the Official Calendar (${calId}). Share it with the portal's Google account, or make it public, then try again.`;
+    /* Build a normalized [{ uid, title, desc, start, end, location }] list from
+       either the Official calendar's iCal feed or the Google Ticket calendar. */
+    let events;
+    if (source === 'official') {
+        const icsUrl = await getSetting('official_ics_url');
+        if (!icsUrl) {
+            return res.status(400).json({ error: 'No iCal URL set. Paste the Official calendar’s secret iCal (.ics) address in the field above, then try again.' });
         }
-        return res.status(result.status).json({ error });
+        try {
+            events = await fetchIcsEvents(icsUrl);
+        } catch (err) {
+            return res.status(502).json({ error: err.message || 'Could not read the iCal feed.' });
+        }
+    } else {
+        const calId = process.env.GOOGLE_CALENDAR_ID;
+        if (!calId) return res.status(503).json({ error: 'Google Calendar not configured.', unconfigured: true });
+        const now    = new Date();
+        const future = new Date(now.getFullYear(), now.getMonth() + 3, now.getDate());
+        const result = await fetchEvents(calId, now.toISOString(), future.toISOString());
+        if (!result.ok) return res.status(result.status).json({ error: result.error });
+        events = result.items
+            .filter(e => e.id && e.summary)
+            .map(e => ({
+                uid: e.id, title: e.summary, desc: buildDescription(e),
+                start: parseEventStart(e), end: parseEventEnd(e), location: e.location || null,
+            }));
     }
-    const gEvents = result.items;
 
     let created = 0, updated = 0;
-
-    for (const e of gEvents) {
-        if (!e.id || !e.summary) continue;   /* skip events with no title */
-
-        const title    = e.summary;
-        const desc     = buildDescription(e);
-        const start    = parseEventStart(e);
-        const end      = parseEventEnd(e);
-        const location = e.location || null;
-
-        /* Check for existing ticket */
+    for (const ev of events) {
+        if (!ev.uid || !ev.title) continue;
         const existing = await pool.query(
-            `SELECT id FROM service_tickets WHERE google_event_id = $1`,
-            [e.id]
+            `SELECT id FROM service_tickets WHERE google_event_id = $1`, [ev.uid]
         ).catch(() => ({ rows: [] }));
 
         if (existing.rows.length > 0) {
@@ -169,22 +273,50 @@ router.post('/sync', requireRole('admin', 'technician'), async (req, res) => {
                 `UPDATE service_tickets
                  SET title = $1, description = $2, event_start = $3, event_end = $4, event_location = $5
                  WHERE google_event_id = $6`,
-                [title, desc, start, end, location, e.id]
+                [ev.title, ev.desc, ev.start, ev.end, ev.location, ev.uid]
             );
             updated++;
         } else {
-            /* Create new ticket */
             await pool.query(
                 `INSERT INTO service_tickets
                  (title, description, created_by, source, google_event_id, event_start, event_end, event_location, status)
                  VALUES ($1, $2, $3, 'calendar', $4, $5, $6, $7, 'open')`,
-                [title, desc, req.user.id, e.id, start, end, location]
+                [ev.title, ev.desc, req.user.id, ev.uid, ev.start, ev.end, ev.location]
             );
             created++;
         }
     }
 
-    res.json({ created, updated, total: gEvents.length, source });
+    res.json({ created, updated, total: events.length, source });
+});
+
+/* ── GET /api/calendar/auth-status — is the Google write/token connection live? */
+router.get('/auth-status', requireRole('admin'), async (req, res) => {
+    const token = await getToken().catch(() => null);
+    res.json({ ok: !!token, error: token ? null : (getTokenError() || 'Not connected to Google.') });
+});
+
+/* ── PUT /api/calendar/refresh-token — paste a fresh OAuth refresh token ──────
+   Saves it (DB), clears the cache, and immediately re-tests the connection.      */
+router.put('/refresh-token', requireRole('admin'), async (req, res) => {
+    const tok = String(req.body?.token || '').trim();
+    await setSetting('google_refresh_token', tok);
+    clearTokenCache();
+    const token = await getToken().catch(() => null);
+    res.json({ ok: !!token, error: token ? null : (getTokenError() || 'Token saved, but Google rejected it.') });
+});
+
+/* ── GET/PUT /api/calendar/ics-url — the Official calendar's secret iCal URL ── */
+router.get('/ics-url', requireRole('admin'), async (req, res) => {
+    res.json({ url: (await getSetting('official_ics_url')) || '' });
+});
+router.put('/ics-url', requireRole('admin'), async (req, res) => {
+    const url = String(req.body?.url || '').trim();
+    if (url && !/^https:\/\//i.test(url)) {
+        return res.status(400).json({ error: 'Enter a full https:// iCal address (or leave blank to clear).' });
+    }
+    await setSetting('official_ics_url', url);
+    res.json({ url });
 });
 
 /* ── GET /api/calendar/oauth/url — consent URL as JSON (admin, header-auth)

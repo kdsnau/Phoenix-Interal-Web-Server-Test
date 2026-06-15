@@ -58,6 +58,10 @@ async function getSetting(key) {
     return r.rows[0]?.value || null;
 }
 async function setSetting(key, value) {
+    /* Self-heal: ensure the table exists even if the startup migration was missed. */
+    await pool.query(`CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY, value TEXT, updated_at TIMESTAMP DEFAULT NOW()
+    )`).catch(() => {});
     await pool.query(
         `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, NOW())
          ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
@@ -292,31 +296,48 @@ router.post('/sync', requireRole('admin', 'technician'), async (req, res) => {
 
 /* ── GET /api/calendar/auth-status — is the Google write/token connection live? */
 router.get('/auth-status', requireRole('admin'), async (req, res) => {
-    const token = await getToken().catch(() => null);
-    res.json({ ok: !!token, error: token ? null : (getTokenError() || 'Not connected to Google.') });
+    try {
+        const token = await getToken().catch(() => null);
+        res.json({ ok: !!token, error: token ? null : (getTokenError() || 'Not connected to Google.') });
+    } catch (err) {
+        res.status(500).json({ ok: false, error: err.message || 'Server error.' });
+    }
 });
 
 /* ── PUT /api/calendar/refresh-token — paste a fresh OAuth refresh token ──────
    Saves it (DB), clears the cache, and immediately re-tests the connection.      */
 router.put('/refresh-token', requireRole('admin'), async (req, res) => {
-    const tok = String(req.body?.token || '').trim();
-    await setSetting('google_refresh_token', tok);
-    clearTokenCache();
-    const token = await getToken().catch(() => null);
-    res.json({ ok: !!token, error: token ? null : (getTokenError() || 'Token saved, but Google rejected it.') });
+    try {
+        const tok = String(req.body?.token || '').trim();
+        await setSetting('google_refresh_token', tok);
+        clearTokenCache();
+        const token = await getToken().catch(() => null);
+        res.json({ ok: !!token, error: token ? null : (getTokenError() || 'Token saved, but Google rejected it.') });
+    } catch (err) {
+        console.error('refresh-token error:', err.message);
+        res.status(500).json({ ok: false, error: err.message || 'Server error.' });
+    }
 });
 
 /* ── GET/PUT /api/calendar/ics-url — the Official calendar's secret iCal URL ── */
 router.get('/ics-url', requireRole('admin'), async (req, res) => {
-    res.json({ url: (await getSetting('official_ics_url')) || '' });
+    try {
+        res.json({ url: (await getSetting('official_ics_url')) || '' });
+    } catch (err) {
+        res.status(500).json({ error: err.message || 'Server error.' });
+    }
 });
 router.put('/ics-url', requireRole('admin'), async (req, res) => {
-    const url = String(req.body?.url || '').trim();
-    if (url && !/^https:\/\//i.test(url)) {
-        return res.status(400).json({ error: 'Enter a full https:// iCal address (or leave blank to clear).' });
+    try {
+        const url = String(req.body?.url || '').trim();
+        if (url && !/^https:\/\//i.test(url)) {
+            return res.status(400).json({ error: 'Enter a full https:// iCal address (or leave blank to clear).' });
+        }
+        await setSetting('official_ics_url', url);
+        res.json({ url });
+    } catch (err) {
+        res.status(500).json({ error: err.message || 'Server error.' });
     }
-    await setSetting('official_ics_url', url);
-    res.json({ url });
 });
 
 /* ── GET /api/calendar/oauth/url — consent URL as JSON (admin, header-auth)

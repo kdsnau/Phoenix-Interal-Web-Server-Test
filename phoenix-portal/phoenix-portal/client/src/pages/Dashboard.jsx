@@ -1,9 +1,65 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import PageHelp from '../components/PageHelp';
 import './Dashboard.css';
+
+const SEV = {
+    overdue: { tag: 'tag-red',    label: 'Overdue' },
+    soon:    { tag: 'tag-yellow', label: 'Soon'    },
+    info:    { tag: 'tag-dim',    label: 'Info'    },
+};
+
+function fmtReminderDate(ts) {
+    if (!ts) return null;
+    return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+/* Role-aware to-do list for the signed-in user. */
+function RemindersSection({ data }) {
+    const list = data?.reminders || [];
+    const c = data?.counts || { overdue: 0, soon: 0, info: 0 };
+    const shown = list.slice(0, 12);
+    return (
+        <div className="dash-alerts" style={{ marginBottom: 24 }}>
+            <div className="dash-section-label">
+                Reminders
+                {c.overdue > 0 && <span className="tag tag-red"    style={{ marginLeft: 8 }}>{c.overdue} overdue</span>}
+                {c.soon    > 0 && <span className="tag tag-yellow" style={{ marginLeft: 6 }}>{c.soon} soon</span>}
+            </div>
+            {list.length === 0 ? (
+                <div className="dash-alert-clear" style={{ padding: '14px 0' }}>✓ You're all caught up — no reminders.</div>
+            ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {shown.map((r, i) => (
+                        <Link key={i} to={r.link} style={{
+                            display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px',
+                            background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 4,
+                        }}>
+                            <span className={`tag ${SEV[r.severity]?.tag || 'tag-dim'}`} style={{ flexShrink: 0 }}>
+                                {SEV[r.severity]?.label || r.severity}
+                            </span>
+                            <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase', flexShrink: 0, width: 92 }}>
+                                {r.category}
+                            </span>
+                            <span style={{ color: 'var(--text-hi)', fontWeight: 500, flexShrink: 0 }}>{r.title}</span>
+                            <span style={{ fontSize: 12, color: 'var(--text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {r.detail}{r.date ? ` · ${fmtReminderDate(r.date)}` : ''}
+                            </span>
+                        </Link>
+                    ))}
+                    {list.length > shown.length && (
+                        <div style={{ fontSize: 12, color: 'var(--text-dim)', paddingLeft: 4 }}>
+                            +{list.length - shown.length} more
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
 
 /* -----------------------------------------------------------------------
    Helpers
@@ -202,6 +258,7 @@ export default function Dashboard() {
     const { user } = useAuth();
     const [roleData,   setRoleData]   = useState(null);
     const [alerts,     setAlerts]     = useState(null);
+    const [reminders,  setReminders]  = useState(null);
     const [loading,    setLoading]    = useState(true);
     const [posts,      setPosts]      = useState([]);
     const [boardOpen,  setBoardOpen]  = useState(false);
@@ -210,15 +267,19 @@ export default function Dashboard() {
     useEffect(() => {
         async function load() {
             try {
-                const alertsFetch = api.get('/admin/alerts').catch(() => ({ data: null }));
+                const alertsFetch    = api.get('/admin/alerts').catch(() => ({ data: null }));
+                const remindersFetch = api.get('/reminders').catch(() => ({ data: null }));
                 let roleFetch;
                 if      (user.role === 'admin')      roleFetch = api.get('/admin/stats');
                 else if (user.role === 'technician') roleFetch = api.get('/tickets');
                 else                                 roleFetch = api.get('/financials/summary');
 
-                const [alertsRes, roleRes] = await Promise.all([alertsFetch, roleFetch.catch(() => ({ data: null }))]);
+                const [alertsRes, roleRes, remRes] = await Promise.all([
+                    alertsFetch, roleFetch.catch(() => ({ data: null })), remindersFetch,
+                ]);
                 setAlerts(alertsRes.data);
                 setRoleData(roleRes.data);
+                setReminders(remRes.data);
             } catch (e) {
                 console.error(e);
             } finally {
@@ -267,6 +328,9 @@ export default function Dashboard() {
                     {user.role === 'admin'      && roleData && <AdminStats      stats={roleData}   mrr={alerts?.mrr || 0} openTickets={alerts?.openTickets || 0} />}
                     {user.role === 'technician' && roleData && <TechnicianStats tickets={roleData} />}
                     {user.role === 'accounting' && roleData && <AccountingStats summary={roleData} mrr={alerts?.mrr || 0} />}
+
+                    {/* Reminders — role-aware to-do list */}
+                    {reminders && <RemindersSection data={reminders} />}
 
                     {/* Alerts section */}
                     {alerts && (

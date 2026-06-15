@@ -26,6 +26,8 @@ pool.query(`
 /* Multiple technicians per ticket. assigned_to stays in sync with assignee_ids[1]
    for backward compatibility (calendar label, legacy reads). */
 pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS assignee_ids INTEGER[] NOT NULL DEFAULT '{}'`).catch(() => {});
+/* Tracks whether the "~1 hour before" appointment reminder email has gone out. */
+pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS reminder_sent BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
 pool.query(`UPDATE service_tickets SET assignee_ids = ARRAY[assigned_to]
             WHERE assigned_to IS NOT NULL AND (assignee_ids IS NULL OR assignee_ids = '{}')`).catch(() => {});
 
@@ -125,13 +127,27 @@ router.post('/', requireRole('admin'), async (req, res) => {
             }
         }
 
+        const sched = event_start ? new Date(event_start).toLocaleString('en-US') : 'Not set';
+
+        /* Notify the assigned technician(s) — they've got work to do. */
+        if (ids.length > 0) {
+            const techs = await pool.query('SELECT email, name FROM users WHERE id = ANY($1)', [ids]).catch(() => ({ rows: [] }));
+            for (const t of techs.rows) {
+                await sendMail(
+                    t.email,
+                    `You've been assigned a ticket: ${title}`,
+                    `Hi ${t.name},\n\nYou have been assigned a service ticket.\n\nTitle: ${title}\nDescription: ${description || 'N/A'}\nScheduled: ${sched}\nLocation: ${event_location || 'N/A'}\nAssigned by: ${req.user.name}\n\nPhoenix Security & Technology`
+                ).catch(err => console.error('Tech assign email failed:', err));
+            }
+        }
+
         /* Notify admins */
         const admins = await pool.query("SELECT email FROM users WHERE role = 'admin'");
         for (const admin of admins.rows) {
             await sendMail(
                 admin.email,
                 `New Ticket: ${title}`,
-                `A new service ticket was created.\n\nTitle: ${title}\nDescription: ${description || 'N/A'}\nScheduled: ${event_start || 'Not set'}\nLocation: ${event_location || 'N/A'}\nCreated by: ${req.user.name}`
+                `A new service ticket was created.\n\nTitle: ${title}\nDescription: ${description || 'N/A'}\nScheduled: ${sched}\nLocation: ${event_location || 'N/A'}\nCreated by: ${req.user.name}`
             ).catch(err => console.error('Ticket notify failed:', err));
         }
 
@@ -182,6 +198,7 @@ router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
              SET status         = COALESCE($1, status),
                  assignee_ids   = COALESCE($2::int[], assignee_ids),
                  assigned_to    = CASE WHEN $2::int[] IS NOT NULL THEN ($2::int[])[1] ELSE assigned_to END,
+                 reminder_sent  = CASE WHEN $3 IS NOT NULL THEN FALSE ELSE reminder_sent END,
                  event_start    = COALESCE($3::timestamp, event_start),
                  event_end      = COALESCE($4::timestamp, event_end),
                  event_location = COALESCE($5, event_location),

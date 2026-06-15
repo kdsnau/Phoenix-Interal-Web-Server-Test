@@ -125,10 +125,87 @@ async function runMaintenanceCheck() {
     }
 }
 
+/* Email the assigned tech(s) ~1 hour before a scheduled ticket starts.
+   event_start is naive Phoenix wall-clock, so AT TIME ZONE makes the window
+   comparison timezone-correct regardless of the server clock. */
+async function runAppointmentReminders() {
+    try {
+        const due = await pool.query(
+            `SELECT id, title, event_start, event_location, assignee_ids
+             FROM service_tickets
+             WHERE event_start IS NOT NULL
+               AND reminder_sent = FALSE
+               AND status NOT IN ('resolved', 'closed')
+               AND assignee_ids <> '{}'
+               AND (event_start AT TIME ZONE 'America/Phoenix') >  NOW()
+               AND (event_start AT TIME ZONE 'America/Phoenix') <= NOW() + INTERVAL '60 minutes'`
+        );
+        if (due.rowCount === 0) return;
+
+        for (const t of due.rows) {
+            const techs = await pool.query('SELECT email, name FROM users WHERE id = ANY($1)', [t.assignee_ids]).catch(() => ({ rows: [] }));
+            const when  = new Date(t.event_start).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+            for (const u of techs.rows) {
+                await sendMail(
+                    u.email,
+                    `Reminder: "${t.title}" starts soon`,
+                    `Hi ${u.name},\n\nYour scheduled ticket starts within the hour.\n\nTitle: ${t.title}\nTime: ${when}\nLocation: ${t.event_location || 'N/A'}\n\nPhoenix Security & Technology`
+                ).catch(err => console.error('Appointment reminder email failed:', err));
+            }
+            await pool.query('UPDATE service_tickets SET reminder_sent = TRUE WHERE id = $1', [t.id]);
+        }
+        console.log(`Appointment reminders: notified for ${due.rowCount} ticket(s).`);
+    } catch (err) {
+        console.error('Appointment reminder error:', err);
+    }
+}
+
+/* Daily digest of renewal / billing reminders → accounting + admin. */
+async function runReminderDigest() {
+    try {
+        const soon = `CURRENT_DATE + INTERVAL '30 days'`;
+        const q = sql => pool.query(sql).catch(() => ({ rows: [] }));
+        const [contracts, permits, inspections, maint, noBill, overdue] = await Promise.all([
+            q(`SELECT name, (contract_end::date    - CURRENT_DATE)::int AS days FROM clients WHERE contract_end    IS NOT NULL AND contract_end    <= ${soon} ORDER BY contract_end`),
+            q(`SELECT name, (permit_expires::date  - CURRENT_DATE)::int AS days FROM clients WHERE permit_expires  IS NOT NULL AND permit_expires  <= ${soon} ORDER BY permit_expires`),
+            q(`SELECT name, (next_inspection::date - CURRENT_DATE)::int AS days FROM clients WHERE next_inspection IS NOT NULL AND next_inspection <= ${soon} ORDER BY next_inspection`),
+            q(`SELECT name, (maintenance_next::date - CURRENT_DATE)::int AS days FROM clients WHERE maintenance_enabled = TRUE AND maintenance_next IS NOT NULL AND maintenance_next <= CURRENT_DATE + INTERVAL '14 days' ORDER BY maintenance_next`),
+            q(`SELECT name FROM clients WHERE monitoring_enabled = TRUE AND (billing_amount IS NULL OR billing_amount = 0) ORDER BY name`),
+            q(`SELECT title FROM service_tickets WHERE event_end IS NOT NULL AND (event_end AT TIME ZONE 'America/Phoenix') < NOW() AND status NOT IN ('resolved','closed') ORDER BY event_end`),
+        ]);
+
+        const fmtDays = d => d < 0 ? `${Math.abs(d)}d overdue` : (d === 0 ? 'today' : `in ${d}d`);
+        const sections = [];
+        const addSec = (title, rows, fmt) => { if (rows.length) sections.push(`${title}:\n` + rows.map(fmt).join('\n')); };
+        addSec('Contracts ending',                  contracts.rows,   c => `  • ${c.name} — ${fmtDays(c.days)}`);
+        addSec('Permits expiring',                  permits.rows,     c => `  • ${c.name} — ${fmtDays(c.days)}`);
+        addSec('Inspections due',                   inspections.rows, c => `  • ${c.name} — ${fmtDays(c.days)}`);
+        addSec('Maintenance due',                   maint.rows,       c => `  • ${c.name} — ${fmtDays(c.days)}`);
+        addSec('Monitored but no billing amount',   noBill.rows,      c => `  • ${c.name}`);
+        addSec('Tickets past departure, not closed', overdue.rows,    t => `  • ${t.title}`);
+
+        if (sections.length === 0) return;   /* nothing to nag about today */
+
+        const recips = await pool.query("SELECT email FROM users WHERE role IN ('accounting', 'admin')");
+        const to = recips.rows.map(r => r.email);
+        if (to.length === 0) return;
+
+        const body = `Daily reminders — ${new Date().toLocaleDateString('en-US', { dateStyle: 'full' })}\n\n`
+                   + sections.join('\n\n')
+                   + `\n\n— Phoenix Security & Technology portal`;
+        await sendMail(to, 'Phoenix SecTech — Daily Reminders', body).catch(err => console.error('Reminder digest email failed:', err));
+        console.log(`Reminder digest sent to ${to.length} recipient(s).`);
+    } catch (err) {
+        console.error('Reminder digest error:', err);
+    }
+}
+
 function startScheduler() {
-    cron.schedule('0 8 * * *', runMonitoringCheck);
-    cron.schedule('0 8 * * *', runMaintenanceCheck);
-    console.log('Schedulers started — monitoring + maintenance run daily at 8:00 AM');
+    cron.schedule('0 8 * * *',    runMonitoringCheck);
+    cron.schedule('0 8 * * *',    runMaintenanceCheck);
+    cron.schedule('0 8 * * *',    runReminderDigest);
+    cron.schedule('*/15 * * * *', runAppointmentReminders);
+    console.log('Schedulers started — monitoring/maintenance/digest daily 8 AM; appointment reminders every 15 min');
 }
 
 module.exports = { startScheduler };

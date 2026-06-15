@@ -38,6 +38,8 @@ export default function Calendar() {
     const [syncResult,   setSyncResult]     = useState(null);
     const [syncError,    setSyncError]      = useState('');
     const [statusFilter, setStatusFilter]   = useState('active'); /* active | all */
+    const [cals,         setCals]           = useState(null);     /* diagnostic list */
+    const [calsError,    setCalsError]      = useState('');
 
     useEffect(() => {
         loadTickets();
@@ -69,6 +71,17 @@ export default function Calendar() {
             setSyncError(msg);
         } finally {
             setSyncing(false);
+        }
+    };
+
+    const listCals = async () => {
+        setCals(null);
+        setCalsError('');
+        try {
+            const { data } = await api.get('/calendar/list');
+            setCals(data);
+        } catch (e) {
+            setCalsError(e.response?.data?.error || 'Could not list calendars.');
         }
     };
 
@@ -109,6 +122,11 @@ export default function Calendar() {
                         >
                             {syncing ? 'Syncing…' : '↻ Sync from Google'}
                         </button>
+                        {user.role === 'admin' && (
+                            <button className="btn btn-ghost" onClick={listCals} title="Show which calendars the portal's Google account can read">
+                                ⚙ Diagnose access
+                            </button>
+                        )}
                     </div>
                 )}
             </div>
@@ -135,6 +153,30 @@ export default function Calendar() {
             )}
             {syncError && (
                 <div className="ai-error" style={{ marginBottom: 16 }}>{syncError}</div>
+            )}
+
+            {/* ── Calendar-access diagnostic ──────────────────────────── */}
+            {calsError && <div className="ai-error" style={{ marginBottom: 16 }}>{calsError}</div>}
+            {cals && (
+                <div className="table-card" style={{ marginBottom: 16 }}>
+                    <div style={{ padding: '10px 14px', fontSize: 12, color: 'var(--text-dim)', borderBottom: '1px solid var(--border)' }}>
+                        Calendars the portal's Google account can read ({cals.length}). To pull from a calendar it must appear
+                        here with access <strong>reader / writer / owner</strong> (not "freeBusyReader").
+                    </div>
+                    <table className="data-table">
+                        <thead><tr><th>Calendar</th><th>ID</th><th>Access</th></tr></thead>
+                        <tbody>
+                            {cals.length === 0 && <tr><td colSpan={3} style={{ color: 'var(--text-dim)' }}>None — the account can't see any calendars.</td></tr>}
+                            {cals.map(c => (
+                                <tr key={c.id}>
+                                    <td>{c.summary}{c.primary ? ' (primary)' : ''}</td>
+                                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 11, wordBreak: 'break-all' }}>{c.id}</td>
+                                    <td><span className={`tag ${['owner','writer','reader'].includes(c.accessRole) ? 'tag-green' : 'tag-yellow'}`}>{c.accessRole}</span></td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
             )}
 
             {/* ── Scheduled Tickets tab ───────────────────────────────── */}

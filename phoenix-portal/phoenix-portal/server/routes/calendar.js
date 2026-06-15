@@ -97,6 +97,31 @@ router.get('/events', authenticate, async (req, res) => {
     }
 });
 
+/* ── GET /api/calendar/list — calendars the portal's Google account can read.
+   Diagnostic: shows exactly what the OAuth token can see + the access level,
+   so we can tell whether the Official calendar is shared correctly.          */
+router.get('/list', requireRole('admin'), async (req, res) => {
+    const token = await getToken().catch(() => null);
+    if (!token) {
+        return res.status(503).json({
+            error: 'No Google OAuth token is configured — the portal can only read public calendars via the API key. Run /api/calendar/oauth/start to connect an account.',
+        });
+    }
+    try {
+        const r = await fetch('https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=250&showHidden=true', {
+            headers: { Authorization: `Bearer ${token}` },
+        });
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) return res.status(r.status).json({ error: body?.error?.message || `Google API error ${r.status}` });
+        const cals = (body.items || []).map(c => ({
+            id: c.id, summary: c.summary, accessRole: c.accessRole, primary: !!c.primary,
+        }));
+        return res.json(cals);
+    } catch {
+        return res.status(502).json({ error: 'Failed to reach Google Calendar API.' });
+    }
+});
+
 /* ── POST /api/calendar/sync  — pull events → upsert as tickets ──────────
    Body { source }: 'official' pulls the company Official Calendar; anything
    else (default) pulls the Ticket Calendar that we push tickets to.          */

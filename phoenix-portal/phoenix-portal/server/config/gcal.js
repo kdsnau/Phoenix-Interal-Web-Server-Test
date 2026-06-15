@@ -222,4 +222,4 @@ async function gcalDelete(googleEventId) {
     }
 }
 
-module.exports = { gcalCreate, gcalUpdate, gcalDelete };
+module.exports = { gcalCreate, gcalUpdate, gcalDelete, getToken };

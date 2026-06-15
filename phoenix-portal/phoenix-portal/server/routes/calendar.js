@@ -2,8 +2,38 @@ const express  = require('express');
 const router   = express.Router();
 const pool     = require('../db/pool');
 const { authenticate, requireRole } = require('../middleware/requireRole');
+const { getToken } = require('../config/gcal');
 
 const GCAL = 'https://www.googleapis.com/calendar/v3/calendars';
+
+/* Read a calendar's events. Prefers the OAuth token (can read the account's own
+   private calendars, e.g. the Official one), and falls back to the public API key
+   for calendars shared publicly. Returns { ok, items } or { ok:false, status, error }. */
+async function fetchEvents(calId, timeMin, timeMax) {
+    const base   = `${GCAL}/${encodeURIComponent(calId)}/events`;
+    const params = `?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`
+                 + `&orderBy=startTime&singleEvents=true&maxResults=250`;
+    const key    = process.env.GOOGLE_API_KEY;
+
+    const attempts = [];
+    const token = await getToken().catch(() => null);
+    if (token) attempts.push({ url: base + params, opts: { headers: { Authorization: `Bearer ${token}` } } });
+    if (key)   attempts.push({ url: base + params + `&key=${key}`, opts: {} });
+    if (attempts.length === 0) return { ok: false, status: 503, error: 'Google Calendar not configured.' };
+
+    let last = { ok: false, status: 500, error: 'Google API error' };
+    for (const a of attempts) {
+        try {
+            const r    = await fetch(a.url, a.opts);
+            const body = await r.json().catch(() => ({}));
+            if (r.ok) return { ok: true, items: body.items || [] };
+            last = { ok: false, status: r.status, error: body?.error?.message || `Google API error ${r.status}` };
+        } catch {
+            last = { ok: false, status: 502, error: 'Failed to reach Google Calendar API.' };
+        }
+    }
+    return last;
+}
 
 /* ── Schema migrations ────────────────────────────────────────────────── */
 pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS source          TEXT      DEFAULT 'manual'`).catch(() => {});
@@ -75,30 +105,21 @@ router.post('/sync', requireRole('admin', 'technician'), async (req, res) => {
     const calId  = source === 'official'
         ? (process.env.GOOGLE_OFFICIAL_CALENDAR_ID || 'phxcalender@gmail.com')
         : process.env.GOOGLE_CALENDAR_ID;
-    const key    = process.env.GOOGLE_API_KEY;
-    if (!calId || !key) return res.status(503).json({ error: 'Google Calendar not configured. Add GOOGLE_CALENDAR_ID and GOOGLE_API_KEY to server .env.', unconfigured: true });
+    if (!calId) return res.status(503).json({ error: 'Google Calendar not configured.', unconfigured: true });
 
     /* Fetch upcoming 90 days */
     const now    = new Date();
     const future = new Date(now.getFullYear(), now.getMonth() + 3, now.getDate());
 
-    const url = [
-        `${GCAL}/${encodeURIComponent(calId)}/events`,
-        `?key=${key}`,
-        `&timeMin=${encodeURIComponent(now.toISOString())}`,
-        `&timeMax=${encodeURIComponent(future.toISOString())}`,
-        `&orderBy=startTime&singleEvents=true&maxResults=250`,
-    ].join('');
-
-    let gEvents;
-    try {
-        const gRes = await fetch(url);
-        const body = await gRes.json();
-        if (!gRes.ok) return res.status(gRes.status).json({ error: body?.error?.message || 'Google API error' });
-        gEvents = body.items || [];
-    } catch (err) {
-        return res.status(500).json({ error: 'Failed to reach Google Calendar API.' });
+    const result = await fetchEvents(calId, now.toISOString(), future.toISOString());
+    if (!result.ok) {
+        let error = result.error;
+        if (result.status === 404 && source === 'official') {
+            error = `Couldn't read the Official Calendar (${calId}). Share it with the portal's Google account, or make it public, then try again.`;
+        }
+        return res.status(result.status).json({ error });
     }
+    const gEvents = result.items;
 
     let created = 0, updated = 0;
 

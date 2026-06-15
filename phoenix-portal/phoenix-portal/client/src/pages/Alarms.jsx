@@ -946,7 +946,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                                     <div className="alarm-label" style={{ marginBottom: 6 }}>Network drive root (admin)</div>
                                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                                         <input className="alarm-input" value={smRoot} onChange={e => setSmRoot(e.target.value)}
-                                            placeholder="\\PHX-Security\SiteMaps"
+                                            placeholder="\\PHX-Security\Customers\RFQ's"
                                             style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12 }} />
                                         <button className="btn btn-primary" onClick={saveSmRoot}>Save</button>
                                     </div>

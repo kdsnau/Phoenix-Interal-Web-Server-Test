@@ -15,7 +15,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
    per client under a network share that Saturn can reach. The root is admin-
    configurable (app_settings 'sitemap_root'); falls back to env / a default. */
 const SITEMAP_ROOT_KEY     = 'sitemap_root';
-const DEFAULT_SITEMAP_ROOT = process.env.SITEMAP_ROOT || '\\\\PHX-Security';
+const DEFAULT_SITEMAP_ROOT = process.env.SITEMAP_ROOT || "\\\\PHX-Security\\Customers\\RFQ's";
 
 async function getSetting(key) {
     try {

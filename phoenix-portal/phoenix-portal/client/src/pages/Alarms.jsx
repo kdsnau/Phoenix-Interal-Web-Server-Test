@@ -411,11 +411,12 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
     const [newTicket, setNewTicket] = useState({ title: '', description: '', assigned_to: '' });
     const [togglingMon, setTogglingMon] = useState(false);
     const [monEnabled, setMonEnabled] = useState(client.monitoring_enabled);
-    /* Site maps (network-drive DWG files) */
-    const [siteMaps,        setSiteMaps]        = useState(null);   // { root, folder, files } | { error, root }
+    /* Site maps — pulled from Slack (default) or a mounted network drive */
+    const [siteMaps,        setSiteMaps]        = useState(null);   // { source, files, ... } | { error }
     const [siteMapsLoading, setSiteMapsLoading] = useState(false);
-    const [smRoot,          setSmRoot]          = useState('');     // admin: editable drive root
-    const [smRootMsg,       setSmRootMsg]       = useState('');
+    const [smSearch,        setSmSearch]        = useState('');     // slack: live filter
+    const [smCfg,           setSmCfg]           = useState(null);   // admin: { source, root, slack_channel }
+    const [smMsg,           setSmMsg]           = useState('');
 
     useEffect(() => {
         if (tab === 'transactions' && canBilling) {
@@ -430,14 +431,15 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
     useEffect(() => {
         if (tab !== 'sitemap') return;
         setSiteMapsLoading(true);
+        setSmSearch(client.name || '');
         api.get(`/clients/${client.id}/site-maps`)
             .then(r => setSiteMaps(r.data))
-            .catch(e => setSiteMaps({ error: e.response?.data?.error || 'Failed to load site maps.', root: e.response?.data?.root }))
+            .catch(e => setSiteMaps({ source: e.response?.data?.source, error: e.response?.data?.error || 'Failed to load site maps.' }))
             .finally(() => setSiteMapsLoading(false));
         if (user.role === 'admin') {
-            api.get('/clients/site-map-root').then(r => setSmRoot(r.data.root)).catch(() => {});
+            api.get('/clients/site-map-config').then(r => setSmCfg(r.data)).catch(() => {});
         }
-    }, [tab, client.id, user.role]);
+    }, [tab, client.id, client.name, user.role]);
 
     async function saveNotes() {
         setSavingNotes(true);
@@ -520,14 +522,11 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
         onRefresh();
     }
 
-    /* DWG files can't render in a browser — fetch as a blob (sends the auth
-       header) and trigger a download. */
+    /* Site-map files (DWG, or whatever's posted in Slack) can't render inline —
+       fetch as a blob (sends the auth header) and trigger a download. */
     async function downloadSiteMap(file) {
         try {
-            const res = await api.get(`/clients/${client.id}/site-maps/download`, {
-                params: { file: file.rel },
-                responseType: 'blob',
-            });
+            const res = await api.get(`/clients/${client.id}/site-maps/download?${file.dl}`, { responseType: 'blob' });
             const url = URL.createObjectURL(res.data);
             const a = document.createElement('a');
             a.href = url; a.download = file.name;
@@ -538,16 +537,20 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
         }
     }
 
-    async function saveSmRoot() {
-        setSmRootMsg('Saving…');
+    async function saveSmCfg() {
+        setSmMsg('Saving…');
         try {
-            await api.put('/clients/site-map-root', { root: smRoot });
+            await api.put('/clients/site-map-config', {
+                source:        smCfg.source,
+                root:          smCfg.root,
+                slack_channel: smCfg.slack_channel,
+            });
             setSiteMapsLoading(true);
             const r = await api.get(`/clients/${client.id}/site-maps`);
             setSiteMaps(r.data);
-            setSmRootMsg('Saved.');
+            setSmMsg('Saved.');
         } catch (e) {
-            setSmRootMsg(e.response?.data?.error || 'Save failed.');
+            setSmMsg(e.response?.data?.error || 'Save failed.');
         } finally {
             setSiteMapsLoading(false);
         }
@@ -912,47 +915,74 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                     {tab === 'sitemap' && (
                         <div className="alarm-section">
                             <div className="alarm-label" style={{ marginBottom: 8, fontWeight: 600 }}>
-                                Site Maps (DWG) — pulled from the network drive
+                                Site Maps {siteMaps?.source === 'drive' ? '(DWG) — from the network drive' : '— from Slack'}
                             </div>
+
+                            {siteMaps?.source === 'slack' && !siteMapsLoading && !siteMaps?.error && (
+                                <input className="alarm-input" value={smSearch} onChange={e => setSmSearch(e.target.value)}
+                                    placeholder="Filter files…" style={{ width: '100%', marginBottom: 10 }} />
+                            )}
 
                             {siteMapsLoading ? (
                                 <div className="alarm-empty">Loading…</div>
                             ) : siteMaps?.error ? (
                                 <div className="error-msg" style={{ marginBottom: 10 }}>{siteMaps.error}</div>
-                            ) : siteMaps?.files?.length ? (
-                                <table className="data-table">
-                                    <thead><tr><th>File</th><th>Size</th><th>Modified</th><th></th></tr></thead>
-                                    <tbody>
-                                        {siteMaps.files.map(f => (
-                                            <tr key={f.rel}>
-                                                <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{f.rel}</td>
-                                                <td style={{ color: 'var(--text-dim)', fontSize: 12 }}>{fmtSize(f.size)}</td>
-                                                <td style={{ color: 'var(--text-dim)', fontSize: 12 }}>{f.modified ? new Date(f.modified).toLocaleDateString() : ''}</td>
-                                                <td><button className="btn btn-ghost" style={{ padding: '2px 10px', fontSize: 12 }} onClick={() => downloadSiteMap(f)}>Download</button></td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            ) : (
-                                <div className="alarm-empty">
-                                    {siteMaps?.folder
-                                        ? 'No DWG files found in this client’s folder.'
-                                        : `No matching site-map folder found for this client${siteMaps?.root ? ` on ${siteMaps.root}` : ''}.`}
-                                </div>
-                            )}
+                            ) : (() => {
+                                const all = siteMaps?.files || [];
+                                const files = (siteMaps?.source === 'slack' && smSearch.trim())
+                                    ? all.filter(f => {
+                                        const s = smSearch.toLowerCase();
+                                        return f.name.toLowerCase().includes(s) || (f.title || '').toLowerCase().includes(s);
+                                    })
+                                    : all;
+                                if (!files.length) {
+                                    return (
+                                        <div className="alarm-empty">
+                                            {siteMaps?.source === 'slack'
+                                                ? (all.length ? 'No files match your filter — clear it to see everything in the channel.' : 'No files posted in the Slack channel yet.')
+                                                : (siteMaps?.folder ? 'No DWG files found in this client’s folder.' : `No matching site-map folder found for this client${siteMaps?.root ? ` on ${siteMaps.root}` : ''}.`)}
+                                        </div>
+                                    );
+                                }
+                                return (
+                                    <table className="data-table">
+                                        <thead><tr><th>File</th><th>Size</th><th>Modified</th><th></th></tr></thead>
+                                        <tbody>
+                                            {files.map(f => (
+                                                <tr key={f.key}>
+                                                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{f.name}</td>
+                                                    <td style={{ color: 'var(--text-dim)', fontSize: 12 }}>{fmtSize(f.size)}</td>
+                                                    <td style={{ color: 'var(--text-dim)', fontSize: 12 }}>{f.modified ? new Date(f.modified).toLocaleDateString() : ''}</td>
+                                                    <td><button className="btn btn-ghost" style={{ padding: '2px 10px', fontSize: 12 }} onClick={() => downloadSiteMap(f)}>Download</button></td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                );
+                            })()}
 
-                            {user.role === 'admin' && (
+                            {user.role === 'admin' && smCfg && (
                                 <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 12 }}>
-                                    <div className="alarm-label" style={{ marginBottom: 6 }}>Network drive root (admin)</div>
-                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                        <input className="alarm-input" value={smRoot} onChange={e => setSmRoot(e.target.value)}
-                                            placeholder="\\PHX-Security\Customers\RFQ's"
-                                            style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12 }} />
-                                        <button className="btn btn-primary" onClick={saveSmRoot}>Save</button>
+                                    <div className="alarm-label" style={{ marginBottom: 6 }}>Site-map source (admin)</div>
+                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                                        <select className="alarm-select" value={smCfg.source} onChange={e => setSmCfg(c => ({ ...c, source: e.target.value }))}>
+                                            <option value="slack">Slack channel</option>
+                                            <option value="drive">Network drive</option>
+                                        </select>
+                                        {smCfg.source === 'slack' ? (
+                                            <input className="alarm-input" value={smCfg.slack_channel || ''} onChange={e => setSmCfg(c => ({ ...c, slack_channel: e.target.value }))}
+                                                placeholder="C01N495H7S5" style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12 }} />
+                                        ) : (
+                                            <input className="alarm-input" value={smCfg.root || ''} onChange={e => setSmCfg(c => ({ ...c, root: e.target.value }))}
+                                                placeholder="/mnt/sitemaps/RFQ's" style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 12 }} />
+                                        )}
+                                        <button className="btn btn-primary" onClick={saveSmCfg}>Save</button>
                                     </div>
-                                    {smRootMsg && <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6 }}>{smRootMsg}</div>}
+                                    {smMsg && <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{smMsg}</div>}
                                     <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>
-                                        Each client needs its own subfolder here (matched by name or account #); DWG files inside are listed above.
+                                        {smCfg.source === 'slack'
+                                            ? 'Lists files posted in the Slack channel; the bot must be in that channel and have the files:read scope. Use the filter box to find a client’s maps.'
+                                            : 'Each client needs its own subfolder under this path (matched by name or account #).'}
                                     </div>
                                 </div>
                             )}

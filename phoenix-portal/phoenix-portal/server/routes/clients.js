@@ -3,6 +3,7 @@ const multer  = require('multer');
 const fs      = require('fs');
 const path    = require('path');
 const XLSX    = require('xlsx');
+const { WebClient } = require('@slack/web-api');
 const pool    = require('../db/pool');
 const { authenticate, requireRole } = require('../middleware/requireRole');
 const { runMaintenanceCheck } = require('../services/monitoringScheduler');
@@ -10,12 +11,20 @@ const { runMaintenanceCheck } = require('../services/monitoringScheduler');
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-/* ── Site-map network drive ───────────────────────────────────────────────
-   Site maps are AutoCAD drawings (filenames contain "DWG") stored one folder
-   per client under a network share that Saturn can reach. The root is admin-
-   configurable (app_settings 'sitemap_root'); falls back to env / a default. */
-const SITEMAP_ROOT_KEY     = 'sitemap_root';
-const DEFAULT_SITEMAP_ROOT = process.env.SITEMAP_ROOT || "\\\\PHX-Security\\Customers\\RFQ's";
+/* ── Site maps ─────────────────────────────────────────────────────────────
+   Two possible sources, admin-switchable (app_settings 'sitemap_source'):
+     • 'slack' (default) — files posted in a Slack channel
+     • 'drive'           — AutoCAD DWGs in a per-client subfolder on a mounted
+                           network share (Saturn is Linux, so it's a CIFS mount,
+                           not a UNC path — see deploy notes). */
+const SITEMAP_SOURCE_KEY        = 'sitemap_source';
+const SITEMAP_ROOT_KEY          = 'sitemap_root';
+const SITEMAP_SLACK_CHANNEL_KEY = 'sitemap_slack_channel';
+const DEFAULT_SITEMAP_SOURCE        = process.env.SITEMAP_SOURCE || 'slack';
+const DEFAULT_SITEMAP_ROOT          = process.env.SITEMAP_ROOT || "/mnt/sitemaps/RFQ's";
+const DEFAULT_SITEMAP_SLACK_CHANNEL = process.env.SITEMAP_SLACK_CHANNEL || 'C01N495H7S5';
+
+const slack = process.env.SLACK_TOKEN ? new WebClient(process.env.SLACK_TOKEN) : null;
 
 async function getSetting(key) {
     try {
@@ -31,10 +40,36 @@ async function setSetting(key, value) {
         [key, value]
     );
 }
-const getSitemapRoot = async () => (await getSetting(SITEMAP_ROOT_KEY)) || DEFAULT_SITEMAP_ROOT;
+const getSitemapRoot    = async () => (await getSetting(SITEMAP_ROOT_KEY))          || DEFAULT_SITEMAP_ROOT;
+const getSitemapSource  = async () => (await getSetting(SITEMAP_SOURCE_KEY))        || DEFAULT_SITEMAP_SOURCE;
+const getSitemapChannel = async () => (await getSetting(SITEMAP_SLACK_CHANNEL_KEY)) || DEFAULT_SITEMAP_SLACK_CHANNEL;
 
 const normName = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const isDwg    = name => /dwg/i.test(name);
+
+/* List files posted in a Slack channel (newest first, capped). Returns a list
+   shaped like the drive listing so the client can treat both the same. */
+async function listSlackFiles(channel) {
+    if (!slack) throw Object.assign(new Error('Slack is not configured (SLACK_TOKEN missing).'), { slackError: 'no_token' });
+    const out = [];
+    for (let page = 1; page <= 3; page++) {
+        const r = await slack.files.list({ channel, count: 200, page });
+        for (const f of (r.files || [])) {
+            out.push({
+                key:      f.id,
+                name:     f.name || f.title || f.id,
+                title:    f.title || '',
+                size:     f.size ?? null,
+                modified: f.created ? new Date(f.created * 1000).toISOString() : null,
+                mimetype: f.mimetype || '',
+                dl:       `slack_file=${encodeURIComponent(f.id)}`,
+            });
+        }
+        if (!r.paging || page >= (r.paging.pages || 1)) break;
+    }
+    out.sort((a, b) => (b.modified || '').localeCompare(a.modified || ''));
+    return out;
+}
 
 /* Find the subfolder under `root` that belongs to a client (exact name → name
    contains → customer-id contains). Throws if the drive can't be read. */
@@ -424,32 +459,65 @@ router.post('/run-maintenance', requireRole('admin'), async (req, res) => {
     }
 });
 
-/* ── Site maps (network drive) ───────────────────────────────────────────── */
+/* ── Site maps (Slack channel or network drive) ──────────────────────────── */
 
-/* GET /api/clients/site-map-root — current configured drive root (admin). */
-router.get('/site-map-root', requireRole('admin'), async (_req, res) => {
-    res.json({ root: await getSitemapRoot(), default: DEFAULT_SITEMAP_ROOT });
+/* GET /api/clients/site-map-config — current source + targets (admin). */
+router.get('/site-map-config', requireRole('admin'), async (_req, res) => {
+    res.json({
+        source:        await getSitemapSource(),
+        root:          await getSitemapRoot(),
+        slack_channel: await getSitemapChannel(),
+        defaults: { source: DEFAULT_SITEMAP_SOURCE, root: DEFAULT_SITEMAP_ROOT, slack_channel: DEFAULT_SITEMAP_SLACK_CHANNEL },
+    });
 });
 
-/* PUT /api/clients/site-map-root  { root } — set the drive root (admin). */
-router.put('/site-map-root', requireRole('admin'), async (req, res) => {
-    const root = (req.body.root || '').trim();
-    if (!root) return res.status(400).json({ error: 'root is required.' });
+/* PUT /api/clients/site-map-config  { source?, root?, slack_channel? } (admin). */
+router.put('/site-map-config', requireRole('admin'), async (req, res) => {
+    const { source, root, slack_channel } = req.body;
+    if (source && !['slack', 'drive'].includes(source)) {
+        return res.status(400).json({ error: 'source must be "slack" or "drive".' });
+    }
     try {
-        await setSetting(SITEMAP_ROOT_KEY, root);
-        res.json({ root });
+        if (source)                                       await setSetting(SITEMAP_SOURCE_KEY, source);
+        if (typeof root === 'string' && root.trim())      await setSetting(SITEMAP_ROOT_KEY, root.trim());
+        if (typeof slack_channel === 'string' && slack_channel.trim())
+            await setSetting(SITEMAP_SLACK_CHANNEL_KEY, slack_channel.trim());
+        res.json({ ok: true });
     } catch (err) {
-        console.error('set site-map-root error:', err);
-        res.status(500).json({ error: 'Failed to save drive root.' });
+        console.error('set site-map-config error:', err);
+        res.status(500).json({ error: 'Failed to save site-map settings.' });
     }
 });
 
-/* GET /api/clients/:id/site-maps — list the client's DWG site maps. */
+/* Friendlier message for the common Slack failures. */
+function slackErrMsg(e) {
+    const code = e?.data?.error || e?.slackError;
+    if (code === 'no_token')        return 'Slack is not configured on the server (SLACK_TOKEN missing).';
+    if (code === 'missing_scope')   return 'The Slack app is missing the files:read scope — add it and reinstall the app.';
+    if (code === 'channel_not_found') return 'Slack channel not found, or the bot is not a member of it (invite the bot to the channel).';
+    if (code === 'not_in_channel')  return 'The bot is not a member of that Slack channel — invite it, then retry.';
+    return e?.message || 'Slack request failed.';
+}
+
+/* GET /api/clients/:id/site-maps — list a client's site maps from the active source. */
 router.get('/:id/site-maps', authenticate, async (req, res) => {
     try {
         const c = await pool.query('SELECT id, name, customer_id FROM clients WHERE id = $1', [req.params.id]);
         if (c.rowCount === 0) return res.status(404).json({ error: 'Client not found.' });
 
+        const source = await getSitemapSource();
+
+        if (source === 'slack') {
+            const channel = await getSitemapChannel();
+            try {
+                const files = await listSlackFiles(channel);
+                return res.json({ source: 'slack', channel, files });
+            } catch (e) {
+                return res.status(502).json({ source: 'slack', channel, error: slackErrMsg(e) });
+            }
+        }
+
+        /* drive */
         const root = await getSitemapRoot();
         let folder;
         try {
@@ -458,23 +526,49 @@ router.get('/:id/site-maps', authenticate, async (req, res) => {
             let who = 'unknown';
             try { who = require('os').userInfo().username; } catch { /* ignore */ }
             return res.status(502).json({
+                source: 'drive', root,
                 error: `Cannot reach the site-map drive at ${root} (${e.code || e.message}). The portal process is running as "${who}" — that account must be able to open the share.`,
-                root,
             });
         }
-        if (!folder) return res.json({ root, folder: null, files: [] });
+        if (!folder) return res.json({ source: 'drive', root, folder: null, files: [] });
 
-        const files = (await walkDwg(folder)).sort((a, b) => a.name.localeCompare(b.name));
-        res.json({ root, folder, files });
+        const files = (await walkDwg(folder))
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map(f => ({
+                key:      f.rel,
+                name:     f.name,
+                size:     f.size,
+                modified: f.modified ? new Date(f.modified).toISOString() : null,
+                dl:       `file=${encodeURIComponent(f.rel)}`,
+            }));
+        res.json({ source: 'drive', root, folder, files });
     } catch (err) {
         console.error('site-maps list error:', err);
         res.status(500).json({ error: 'Failed to list site maps.' });
     }
 });
 
-/* GET /api/clients/:id/site-maps/download?file=<rel> — stream one DWG. */
+/* GET /api/clients/:id/site-maps/download?slack_file=<id> | ?file=<rel> */
 router.get('/:id/site-maps/download', authenticate, async (req, res) => {
     try {
+        /* Slack-hosted file — proxy it through with the bot token. */
+        if (req.query.slack_file) {
+            if (!slack) return res.status(503).json({ error: 'Slack is not configured on the server.' });
+            if (typeof fetch !== 'function') return res.status(500).json({ error: 'Server runtime lacks fetch (Node 18+ required).' });
+            let info;
+            try { info = await slack.files.info({ file: req.query.slack_file }); }
+            catch (e) { return res.status(502).json({ error: slackErrMsg(e) }); }
+            const f   = info.file || {};
+            const url = f.url_private_download || f.url_private;
+            if (!url) return res.status(404).json({ error: 'Slack file URL unavailable.' });
+            const r = await fetch(url, { headers: { Authorization: `Bearer ${process.env.SLACK_TOKEN}` } });
+            if (!r.ok) return res.status(502).json({ error: `Slack download failed (${r.status}).` });
+            res.setHeader('Content-Type', f.mimetype || 'application/octet-stream');
+            res.setHeader('Content-Disposition', `attachment; filename="${String(f.name || 'sitemap').replace(/"/g, '')}"`);
+            return res.end(Buffer.from(await r.arrayBuffer()));
+        }
+
+        /* Drive-hosted file. */
         const rel = req.query.file;
         if (!rel) return res.status(400).json({ error: 'file is required.' });
 

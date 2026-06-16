@@ -28,7 +28,7 @@ const fmtDate  = d => d ? new Date(d).toLocaleDateString() : '—';
    "view user" modal. Takes the payload from GET /api/profile[/:id]. */
 export default function ProfileCard({ data }) {
     if (!data) return null;
-    const { user, stats, ticketsByType = [], vehicles = [], inventory = [], recentTickets = [] } = data;
+    const { user, stats, placement, ticketsByType = [], vehicles = [], inventory = [], recentTickets = [] } = data;
 
     return (
         <div>
@@ -51,6 +51,9 @@ export default function ProfileCard({ data }) {
                 <StatCard label="Tickets Completed" value={stats.completed}              accent="var(--green)" />
                 <StatCard label="Open Tickets"      value={stats.open} />
                 <StatCard label="Total Assigned"    value={stats.total_assigned} />
+                {placement && (
+                    <StatCard label="Rank (This Month)" value={`#${placement.rank} / ${placement.total}`} accent="var(--accent)" />
+                )}
             </div>
 
             {/* Ticket type breakdown */}

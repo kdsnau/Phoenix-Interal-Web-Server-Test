@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import PageHelp from '../components/PageHelp';
+import Leaderboard from '../components/Leaderboard';
 import './Dashboard.css';
 
 const SEV = {
@@ -331,6 +332,9 @@ export default function Dashboard() {
 
                     {/* Reminders — role-aware to-do list */}
                     {reminders && <RemindersSection data={reminders} />}
+
+                    {/* Hours leaderboard */}
+                    <Leaderboard currentUserId={user.id} />
 
                     {/* Alerts section */}
                     {alerts && (

@@ -70,6 +70,11 @@ async function buildProfile(userId) {
     ]);
 
     const s = stats.rows[0] || {};
+
+    /* This month's hours-worked placement among technicians. */
+    const board = await getLeaderboard('month').catch(() => []);
+    const mine  = board.find(e => e.user_id === id);
+
     return {
         user: u.rows[0],
         stats: {
@@ -78,11 +83,43 @@ async function buildProfile(userId) {
             open:           s.open_count     || 0,
             hours_worked:   Number(s.hours_worked || 0),
         },
+        placement:     mine ? { rank: mine.rank, total: board.length, hours: mine.hours } : null,
         ticketsByType: byType.rows,
         vehicles:      vehicles.rows,
         inventory:     inventory.rows,
         recentTickets: recent.rows,
     };
+}
+
+/* Rank technicians by hours worked. period='month' → tickets whose departure
+   falls in the current Phoenix month; 'all' → all time. Techs with no hours
+   still appear (at 0) via the LEFT JOIN, so everyone sees their standing. */
+async function getLeaderboard(period = 'month') {
+    const monthFilter = period === 'month'
+        ? `AND date_trunc('month', st.event_end) = date_trunc('month', (now() AT TIME ZONE 'America/Phoenix'))`
+        : '';
+    const r = await pool.query(`
+        SELECT u.id AS user_id, u.name,
+               COALESCE(SUM(EXTRACT(EPOCH FROM (st.event_end - st.event_start)) / 3600.0), 0) AS hours,
+               COUNT(st.id)::int AS completed_tickets
+        FROM users u
+        LEFT JOIN service_tickets st
+               ON u.id = ANY(st.assignee_ids)
+              AND st.status IN ('resolved','closed')
+              AND st.event_start IS NOT NULL AND st.event_end IS NOT NULL
+              AND st.event_end > st.event_start
+              ${monthFilter}
+        WHERE u.role = 'technician'
+        GROUP BY u.id, u.name
+        ORDER BY hours DESC, completed_tickets DESC, u.name ASC
+    `);
+    return r.rows.map((row, i) => ({
+        user_id:           row.user_id,
+        name:              row.name,
+        hours:             Number(row.hours),
+        completed_tickets: row.completed_tickets,
+        rank:              i + 1,
+    }));
 }
 
 /* GET /api/profile — the signed-in user's own profile. */
@@ -94,6 +131,18 @@ router.get('/', authenticate, async (req, res) => {
     } catch (err) {
         console.error('Profile error:', err);
         res.status(500).json({ error: 'Failed to load profile.' });
+    }
+});
+
+/* GET /api/profile/leaderboard?period=month|all — hours-worked ranking (techs). */
+router.get('/leaderboard', authenticate, async (req, res) => {
+    try {
+        const period = req.query.period === 'all' ? 'all' : 'month';
+        const entries = await getLeaderboard(period);
+        res.json({ period, entries });
+    } catch (err) {
+        console.error('Leaderboard error:', err);
+        res.status(500).json({ error: 'Failed to load leaderboard.' });
     }
 });
 

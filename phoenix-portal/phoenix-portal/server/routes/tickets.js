@@ -249,7 +249,7 @@ router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
              SET status         = COALESCE($1, status),
                  assignee_ids   = COALESCE($2::int[], assignee_ids),
                  assigned_to    = CASE WHEN $2::int[] IS NOT NULL THEN ($2::int[])[1] ELSE assigned_to END,
-                 reminder_sent  = CASE WHEN $3 IS NOT NULL THEN FALSE ELSE reminder_sent END,
+                 reminder_sent  = CASE WHEN $3::timestamp IS NOT NULL THEN FALSE ELSE reminder_sent END,
                  event_start    = COALESCE($3::timestamp, event_start),
                  event_end      = COALESCE($4::timestamp, event_end),
                  event_location = COALESCE($5, event_location),
@@ -257,7 +257,7 @@ router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
                  description    = COALESCE($7, description),
                  client_id      = COALESCE($8::int, client_id),
                  ticket_type    = COALESCE($9, ticket_type),
-                 source         = CASE WHEN $3 IS NOT NULL THEN 'calendar' ELSE source END,
+                 source         = CASE WHEN $3::timestamp IS NOT NULL THEN 'calendar' ELSE source END,
                  updated_at     = NOW()
              WHERE id = $10`,
             [

@@ -71,18 +71,22 @@ async function listSlackFiles(channel) {
     return out;
 }
 
-/* Find the subfolder under `root` that belongs to a client (exact name → name
-   contains → customer-id contains). Throws if the drive can't be read. */
-async function resolveClientFolder(root, client) {
+/* Find ALL subfolders under `root` that belong to a client. The share is laid
+   out one folder per RFQ/job, so a single client spans many folders (e.g.
+   "6656 The Pharm - CCTV", "6418 The Pharm - CCTV", …). Match folders whose
+   normalized name contains the client name (min 3 chars, to avoid spurious
+   short matches) or the customer id. Throws if the drive can't be read. */
+async function resolveClientFolders(root, client) {
     const entries = await fs.promises.readdir(root, { withFileTypes: true });
-    const dirs  = entries.filter(e => e.isDirectory());
     const cName = normName(client.name);
     const cId   = normName(client.customer_id);
-    const hit =
-        (cName && dirs.find(d => normName(d.name) === cName)) ||
-        (cName && dirs.find(d => normName(d.name).includes(cName) || cName.includes(normName(d.name)))) ||
-        (cId   && dirs.find(d => normName(d.name).includes(cId)));
-    return hit ? path.join(root, hit.name) : null;
+    return entries
+        .filter(e => e.isDirectory())
+        .filter(d => {
+            const dn = normName(d.name);
+            return (cName.length >= 3 && dn.includes(cName)) || (cId && dn.includes(cId));
+        })
+        .map(d => path.join(root, d.name));
 }
 
 /* Collect DWG files within a client folder (a few levels deep), each with its
@@ -519,9 +523,9 @@ router.get('/:id/site-maps', authenticate, async (req, res) => {
 
         /* drive */
         const root = await getSitemapRoot();
-        let folder;
+        let folders;
         try {
-            folder = await resolveClientFolder(root, c.rows[0]);
+            folders = await resolveClientFolders(root, c.rows[0]);
         } catch (e) {
             let who = 'unknown';
             try { who = require('os').userInfo().username; } catch { /* ignore */ }
@@ -530,18 +534,28 @@ router.get('/:id/site-maps', authenticate, async (req, res) => {
                 error: `Cannot reach the site-map drive at ${root} (${e.code || e.message}). The portal process is running as "${who}" — that account must be able to open the share.`,
             });
         }
-        if (!folder) return res.json({ source: 'drive', root, folder: null, files: [] });
+        if (!folders.length) return res.json({ source: 'drive', root, folder: null, files: [] });
 
-        const files = (await walkDwg(folder))
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .map(f => ({
-                key:      f.rel,
-                name:     f.name,
-                size:     f.size,
-                modified: f.modified ? new Date(f.modified).toISOString() : null,
-                dl:       `file=${encodeURIComponent(f.rel)}`,
-            }));
-        res.json({ source: 'drive', root, folder, files });
+        /* Walk every matched folder; keys are relative to the root so they stay
+           unique across folders and resolvable on download. Each file is tagged
+           with its folder (the RFQ/job) so they're distinguishable. */
+        const files = [];
+        for (const folder of folders) {
+            const label = path.basename(folder);
+            for (const f of await walkDwg(folder)) {
+                const relFromRoot = path.relative(root, path.join(folder, f.rel));
+                files.push({
+                    key:      relFromRoot,
+                    name:     f.name,
+                    folder:   label,
+                    size:     f.size,
+                    modified: f.modified ? new Date(f.modified).toISOString() : null,
+                    dl:       `file=${encodeURIComponent(relFromRoot)}`,
+                });
+            }
+        }
+        files.sort((a, b) => a.folder.localeCompare(b.folder) || a.name.localeCompare(b.name));
+        res.json({ source: 'drive', root, folders: folders.map(f => path.basename(f)), files });
     } catch (err) {
         console.error('site-maps list error:', err);
         res.status(500).json({ error: 'Failed to list site maps.' });
@@ -575,16 +589,19 @@ router.get('/:id/site-maps/download', authenticate, async (req, res) => {
         const c = await pool.query('SELECT id, name, customer_id FROM clients WHERE id = $1', [req.params.id]);
         if (c.rowCount === 0) return res.status(404).json({ error: 'Client not found.' });
 
-        const root   = await getSitemapRoot();
-        const folder = await resolveClientFolder(root, c.rows[0]).catch(() => null);
-        if (!folder) return res.status(404).json({ error: 'No site-map folder for this client.' });
+        const root    = await getSitemapRoot();
+        const folders = await resolveClientFolders(root, c.rows[0]).catch(() => []);
+        if (!folders.length) return res.status(404).json({ error: 'No site-map folder for this client.' });
 
-        /* Block path traversal — resolved file must stay inside the client folder. */
-        const folderResolved = path.resolve(folder);
-        const abs = path.resolve(folder, rel);
-        if (abs !== folderResolved && !abs.startsWith(folderResolved + path.sep)) {
-            return res.status(400).json({ error: 'Invalid file path.' });
-        }
+        /* Block path traversal — resolved file must stay inside one of this
+           client's matched folders. */
+        const abs = path.resolve(root, rel);
+        const allowed = folders.some(folder => {
+            const fr = path.resolve(folder);
+            return abs === fr || abs.startsWith(fr + path.sep);
+        });
+        if (!allowed) return res.status(400).json({ error: 'Invalid file path.' });
+
         res.download(abs, path.basename(abs), err => {
             if (err && !res.headersSent) res.status(404).json({ error: 'File not found.' });
         });

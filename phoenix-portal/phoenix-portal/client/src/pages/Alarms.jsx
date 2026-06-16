@@ -950,7 +950,10 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                                         <tbody>
                                             {files.map(f => (
                                                 <tr key={f.key}>
-                                                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{f.name}</td>
+                                                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                                                        {f.name}
+                                                        {f.folder && <div style={{ color: 'var(--text-dim)', fontSize: 10, marginTop: 2 }}>{f.folder}</div>}
+                                                    </td>
                                                     <td style={{ color: 'var(--text-dim)', fontSize: 12 }}>{fmtSize(f.size)}</td>
                                                     <td style={{ color: 'var(--text-dim)', fontSize: 12 }}>{f.modified ? new Date(f.modified).toLocaleDateString() : ''}</td>
                                                     <td><button className="btn btn-ghost" style={{ padding: '2px 10px', fontSize: 12 }} onClick={() => downloadSiteMap(f)}>Download</button></td>

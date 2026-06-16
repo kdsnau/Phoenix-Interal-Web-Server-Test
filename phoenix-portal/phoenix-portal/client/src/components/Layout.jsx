@@ -139,10 +139,10 @@ export default function Layout({ children }) {
                 </nav>
 
                 <div className="sidebar-footer">
-                    <div className="user-info">
+                    <Link to="/profile" className="user-info" style={{ textDecoration: 'none', cursor: 'pointer' }} title="View my profile">
                         <div className="user-name">{user?.name}</div>
                         <div className="user-role">{user?.role}</div>
-                    </div>
+                    </Link>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
                         <button className="logout-btn" onClick={() => setPwOpen(true)}>Password</button>
                         <button className="logout-btn" onClick={handleLogout}>Logout</button>

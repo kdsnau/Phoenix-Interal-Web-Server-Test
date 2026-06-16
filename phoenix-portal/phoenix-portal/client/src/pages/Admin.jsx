@@ -2,9 +2,42 @@ import { useEffect, useState, useRef } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import PageHelp from '../components/PageHelp';
+import ProfileCard from '../components/ProfileCard';
 import './Dashboard.css';
 
 const ROLE_TAG = { admin: 'tag-red', accounting: 'tag-blue', technician: 'tag-green' };
+
+/* Admin: pull up any user's work profile (hours, vehicle, inventory usage). */
+function ProfileModal({ userId, onClose }) {
+    const [data, setData]       = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError]     = useState('');
+
+    useEffect(() => {
+        api.get(`/profile/${userId}`)
+            .then(r => setData(r.data))
+            .catch(e => setError(e.response?.data?.error || 'Could not load profile.'))
+            .finally(() => setLoading(false));
+    }, [userId]);
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 700, width: '100%' }}>
+                <div className="modal-title">User Profile</div>
+                {loading ? (
+                    <p style={{ color: 'var(--text-dim)' }}>Loading…</p>
+                ) : error ? (
+                    <div className="error-msg">{error}</div>
+                ) : (
+                    <ProfileCard data={data} />
+                )}
+                <div className="modal-actions">
+                    <button className="btn btn-primary" onClick={onClose}>Close</button>
+                </div>
+            </div>
+        </div>
+    );
+}
 
 function NewUserModal({ onClose, onCreated }) {
     const [form, setForm] = useState({ name: '', email: '', password: '', role: 'technician' });
@@ -187,6 +220,7 @@ export default function Admin() {
     const [users, setUsers]       = useState([]);
     const [loading, setLoading]   = useState(true);
     const [showModal, setShowModal] = useState(false);
+    const [profileId, setProfileId] = useState(null);
 
     const load = async () => {
         try {
@@ -272,6 +306,9 @@ export default function Admin() {
                                                 <option value="accounting">Accounting</option>
                                                 <option value="admin">Admin</option>
                                             </select>
+                                            <button className="btn btn-ghost" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => setProfileId(u.id)}>
+                                                Profile
+                                            </button>
                                             <button className="btn btn-danger" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => deleteUser(u.id)}>
                                                 Del
                                             </button>
@@ -289,6 +326,10 @@ export default function Admin() {
                     onClose={() => setShowModal(false)}
                     onCreated={load}
                 />
+            )}
+
+            {profileId && (
+                <ProfileModal userId={profileId} onClose={() => setProfileId(null)} />
             )}
         </Layout>
     );

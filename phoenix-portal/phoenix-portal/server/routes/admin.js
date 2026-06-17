@@ -4,11 +4,16 @@ const { authenticate, requireRole } = require('../middleware/requireRole');
 
 const router = express.Router();
 
-/* GET /api/admin/technicians — list technicians for ticket assignment (technician + admin access) */
+/* Lets specific non-technicians (e.g. an admin who also works in the field) be
+   assigned to tickets. Technicians are always assignable regardless of the flag. */
+pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS assignable BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
+
+/* GET /api/admin/technicians — users who can be assigned to tickets:
+   all technicians, plus anyone explicitly flagged assignable (e.g. a field admin). */
 router.get('/technicians', requireRole('technician', 'admin'), async (req, res) => {
     try {
         const result = await pool.query(
-            "SELECT id, name FROM users WHERE role = 'technician' ORDER BY name ASC"
+            "SELECT id, name FROM users WHERE role = 'technician' OR assignable = TRUE ORDER BY name ASC"
         );
         return res.json(result.rows);
     } catch (err) {
@@ -21,7 +26,7 @@ router.get('/technicians', requireRole('technician', 'admin'), async (req, res) 
 router.get('/users', requireRole('admin'), async (req, res) => {
     try {
         const result = await pool.query(
-            'SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC'
+            'SELECT id, name, email, role, assignable, created_at FROM users ORDER BY created_at DESC'
         );
         return res.json(result.rows);
     } catch (err) {
@@ -47,6 +52,22 @@ router.patch('/users/:id/role', requireRole('admin'), async (req, res) => {
         if (result.rowCount === 0) {
             return res.status(404).json({ error: 'User not found.' });
         }
+        return res.json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'Server error.' });
+    }
+});
+
+/* PATCH /api/admin/users/:id/assignable — allow/disallow ticket assignment */
+router.patch('/users/:id/assignable', requireRole('admin'), async (req, res) => {
+    const assignable = !!req.body.assignable;
+    try {
+        const result = await pool.query(
+            'UPDATE users SET assignable = $1 WHERE id = $2 RETURNING id, assignable',
+            [assignable, req.params.id]
+        );
+        if (result.rowCount === 0) return res.status(404).json({ error: 'User not found.' });
         return res.json(result.rows[0]);
     } catch (err) {
         console.error(err);

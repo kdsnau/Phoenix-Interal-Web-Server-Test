@@ -240,6 +240,13 @@ export default function Admin() {
         } catch (e) { console.error(e); }
     };
 
+    const changeAssignable = async (id, assignable) => {
+        try {
+            await api.patch(`/admin/users/${id}/assignable`, { assignable });
+            setUsers(prev => prev.map(u => u.id === id ? { ...u, assignable } : u));
+        } catch (e) { alert(e.response?.data?.error || 'Failed.'); }
+    };
+
     const deleteUser = async (id) => {
         if (!confirm('Delete this user?')) return;
         try {
@@ -279,6 +286,7 @@ export default function Admin() {
                                 <th>Name</th>
                                 <th>Email</th>
                                 <th>Role</th>
+                                <th>Assignable</th>
                                 <th>Joined</th>
                                 <th>Actions</th>
                             </tr>
@@ -291,6 +299,15 @@ export default function Admin() {
                                     <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>{u.email}</td>
                                     <td>
                                         <span className={`tag ${ROLE_TAG[u.role]}`}>{u.role}</span>
+                                    </td>
+                                    <td>
+                                        {u.role === 'technician' ? (
+                                            <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>always</span>
+                                        ) : (
+                                            <input type="checkbox" checked={!!u.assignable}
+                                                onChange={e => changeAssignable(u.id, e.target.checked)}
+                                                title="Allow this user to be assigned to tickets" />
+                                        )}
                                     </td>
                                     <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>
                                         {new Date(u.created_at).toLocaleDateString()}

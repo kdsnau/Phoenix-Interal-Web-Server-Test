@@ -14,7 +14,7 @@ import Feedback  from './pages/Feedback';
 import Messages  from './pages/Messages';
 import Calendar  from './pages/Calendar';
 import Cameras   from './pages/Cameras';
-import Compliance from './pages/Compliance';
+import TechNotes  from './pages/TechNotes';
 import Profile    from './pages/Profile';
 import Calls      from './pages/Calls';
 import Vault      from './pages/Vault';
@@ -46,7 +46,7 @@ function AppRoutes() {
             <Route path="/messages"   element={<PrivateRoute><Messages /></PrivateRoute>} />
             <Route path="/calendar"   element={<PrivateRoute><Calendar /></PrivateRoute>} />
             <Route path="/cameras"    element={<PrivateRoute><Cameras /></PrivateRoute>} />
-            <Route path="/compliance" element={<PrivateRoute><Compliance /></PrivateRoute>} />
+            <Route path="/tech-notes" element={<PrivateRoute><TechNotes /></PrivateRoute>} />
             <Route path="/profile"    element={<PrivateRoute><Profile /></PrivateRoute>} />
             <Route path="/calls"      element={<PrivateRoute><Calls /></PrivateRoute>} />
             <Route path="/vault"      element={<PrivateRoute roles={['admin']}><Vault /></PrivateRoute>} />

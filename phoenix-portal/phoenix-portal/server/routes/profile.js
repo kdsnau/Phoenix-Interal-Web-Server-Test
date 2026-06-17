@@ -108,9 +108,10 @@ async function buildProfile(userId) {
     };
 }
 
-/* Rank technicians by hours worked. period='month' → tickets whose departure
-   falls in the current Phoenix month; 'all' → all time. Techs with no hours
-   still appear (at 0) via the LEFT JOIN, so everyone sees their standing. */
+/* Rank assignable staff (technicians + anyone flagged assignable) by hours
+   worked. period='month' → tickets whose departure falls in the current Phoenix
+   month; 'all' → all time. Those with no hours still appear (at 0) via the LEFT
+   JOIN, so everyone sees their standing. */
 async function getLeaderboard(period = 'month') {
     const monthFilter = period === 'month'
         ? `AND date_trunc('month', st.event_end) = date_trunc('month', (now() AT TIME ZONE 'America/Phoenix'))`
@@ -126,7 +127,7 @@ async function getLeaderboard(period = 'month') {
               AND st.event_start IS NOT NULL AND st.event_end IS NOT NULL
               AND st.event_end > st.event_start
               ${monthFilter}
-        WHERE u.role = 'technician'
+        WHERE u.role = 'technician' OR u.assignable = TRUE
         GROUP BY u.id, u.name
         ORDER BY hours DESC, completed_tickets DESC, u.name ASC
     `);

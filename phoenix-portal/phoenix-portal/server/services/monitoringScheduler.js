@@ -280,13 +280,44 @@ async function runFleetIssuesDigest() {
     }
 }
 
+/* Weekly list of every unpaid closed (deadbeat) work order → accounting + admin. */
+async function runDeadbeatDigest() {
+    try {
+        const rows = await pool.query(`
+            SELECT w.label, w.amount, w.updated_at, c.name AS client_name
+            FROM work_orders w
+            LEFT JOIN clients c ON w.client_id = c.id
+            WHERE w.status = 'deadbeat'
+            ORDER BY w.updated_at DESC
+        `).catch(() => ({ rows: [] }));
+        if (rows.rowCount === 0) return;
+
+        const recips = await pool.query("SELECT email FROM users WHERE role IN ('accounting', 'admin')");
+        const to = recips.rows.map(r => r.email);
+        if (to.length === 0) return;
+
+        const total = rows.rows.reduce((s, w) => s + Number(w.amount), 0);
+        const items = rows.rows.map(w => `${w.client_name || '—'} — ${w.label} — $${Number(w.amount).toFixed(2)}`);
+
+        await sendTemplated(to, 'Unpaid Closed Work Orders (Deadbeat)', 'Unpaid Closed Work Orders', {
+            intro: `${rows.rowCount} closed work order(s) remain unpaid, totaling $${total.toFixed(2)}.`,
+            sections: [{ heading: 'Deadbeat (closed & unpaid)', items }],
+            note: '— Phoenix Security & Technology portal',
+        }).catch(err => console.error('Deadbeat digest email failed:', err));
+        console.log(`Deadbeat digest sent — ${rows.rowCount} unpaid closed work order(s).`);
+    } catch (err) {
+        console.error('Deadbeat digest error:', err);
+    }
+}
+
 function startScheduler() {
     cron.schedule('0 8 * * *',    runMonitoringCheck);
     cron.schedule('0 8 * * *',    runMaintenanceCheck);
     cron.schedule('0 8 * * *',    runReminderDigest);
     cron.schedule('*/15 * * * *', runAppointmentReminders);
     cron.schedule('0 8 * * 1',    runFleetIssuesDigest);   /* Mondays 8 AM */
-    console.log('Schedulers started — daily 8 AM jobs, weekly fleet digest (Mon), appointment reminders every 15 min');
+    cron.schedule('0 8 * * 1',    runDeadbeatDigest);      /* Mondays 8 AM */
+    console.log('Schedulers started — daily 8 AM jobs, weekly fleet + deadbeat digests (Mon), appointment reminders every 15 min');
 }
 
 module.exports = { startScheduler, runMaintenanceCheck };

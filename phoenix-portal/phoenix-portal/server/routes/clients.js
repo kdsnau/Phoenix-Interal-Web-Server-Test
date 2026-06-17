@@ -611,6 +611,81 @@ router.get('/:id/site-maps/download', authenticate, async (req, res) => {
     }
 });
 
+/* POST /api/clients/rebuild-from-drive  { commit?, path? } — rebuild the client
+   list from the per-client folders on the Customers share. Dry-run by default:
+   returns what WOULD be added/removed. commit:true performs it. Monitored clients
+   (and their service types) are always preserved. */
+router.post('/rebuild-from-drive', requireRole('admin'), async (req, res) => {
+    const commit = req.body.commit === true;
+    const root   = (req.body.path || process.env.CLIENTS_DRIVE_ROOT || '/mnt/sitemaps/Invoices/Invoices - Customers').trim();
+
+    let folders;
+    try {
+        const entries = await fs.promises.readdir(root, { withFileTypes: true });
+        folders = entries.filter(e => e.isDirectory()).map(e => e.name).filter(n => !n.startsWith('.'));
+    } catch (e) {
+        return res.status(502).json({ error: `Cannot read the clients folder at ${root} (${e.code || e.message}).`, root });
+    }
+
+    /* Customer folders carry a standalone 4-digit account number = the customer_id.
+       Folders without one are deprecated and ignored. */
+    const fourDigit = s => { const m = String(s || '').match(/(?<!\d)\d{4}(?!\d)/); return m ? m[0] : null; };
+    const cleanName = f => f.replace(/(?<!\d)\d{4}(?!\d)/, '').replace(/\s{2,}/g, ' ').replace(/^[\s\-_.]+|[\s\-_.]+$/g, '').trim() || f;
+
+    const existing = (await pool.query('SELECT id, name, customer_id, monitoring_enabled, services FROM clients')).rows;
+    const existingByNum = new Map();
+    for (const c of existing) { const n = fourDigit(c.customer_id) || fourDigit(c.name); if (n && !existingByNum.has(n)) existingByNum.set(n, c); }
+    const taken = new Set(existing.map(c => c.customer_id));
+
+    const toAdd = [], matchedNums = new Set(), folderNums = new Set();
+    let skipped = 0;
+    for (const f of folders) {
+        const num = fourDigit(f);
+        if (!num) { skipped++; continue; }              /* deprecated — no 4-digit number */
+        folderNums.add(num);
+        if (existingByNum.has(num)) matchedNums.add(num);
+        else toAdd.push({ name: cleanName(f), customer_id: num, folder: f });
+    }
+
+    /* A client is protected (never removed) if it's monitored OR carries a service
+       type (fire/alarm/access) — these are the established accounts, even the
+       old name-only ones with no invoice number. Only truly orphaned unmonitored,
+       untyped clients with no matching folder are dropped. */
+    const isProtected = c => c.monitoring_enabled || (Array.isArray(c.services) && c.services.length > 0);
+    const toRemove = existing.filter(c => {
+        if (isProtected(c)) return false;
+        const num = fourDigit(c.customer_id) || fourDigit(c.name);
+        return !num || !folderNums.has(num);
+    });
+
+    const preview = {
+        root,
+        folder_count:      folders.length,
+        skipped_no_number: skipped,
+        to_add:            toAdd.map(a => `${a.customer_id} — ${a.name}`),
+        matched_count:     matchedNums.size,
+        to_remove:         toRemove.map(c => ({ id: c.id, name: c.name, customer_id: c.customer_id })),
+        kept_count:        existing.filter(isProtected).length,
+    };
+
+    if (!commit) return res.json({ committed: false, ...preview });
+
+    const uniqueCid = (cid) => { let out = cid, i = 2; while (taken.has(out)) out = `${cid}-${i++}`; taken.add(out); return out; };
+
+    let added = 0, removed = 0;
+    for (const a of toAdd) {
+        await pool.query(
+            'INSERT INTO clients (name, customer_id, vendor, services, monitoring_enabled) VALUES ($1, $2, $3, $4, FALSE)',
+            [a.name, uniqueCid(a.customer_id), 'generic', []]
+        ).then(() => { added++; }).catch(e => console.error('rebuild add failed:', a.folder, e.message));
+    }
+    for (const c of toRemove) {
+        await pool.query('DELETE FROM clients WHERE id = $1', [c.id])
+            .then(() => { removed++; }).catch(e => console.error('rebuild remove failed:', c.id, e.message));
+    }
+    res.json({ committed: true, ...preview, added, removed });
+});
+
 /* GET /api/clients/:id */
 router.get('/:id', authenticate, async (req, res) => {
     try {

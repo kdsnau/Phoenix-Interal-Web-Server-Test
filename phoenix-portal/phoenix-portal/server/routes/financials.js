@@ -5,6 +5,36 @@ const { sendTemplated } = require('../config/mailer');
 
 const router = express.Router();
 
+/* ── Work orders ──────────────────────────────────────────────────────────
+   A work order is a revenue job with a status:
+     open        → INVOICE        (billed, not yet paid)
+     closed_paid → PAYMENT        (collected revenue = gross)
+     deadbeat    → CLOSED INVOICE (closed & unpaid — excluded from totals,
+                                   surfaced in a weekly notification)
+   Totals: Gross = payments; Invoice+Gross = open invoices + payments;
+   Expense = financial_records(expense) + fleet. */
+const WO_STATUSES = ['open', 'closed_paid', 'deadbeat'];
+pool.query(`
+    CREATE TABLE IF NOT EXISTS work_orders (
+        id         SERIAL PRIMARY KEY,
+        label      TEXT NOT NULL,
+        client_id  INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+        amount     NUMERIC NOT NULL,
+        status     TEXT NOT NULL DEFAULT 'open',
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW(),
+        paid_at    TIMESTAMP
+    )
+`).catch(() => {});
+
+const WO_SELECT = `
+    SELECT w.id, w.label, w.client_id, w.amount, w.status, w.created_at, w.updated_at, w.paid_at,
+           c.name AS client_name, u.name AS creator_name
+    FROM work_orders w
+    LEFT JOIN clients c ON w.client_id = c.id
+    LEFT JOIN users   u ON w.created_by = u.id`;
+
 /* GET /api/financials */
 router.get('/', requireRole('accounting', 'admin'), async (req, res) => {
     try {
@@ -21,37 +51,37 @@ router.get('/', requireRole('accounting', 'admin'), async (req, res) => {
     }
 });
 
-/* GET /api/financials/summary — totals for dashboard */
+/* GET /api/financials/summary — work-order + expense totals */
 router.get('/summary', requireRole('accounting', 'admin'), async (req, res) => {
     try {
-        const [base, fleetRes] = await Promise.all([
-            pool.query(
-                `WITH fr AS (
-                    SELECT
-                        COALESCE(SUM(CASE WHEN type = 'income'  THEN amount ELSE 0 END), 0) AS income,
-                        COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS expenses
-                    FROM financial_records
-                 ), pay AS (
-                    SELECT COALESCE(SUM(amount), 0) AS income
-                    FROM client_transactions WHERE type = 'payment'
-                 )
-                 SELECT (fr.income + pay.income) AS income, fr.expenses AS expenses
-                 FROM fr, pay`
-            ),
+        const [woRes, expRes, fleetRes] = await Promise.all([
+            pool.query(`
+                SELECT
+                    COALESCE(SUM(amount) FILTER (WHERE status = 'closed_paid'), 0) AS gross,
+                    COALESCE(SUM(amount) FILTER (WHERE status = 'open'),        0) AS open_invoices,
+                    COALESCE(SUM(amount) FILTER (WHERE status = 'deadbeat'),    0) AS unpaid_closed
+                FROM work_orders
+            `).catch(() => ({ rows: [{ gross: 0, open_invoices: 0, unpaid_closed: 0 }] })),
+            pool.query("SELECT COALESCE(SUM(amount), 0) AS exp FROM financial_records WHERE type = 'expense'"),
             pool.query("SELECT COALESCE(SUM(amount), 0) AS fleet FROM vehicle_invoices")
-                .catch(() => ({ rows: [{ fleet: 0 }] })),   /* graceful if table missing */
+                .catch(() => ({ rows: [{ fleet: 0 }] })),
         ]);
 
-        const income     = Number(base.rows[0].income);
-        const recordExp  = Number(base.rows[0].expenses);
-        const fleetExp   = Number(fleetRes.rows[0].fleet);
-        const totalExp   = recordExp + fleetExp;   /* fleet counts against revenue */
+        const gross        = Number(woRes.rows[0].gross);
+        const openInv      = Number(woRes.rows[0].open_invoices);
+        const unpaidClosed = Number(woRes.rows[0].unpaid_closed);
+        const recordExp    = Number(expRes.rows[0].exp);
+        const fleetExp     = Number(fleetRes.rows[0].fleet);
+        const expenseTotal = recordExp + fleetExp;   /* fleet counts against revenue */
 
         return res.json({
-            total_income:   income,
-            total_expenses: totalExp,
-            fleet_expenses: fleetExp,
-            net:            income - totalExp,
+            gross_total:         gross,                /* payments */
+            invoice_gross_total: openInv + gross,      /* open invoices + payments */
+            open_invoice_total:  openInv,
+            unpaid_closed_total: unpaidClosed,         /* deadbeat — informational only */
+            expense_total:       expenseTotal,
+            fleet_expenses:      fleetExp,
+            net:                 gross - expenseTotal,
         });
     } catch (err) {
         console.error(err);
@@ -268,6 +298,74 @@ router.delete('/:id', requireRole('admin'), async (req, res) => {
         console.error(err);
         return res.status(500).json({ error: 'Server error.' });
     }
+});
+
+/* ── Work orders ─────────────────────────────────────────────────────────── */
+
+/* GET /api/financials/work-orders */
+router.get('/work-orders', requireRole('accounting', 'admin'), async (_req, res) => {
+    try {
+        const r = await pool.query(`${WO_SELECT} ORDER BY w.created_at DESC`);
+        res.json(r.rows);
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Server error.' }); }
+});
+
+/* POST /api/financials/work-orders  { label, client_id?, amount, status? } */
+router.post('/work-orders', requireRole('accounting', 'admin'), async (req, res) => {
+    const { label, client_id, amount } = req.body;
+    if (!label || !label.trim()) return res.status(400).json({ error: 'Label is required.' });
+    if (amount == null || isNaN(amount) || Number(amount) <= 0) return res.status(400).json({ error: 'Amount must be a positive number.' });
+    const status = WO_STATUSES.includes(req.body.status) ? req.body.status : 'open';
+    try {
+        const ins = await pool.query(
+            `INSERT INTO work_orders (label, client_id, amount, status, created_by, paid_at)
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+            [label.trim(), client_id || null, amount, status, req.user.id, status === 'closed_paid' ? new Date() : null]
+        );
+        const full = await pool.query(`${WO_SELECT} WHERE w.id = $1`, [ins.rows[0].id]);
+        res.status(201).json(full.rows[0]);
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Server error.' }); }
+});
+
+/* PATCH /api/financials/work-orders/:id  { status?, label?, amount?, client_id? } */
+router.patch('/work-orders/:id', requireRole('accounting', 'admin'), async (req, res) => {
+    const { status, label, amount, client_id } = req.body;
+    if (status != null && !WO_STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status.' });
+    if (amount != null && (isNaN(amount) || Number(amount) <= 0)) return res.status(400).json({ error: 'Amount must be a positive number.' });
+    try {
+        const r = await pool.query(
+            `UPDATE work_orders
+             SET status    = COALESCE($1, status),
+                 label     = COALESCE($2, label),
+                 amount    = COALESCE($3::numeric, amount),
+                 client_id = CASE WHEN $4::boolean THEN $5::int ELSE client_id END,
+                 paid_at   = CASE WHEN $1 = 'closed_paid' AND paid_at IS NULL THEN NOW()
+                                  WHEN $1 IN ('open','deadbeat') THEN NULL ELSE paid_at END,
+                 updated_at = NOW()
+             WHERE id = $6 RETURNING id`,
+            [status || null, label || null, amount ?? null, 'client_id' in req.body, client_id || null, req.params.id]
+        );
+        if (r.rowCount === 0) return res.status(404).json({ error: 'Work order not found.' });
+        const full = await pool.query(`${WO_SELECT} WHERE w.id = $1`, [req.params.id]);
+        res.json(full.rows[0]);
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Server error.' }); }
+});
+
+/* DELETE /api/financials/work-orders/:id — admin only */
+router.delete('/work-orders/:id', requireRole('admin'), async (req, res) => {
+    try {
+        const r = await pool.query('DELETE FROM work_orders WHERE id = $1', [req.params.id]);
+        if (r.rowCount === 0) return res.status(404).json({ error: 'Work order not found.' });
+        res.json({ ok: true });
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Server error.' }); }
+});
+
+/* POST /api/financials/clear-unmonitored — delete unmonitored (no client) invoices */
+router.post('/clear-unmonitored', requireRole('admin'), async (_req, res) => {
+    try {
+        const r = await pool.query("DELETE FROM client_transactions WHERE client_id IS NULL AND type = 'invoice'");
+        res.json({ deleted: r.rowCount });
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to clear unmonitored invoices.' }); }
 });
 
 module.exports = router;

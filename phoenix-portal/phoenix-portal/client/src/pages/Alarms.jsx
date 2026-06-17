@@ -1079,6 +1079,82 @@ function NewClientModal({ onClose, onCreated }) {
 /* -----------------------------------------------------------------------
    Main Clients page
    ----------------------------------------------------------------------- */
+/* Admin: rebuild the client list from the Customers-share folders (dry-run preview
+   first, then commit). Monitored clients and their types are preserved. */
+function RebuildModal({ onClose, onDone }) {
+    const [preview, setPreview]       = useState(null);
+    const [loading, setLoading]       = useState(true);
+    const [committing, setCommitting] = useState(false);
+    const [error, setError]           = useState('');
+    const [result, setResult]         = useState(null);
+
+    useEffect(() => {
+        api.post('/clients/rebuild-from-drive', { commit: false })
+            .then(r => setPreview(r.data))
+            .catch(e => setError(e.response?.data?.error || 'Failed to read the drive.'))
+            .finally(() => setLoading(false));
+    }, []);
+
+    async function commit() {
+        if (!confirm(`Add ${preview.to_add.length} client(s) and remove ${preview.to_remove.length}? This cannot be undone.`)) return;
+        setCommitting(true); setError('');
+        try {
+            const { data } = await api.post('/clients/rebuild-from-drive', { commit: true });
+            setResult(data);
+            onDone();
+        } catch (e) { setError(e.response?.data?.error || 'Rebuild failed.'); }
+        finally { setCommitting(false); }
+    }
+
+    const box = { maxHeight: 220, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 4, padding: 8, fontSize: 12 };
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 640, width: '100%' }}>
+                <div className="modal-title">Rebuild Client List from Drive</div>
+                {error && <div className="error-msg">{error}</div>}
+                {loading ? (
+                    <p style={{ color: 'var(--text-dim)' }}>Reading drive…</p>
+                ) : preview && (
+                    <>
+                        <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>
+                            Source: <code>{preview.root}</code> — {preview.folder_count} folder(s){preview.skipped_no_number > 0 ? `, ${preview.skipped_no_number} skipped (no 4-digit #)` : ''}.{' '}
+                            {preview.matched_count} already match a client; {preview.kept_count} established client(s) kept (monitored or typed).
+                        </p>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 10 }}>
+                            <div>
+                                <div className="alarm-label" style={{ marginBottom: 6 }}>Add ({preview.to_add.length})</div>
+                                <div style={box}>
+                                    {preview.to_add.length === 0 ? <span style={{ color: 'var(--text-dim)' }}>None</span> :
+                                        preview.to_add.map((n, i) => <div key={i} style={{ color: 'var(--green)' }}>+ {n}</div>)}
+                                </div>
+                            </div>
+                            <div>
+                                <div className="alarm-label" style={{ marginBottom: 6 }}>Remove ({preview.to_remove.length})</div>
+                                <div style={box}>
+                                    {preview.to_remove.length === 0 ? <span style={{ color: 'var(--text-dim)' }}>None</span> :
+                                        preview.to_remove.map(c => <div key={c.id} style={{ color: 'var(--red)' }}>− {c.name}</div>)}
+                                </div>
+                            </div>
+                        </div>
+                        {result ? (
+                            <>
+                                <div style={{ marginTop: 12, color: 'var(--green)', fontSize: 13 }}>Done — added {result.added}, removed {result.removed}.</div>
+                                <div className="modal-actions"><button className="btn btn-primary" onClick={onClose}>Close</button></div>
+                            </>
+                        ) : (
+                            <div className="modal-actions">
+                                <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                                <button className="btn btn-danger" onClick={commit} disabled={committing}>{committing ? 'Rebuilding…' : 'Commit changes'}</button>
+                            </div>
+                        )}
+                    </>
+                )}
+            </div>
+        </div>
+    );
+}
+
 export default function Alarms() {
     const { user }                          = useAuth();
     const [clients, setClients]             = useState([]);
@@ -1088,6 +1164,7 @@ export default function Alarms() {
     const [technicians, setTechnicians]     = useState([]);
     const [loading, setLoading]             = useState(true);
     const [showAddClient, setShowAddClient] = useState(false);
+    const [showRebuild, setShowRebuild]     = useState(false);
     const [permits, setPermits]       = useState([]);
     const [permitsLoading, setPermitsLoading] = useState(false);
 
@@ -1185,9 +1262,12 @@ export default function Alarms() {
                             onChange={e => setSearch(e.target.value)}
                         />
                         {user.role === 'admin' && (
-                            <button className="btn btn-primary" onClick={() => setShowAddClient(true)}>
-                                + Add Client
-                            </button>
+                            <>
+                                <button className="btn btn-ghost" onClick={() => setShowRebuild(true)}>↻ Rebuild from drive</button>
+                                <button className="btn btn-primary" onClick={() => setShowAddClient(true)}>
+                                    + Add Client
+                                </button>
+                            </>
                         )}
                     </div>
                 </div>
@@ -1333,6 +1413,12 @@ export default function Alarms() {
                     <NewClientModal
                         onClose={() => setShowAddClient(false)}
                         onCreated={() => { setShowAddClient(false); fetchClients(); }}
+                    />
+                )}
+                {showRebuild && (
+                    <RebuildModal
+                        onClose={() => setShowRebuild(false)}
+                        onDone={fetchClients}
                     />
                 )}
             </div>

@@ -1118,7 +1118,7 @@ function RebuildModal({ onClose, onDone }) {
                 ) : preview && (
                     <>
                         <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>
-                            Source: <code>{preview.root}</code> — {preview.folder_count} folder(s){preview.skipped_no_number > 0 ? `, ${preview.skipped_no_number} skipped (no 4-digit #)` : ''}.{' '}
+                            Source: <code>{preview.root}</code> — {preview.folder_count} folder(s){preview.skipped_no_number > 0 ? `, ${preview.skipped_no_number} no-number` : ''}{preview.skipped_inactive > 0 ? `, ${preview.skipped_inactive} inactive (>3yr)` : ''} skipped.{' '}
                             {preview.matched_count} already match a client; {preview.kept_count} established client(s) kept (monitored or typed).
                         </p>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 10 }}>
@@ -1155,6 +1155,68 @@ function RebuildModal({ onClose, onDone }) {
     );
 }
 
+/* Admin: remove clients whose invoice folder hasn't been touched in 3 years.
+   Preview first; monitored/typed clients are protected. */
+function PruneModal({ onClose, onDone }) {
+    const [preview, setPreview]       = useState(null);
+    const [loading, setLoading]       = useState(true);
+    const [committing, setCommitting] = useState(false);
+    const [error, setError]           = useState('');
+    const [result, setResult]         = useState(null);
+
+    useEffect(() => {
+        api.post('/clients/prune-inactive', { commit: false })
+            .then(r => setPreview(r.data))
+            .catch(e => setError(e.response?.data?.error || 'Failed to read the drive.'))
+            .finally(() => setLoading(false));
+    }, []);
+
+    async function commit() {
+        if (!confirm(`Permanently remove ${preview.to_remove.length} inactive client(s)? This cannot be undone.`)) return;
+        setCommitting(true); setError('');
+        try { const { data } = await api.post('/clients/prune-inactive', { commit: true }); setResult(data); onDone(); }
+        catch (e) { setError(e.response?.data?.error || 'Prune failed.'); }
+        finally { setCommitting(false); }
+    }
+
+    const box = { maxHeight: 260, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 4, padding: 8, fontSize: 12 };
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 560, width: '100%' }}>
+                <div className="modal-title">Prune Inactive Clients (3yr)</div>
+                {error && <div className="error-msg">{error}</div>}
+                {loading ? (
+                    <p style={{ color: 'var(--text-dim)' }}>Checking invoice activity…</p>
+                ) : preview && (
+                    <>
+                        <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>
+                            Examined {preview.examined} client(s); {preview.protected_count} protected (monitored or typed) and kept.
+                            Removing those with no invoice modified in 3 years.
+                        </p>
+                        <div className="alarm-label" style={{ margin: '8px 0 6px' }}>Remove ({preview.to_remove.length})</div>
+                        <div style={box}>
+                            {preview.to_remove.length === 0 ? <span style={{ color: 'var(--text-dim)' }}>None — nothing to prune.</span> :
+                                preview.to_remove.map(c => <div key={c.id} style={{ color: 'var(--red)' }}>− {c.customer_id ? `${c.customer_id} ` : ''}{c.name}</div>)}
+                        </div>
+                        {result ? (
+                            <>
+                                <div style={{ marginTop: 12, color: 'var(--green)', fontSize: 13 }}>Done — removed {result.removed}.</div>
+                                <div className="modal-actions"><button className="btn btn-primary" onClick={onClose}>Close</button></div>
+                            </>
+                        ) : (
+                            <div className="modal-actions">
+                                <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                                <button className="btn btn-danger" onClick={commit} disabled={committing || preview.to_remove.length === 0}>{committing ? 'Pruning…' : 'Remove inactive'}</button>
+                            </div>
+                        )}
+                    </>
+                )}
+            </div>
+        </div>
+    );
+}
+
 export default function Alarms() {
     const { user }                          = useAuth();
     const [clients, setClients]             = useState([]);
@@ -1165,6 +1227,7 @@ export default function Alarms() {
     const [loading, setLoading]             = useState(true);
     const [showAddClient, setShowAddClient] = useState(false);
     const [showRebuild, setShowRebuild]     = useState(false);
+    const [showPrune, setShowPrune]         = useState(false);
     const [permits, setPermits]       = useState([]);
     const [permitsLoading, setPermitsLoading] = useState(false);
 
@@ -1264,6 +1327,7 @@ export default function Alarms() {
                         {user.role === 'admin' && (
                             <>
                                 <button className="btn btn-ghost" onClick={() => setShowRebuild(true)}>↻ Rebuild from drive</button>
+                                <button className="btn btn-ghost" onClick={() => setShowPrune(true)}>✕ Prune inactive</button>
                                 <button className="btn btn-primary" onClick={() => setShowAddClient(true)}>
                                     + Add Client
                                 </button>
@@ -1418,6 +1482,12 @@ export default function Alarms() {
                 {showRebuild && (
                     <RebuildModal
                         onClose={() => setShowRebuild(false)}
+                        onDone={fetchClients}
+                    />
+                )}
+                {showPrune && (
+                    <PruneModal
+                        onClose={() => setShowPrune(false)}
                         onDone={fetchClients}
                     />
                 )}

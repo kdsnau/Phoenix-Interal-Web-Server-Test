@@ -360,12 +360,12 @@ router.delete('/work-orders/:id', requireRole('admin'), async (req, res) => {
     } catch (err) { console.error(err); res.status(500).json({ error: 'Server error.' }); }
 });
 
-/* POST /api/financials/clear-unmonitored — delete unmonitored (no client) invoices */
+/* POST /api/financials/clear-unmonitored — delete ALL unmonitored (no client) entries */
 router.post('/clear-unmonitored', requireRole('admin'), async (_req, res) => {
     try {
-        const r = await pool.query("DELETE FROM client_transactions WHERE client_id IS NULL AND type = 'invoice'");
+        const r = await pool.query('DELETE FROM client_transactions WHERE client_id IS NULL');
         res.json({ deleted: r.rowCount });
-    } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to clear unmonitored invoices.' }); }
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to clear unmonitored entries.' }); }
 });
 
 module.exports = router;

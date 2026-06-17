@@ -637,14 +637,34 @@ router.post('/rebuild-from-drive', requireRole('admin'), async (req, res) => {
     for (const c of existing) { const n = fourDigit(c.customer_id) || fourDigit(c.name); if (n && !existingByNum.has(n)) existingByNum.set(n, c); }
     const taken = new Set(existing.map(c => c.customer_id));
 
+    /* Only ADD customers whose folder has an invoice (file) modified within 3 years. */
+    const cutoff = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 3);
+    const cutoffMs = cutoff.getTime();
+    async function newestMtimeMs(dir, depth = 0) {
+        let newest = 0, entries;
+        try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return 0; }
+        try { newest = (await fs.promises.stat(dir)).mtimeMs; } catch { /* ignore */ }
+        for (const e of entries) {
+            const full = path.join(dir, e.name);
+            if (e.isDirectory()) {
+                if (depth < 2) { const m = await newestMtimeMs(full, depth + 1); if (m > newest) newest = m; }
+            } else {
+                try { const st = await fs.promises.stat(full); if (st.mtimeMs > newest) newest = st.mtimeMs; } catch { /* ignore */ }
+            }
+        }
+        return newest;
+    }
+
     const toAdd = [], matchedNums = new Set(), folderNums = new Set();
-    let skipped = 0;
+    let skippedNoNumber = 0, skippedInactive = 0;
     for (const f of folders) {
         const num = fourDigit(f);
-        if (!num) { skipped++; continue; }              /* deprecated — no 4-digit number */
+        if (!num) { skippedNoNumber++; continue; }       /* deprecated — no 4-digit number */
         folderNums.add(num);
-        if (existingByNum.has(num)) matchedNums.add(num);
-        else toAdd.push({ name: cleanName(f), customer_id: num, folder: f });
+        if (existingByNum.has(num)) { matchedNums.add(num); continue; }   /* already a client */
+        const newest = await newestMtimeMs(path.join(root, f));
+        if (newest >= cutoffMs) toAdd.push({ name: cleanName(f), customer_id: num, folder: f });
+        else skippedInactive++;                          /* no invoice modified in 3 years */
     }
 
     /* A client is protected (never removed) if it's monitored OR carries a service
@@ -661,7 +681,8 @@ router.post('/rebuild-from-drive', requireRole('admin'), async (req, res) => {
     const preview = {
         root,
         folder_count:      folders.length,
-        skipped_no_number: skipped,
+        skipped_no_number: skippedNoNumber,
+        skipped_inactive:  skippedInactive,
         to_add:            toAdd.map(a => `${a.customer_id} — ${a.name}`),
         matched_count:     matchedNums.size,
         to_remove:         toRemove.map(c => ({ id: c.id, name: c.name, customer_id: c.customer_id })),
@@ -684,6 +705,65 @@ router.post('/rebuild-from-drive', requireRole('admin'), async (req, res) => {
             .then(() => { removed++; }).catch(e => console.error('rebuild remove failed:', c.id, e.message));
     }
     res.json({ committed: true, ...preview, added, removed });
+});
+
+/* POST /api/clients/prune-inactive  { commit?, path? } — remove clients whose
+   invoice folder hasn't been modified in 3 years. Dry-run by default. Monitored
+   and typed (fire/alarm/access) clients are always protected. */
+router.post('/prune-inactive', requireRole('admin'), async (req, res) => {
+    const commit = req.body.commit === true;
+    const root   = (req.body.path || process.env.CLIENTS_DRIVE_ROOT || '/mnt/sitemaps/Invoices/Invoices - Customers').trim();
+    const fourDigit = s => { const m = String(s || '').match(/(?<!\d)\d{4}(?!\d)/); return m ? m[0] : null; };
+    async function newestMtimeMs(dir, depth = 0) {
+        let newest = 0, entries;
+        try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return 0; }
+        try { newest = (await fs.promises.stat(dir)).mtimeMs; } catch { /* ignore */ }
+        for (const e of entries) {
+            const full = path.join(dir, e.name);
+            if (e.isDirectory()) { if (depth < 2) { const m = await newestMtimeMs(full, depth + 1); if (m > newest) newest = m; } }
+            else { try { const st = await fs.promises.stat(full); if (st.mtimeMs > newest) newest = st.mtimeMs; } catch { /* ignore */ } }
+        }
+        return newest;
+    }
+
+    let folders;
+    try {
+        const entries = await fs.promises.readdir(root, { withFileTypes: true });
+        folders = entries.filter(e => e.isDirectory()).map(e => e.name);
+    } catch (e) {
+        return res.status(502).json({ error: `Cannot read the clients folder at ${root} (${e.code || e.message}).`, root });
+    }
+    const folderByNum = new Map();
+    for (const f of folders) { const n = fourDigit(f); if (n && !folderByNum.has(n)) folderByNum.set(n, f); }
+
+    const existing = (await pool.query('SELECT id, name, customer_id, monitoring_enabled, services FROM clients')).rows;
+    const isProtected = c => c.monitoring_enabled || (Array.isArray(c.services) && c.services.length > 0);
+    const cutoff = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 3);
+    const cutoffMs = cutoff.getTime();
+
+    const toRemove = [];
+    for (const c of existing) {
+        if (isProtected(c)) continue;
+        const num    = fourDigit(c.customer_id) || fourDigit(c.name);
+        const folder = num ? folderByNum.get(num) : null;
+        const active = folder ? (await newestMtimeMs(path.join(root, folder))) >= cutoffMs : false;
+        if (!active) toRemove.push(c);
+    }
+
+    const preview = {
+        root,
+        examined:        existing.length,
+        protected_count: existing.filter(isProtected).length,
+        to_remove:       toRemove.map(c => ({ id: c.id, name: c.name, customer_id: c.customer_id })),
+    };
+    if (!commit) return res.json({ committed: false, ...preview });
+
+    let removed = 0;
+    for (const c of toRemove) {
+        await pool.query('DELETE FROM clients WHERE id = $1', [c.id])
+            .then(() => { removed++; }).catch(e => console.error('prune remove failed:', c.id, e.message));
+    }
+    res.json({ committed: true, ...preview, removed });
 });
 
 /* GET /api/clients/:id */

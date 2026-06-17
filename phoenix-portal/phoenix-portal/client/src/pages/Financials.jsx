@@ -400,11 +400,11 @@ export default function Financials() {
         catch (e) { console.error(e); }
     }
     async function clearUnmonitored() {
-        if (!confirm('Delete ALL unmonitored invoices? This cannot be undone.')) return;
+        if (!confirm('Delete ALL unmonitored entries (no linked client)? This cannot be undone.')) return;
         setClearMsg('Clearing…');
         try {
             const { data } = await api.post('/financials/clear-unmonitored');
-            setClearMsg(`Cleared ${data.deleted} unmonitored invoice(s).`);
+            setClearMsg(`Cleared ${data.deleted} unmonitored entr${data.deleted === 1 ? 'y' : 'ies'}.`);
             const ctx = await api.get('/financials/client-transactions').catch(() => ({ data: [] }));
             setClientTx(ctx.data);
         } catch (e) { setClearMsg(e.response?.data?.error || 'Clear failed.'); }
@@ -484,7 +484,7 @@ export default function Financials() {
                     <>
                         {isAdmin && (
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                                <button className="btn btn-danger" style={{ fontSize: 12 }} onClick={clearUnmonitored}>Clear unmonitored invoices</button>
+                                <button className="btn btn-danger" style={{ fontSize: 12 }} onClick={clearUnmonitored}>Clear all unmonitored entries</button>
                                 {clearMsg && <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{clearMsg}</span>}
                             </div>
                         )}

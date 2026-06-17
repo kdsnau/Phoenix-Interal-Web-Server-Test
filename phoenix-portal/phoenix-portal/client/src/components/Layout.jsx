@@ -64,6 +64,7 @@ const NAV = {
         { path: '/feedback',   label: 'Feedback'   },
         { divider: 'System' },
         { path: '/admin',      label: 'Admin'      },
+        { path: '/vault',      label: 'Vault'      },
     ],
 };
 

@@ -1,8 +1,12 @@
 const express = require('express');
 const pool    = require('../db/pool');
 const { authenticate, requireRole } = require('../middleware/requireRole');
+const { fetchCalls } = require('../services/callsFeed');
 
 const router = express.Router();
+
+/* Normalize a name for matching Slack call receivers to portal users. */
+const normName = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 /* Free-text note the user keeps on their own profile. */
 pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_note TEXT`).catch(() => {});
@@ -78,6 +82,15 @@ async function buildProfile(userId) {
     const board = await getLeaderboard('month').catch(() => []);
     const mine  = board.find(e => e.user_id === id);
 
+    /* Customer-service calls taken (from Slack), matched to this user by name.
+       Unmatched receivers are ignored. Slack issues never break the profile. */
+    let callsTaken = 0;
+    try {
+        const { calls } = await fetchCalls();
+        const uname = normName(u.rows[0].name);
+        if (uname) callsTaken = calls.filter(c => c.receiver && normName(c.receiver) === uname).length;
+    } catch { /* ignore — Slack unavailable */ }
+
     return {
         user: u.rows[0],
         stats: {
@@ -85,6 +98,7 @@ async function buildProfile(userId) {
             completed:      s.completed      || 0,
             open:           s.open_count     || 0,
             hours_worked:   Number(s.hours_worked || 0),
+            calls_taken:    callsTaken,
         },
         placement:     mine ? { rank: mine.rank, total: board.length, hours: mine.hours } : null,
         ticketsByType: byType.rows,

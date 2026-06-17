@@ -78,6 +78,9 @@ export default function ProfileCard({ data, editable = false }) {
                 <StatCard label="Tickets Completed" value={stats.completed}              accent="var(--green)" />
                 <StatCard label="Open Tickets"      value={stats.open} />
                 <StatCard label="Total Assigned"    value={stats.total_assigned} />
+                {stats.calls_taken > 0 && (
+                    <StatCard label="Calls Taken" value={stats.calls_taken} accent="var(--green)" />
+                )}
                 {placement && (
                     <StatCard label="Rank (This Month)" value={`#${placement.rank} / ${placement.total}`} accent="var(--accent)" />
                 )}

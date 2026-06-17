@@ -1,4 +1,31 @@
+import { useState } from 'react';
+import api from '../api/client';
+
 const ROLE_TAG = { admin: 'tag-red', accounting: 'tag-blue', technician: 'tag-green' };
+
+function NoteEditor({ initial }) {
+    const [note, setNote]     = useState(initial || '');
+    const [saving, setSaving] = useState(false);
+    const [msg, setMsg]       = useState('');
+    const save = async () => {
+        setSaving(true); setMsg('');
+        try { await api.put('/profile/note', { note }); setMsg('Saved.'); }
+        catch { setMsg('Save failed.'); }
+        finally { setSaving(false); }
+    };
+    return (
+        <div>
+            <textarea value={note} onChange={e => setNote(e.target.value)} rows={3}
+                placeholder="Add a note for yourself…" style={{ width: '100%', resize: 'vertical' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 6 }}>
+                <button className="btn btn-primary" style={{ padding: '4px 12px', fontSize: 12 }} onClick={save} disabled={saving}>
+                    {saving ? 'Saving…' : 'Save Note'}
+                </button>
+                {msg && <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{msg}</span>}
+            </div>
+        </div>
+    );
+}
 
 function StatCard({ label, value, accent }) {
     return (
@@ -26,7 +53,7 @@ const fmtDate  = d => d ? new Date(d).toLocaleDateString() : '—';
 
 /* Reusable read-only profile view — used by the My Profile page and the admin
    "view user" modal. Takes the payload from GET /api/profile[/:id]. */
-export default function ProfileCard({ data }) {
+export default function ProfileCard({ data, editable = false }) {
     if (!data) return null;
     const { user, stats, placement, ticketsByType = [], vehicles = [], inventory = [], recentTickets = [] } = data;
 
@@ -55,6 +82,13 @@ export default function ProfileCard({ data }) {
                     <StatCard label="Rank (This Month)" value={`#${placement.rank} / ${placement.total}`} accent="var(--accent)" />
                 )}
             </div>
+
+            {/* Notes — private to the user; only shown/editable on their own profile */}
+            {editable && (
+                <Section title="Notes">
+                    <NoteEditor initial={user.profile_note} />
+                </Section>
+            )}
 
             {/* Ticket type breakdown */}
             {ticketsByType.length > 0 && (

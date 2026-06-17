@@ -187,17 +187,21 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
     const [clients,     setClients]     = useState([]);
     const [clientId,    setClientId]    = useState('');
     const [clientName,  setClientName]  = useState('');
+    const [pocName,     setPocName]     = useState('');
+    const [pocPhone,    setPocPhone]    = useState('');
 
     useEffect(() => {
         api.get('/inventory').then(r => setInv(r.data)).catch(() => {});
         api.get('/clients').then(r => setClients(r.data)).catch(() => {});
     }, []);
 
-    /* Pick a client → autofill the title and link the ticket to that client. */
+    /* Pick a client → autofill the title, point of contact, and link the ticket. */
     const pickClient = (c) => {
         setClientId(c.id);
         setClientName(c.name);
         setTitle(c.name);
+        setPocName(c.contact_name || '');
+        setPocPhone(c.contact_phone || '');
     };
     const clearClient = () => {
         setClientId('');
@@ -218,6 +222,8 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
                 event_end:      eventEnd    || undefined,
                 event_location: location    || undefined,
                 client_id:      clientId    || undefined,
+                poc_name:       pocName     || undefined,
+                poc_phone:      pocPhone    || undefined,
             });
             for (const it of pendingItems) {
                 await api.post(`/tickets/${data.id}/items`,
@@ -269,6 +275,16 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
                     <div className="form-group">
                         <label className="form-label">Assign To (one or more)</label>
                         <AssigneeMultiSelect technicians={technicians} value={assigneeIds} onChange={setAssigneeIds} />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Point of Contact</label>
+                            <input value={pocName} onChange={e => setPocName(e.target.value)} placeholder="Name (autofills from client)" />
+                        </div>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Contact Phone</label>
+                            <input value={pocPhone} onChange={e => setPocPhone(e.target.value)} placeholder="Phone" />
+                        </div>
                     </div>
 
                     {/* ── Schedule fields ── */}
@@ -362,6 +378,8 @@ function EditTicketModal({ ticket, technicians, onClose, onUpdated }) {
     const [clients,     setClients]     = useState([]);
     const [clientId,    setClientId]    = useState(ticket.client_id || '');
     const [clientName,  setClientName]  = useState('');
+    const [pocName,     setPocName]     = useState(ticket.poc_name || '');
+    const [pocPhone,    setPocPhone]    = useState(ticket.poc_phone || '');
     const [siteMap,     setSiteMap]     = useState(ticket.site_map_file || null);
     const [uploading,   setUploading]   = useState(false);
     const [error,       setError]       = useState('');
@@ -388,6 +406,8 @@ function EditTicketModal({ ticket, technicians, onClose, onUpdated }) {
                 event_end:     eventEnd   || undefined,
                 event_location: location,
                 client_id:     clientId || undefined,
+                poc_name:      pocName,
+                poc_phone:     pocPhone,
             });
             onUpdated(data);
             onClose();
@@ -431,12 +451,22 @@ function EditTicketModal({ ticket, technicians, onClose, onUpdated }) {
                                     onClick={() => { setClientId(''); setClientName(''); }}>✕ unlink</button>
                             </div>
                         ) : (
-                            <ClientPicker clients={clients} onPick={c => { setClientId(c.id); setClientName(c.name); }} />
+                            <ClientPicker clients={clients} onPick={c => { setClientId(c.id); setClientName(c.name); setPocName(c.contact_name || ''); setPocPhone(c.contact_phone || ''); }} />
                         )}
                     </div>
                     <div className="form-group">
                         <label className="form-label">Title *</label>
                         <input value={title} onChange={e => setTitle(e.target.value)} required />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Point of Contact</label>
+                            <input value={pocName} onChange={e => setPocName(e.target.value)} placeholder="Name" />
+                        </div>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Contact Phone</label>
+                            <input value={pocPhone} onChange={e => setPocPhone(e.target.value)} placeholder="Phone" />
+                        </div>
                     </div>
                     <div className="form-group">
                         <label className="form-label">Ticket Type</label>
@@ -636,6 +666,7 @@ export default function Tickets() {
     const [showModal,   setShowModal]   = useState(false);
     const [itemsTicket, setItemsTicket] = useState(null);
     const [editTicket,  setEditTicket]  = useState(null);
+    const [statusFilter, setStatusFilter] = useState('all');
 
     const load = async () => {
         try {
@@ -685,7 +716,24 @@ export default function Tickets() {
 
             {loading && <p style={{ color: 'var(--text-dim)' }}>Loading...</p>}
 
-            {!loading && (
+            {!loading && (() => {
+                const STATUS_TABS = [
+                    ['all', 'All'], ['open', 'Open'], ['in_progress', 'In Progress'],
+                    ['resolved', 'Resolved'], ['closed', 'Closed'],
+                ];
+                const shown = statusFilter === 'all' ? tickets : tickets.filter(t => t.status === statusFilter);
+                return (
+                <>
+                <div className="alarm-service-tabs" style={{ marginBottom: 16 }}>
+                    {STATUS_TABS.map(([s, label]) => {
+                        const count = s === 'all' ? tickets.length : tickets.filter(t => t.status === s).length;
+                        return (
+                            <button key={s} className={`alarm-tab ${statusFilter === s ? 'active' : ''}`} onClick={() => setStatusFilter(s)}>
+                                {label} <span className="alarm-tab-count">{count}</span>
+                            </button>
+                        );
+                    })}
+                </div>
                 <div className="table-card">
                     <table className="data-table">
                         <thead>
@@ -700,10 +748,10 @@ export default function Tickets() {
                             </tr>
                         </thead>
                         <tbody>
-                            {tickets.length === 0 && (
+                            {shown.length === 0 && (
                                 <tr><td colSpan={7} style={{ color: 'var(--text-dim)', textAlign: 'center', padding: 32 }}>No tickets found.</td></tr>
                             )}
-                            {tickets.map(t => (
+                            {shown.map(t => (
                                 <tr key={t.id}>
                                     <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', fontSize: 12 }}>#{t.id}</td>
 
@@ -725,6 +773,11 @@ export default function Tickets() {
                                         {t.event_location && (
                                             <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>
                                                 📍 {t.event_location}
+                                            </div>
+                                        )}
+                                        {(t.poc_name || t.poc_phone) && (
+                                            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>
+                                                👤 {t.poc_name}{t.poc_phone ? ` · ${t.poc_phone}` : ''}
                                             </div>
                                         )}
                                         {!t.event_start && t.description && (
@@ -818,7 +871,9 @@ export default function Tickets() {
                         </tbody>
                     </table>
                 </div>
-            )}
+                </>
+                );
+            })()}
 
             {showModal && (
                 <NewTicketModal

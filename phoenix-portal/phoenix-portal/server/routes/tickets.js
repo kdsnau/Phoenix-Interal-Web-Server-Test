@@ -31,6 +31,9 @@ const upload = multer({
 pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS event_end TIMESTAMP`).catch(() => {});
 pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS site_map_file TEXT`).catch(() => {});
 pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS ticket_type TEXT NOT NULL DEFAULT 'Service'`).catch(() => {});
+/* Point of contact for the job (autofilled from the client, but overridable). */
+pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS poc_name  TEXT`).catch(() => {});
+pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS poc_phone TEXT`).catch(() => {});
 
 /* Inventory items used on a ticket; stock is drawn down when the ticket is completed. */
 pool.query(`
@@ -107,7 +110,7 @@ router.get('/', requireRole('technician', 'admin'), async (req, res) => {
 /* ── POST /api/tickets ────────────────────────────────────────────────── */
 /* Admin only — technicians can work tickets but not create them. */
 router.post('/', requireRole('admin'), async (req, res) => {
-    const { title, description, event_start, event_end, event_location, client_id } = req.body;
+    const { title, description, event_start, event_end, event_location, client_id, poc_name, poc_phone } = req.body;
 
     if (!title) return res.status(400).json({ error: 'Title is required.' });
 
@@ -121,8 +124,8 @@ router.post('/', requireRole('admin'), async (req, res) => {
 
         const result = await pool.query(
             `INSERT INTO service_tickets
-             (title, description, created_by, assigned_to, assignee_ids, source, event_start, event_end, event_location, client_id, ticket_type)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             (title, description, created_by, assigned_to, assignee_ids, source, event_start, event_end, event_location, client_id, ticket_type, poc_name, poc_phone)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
              RETURNING *`,
             [
                 title,
@@ -136,6 +139,8 @@ router.post('/', requireRole('admin'), async (req, res) => {
                 event_location || null,
                 client_id || null,
                 ticketType,
+                poc_name  || null,
+                poc_phone || null,
             ]
         );
         let ticket = result.rows[0];
@@ -209,7 +214,7 @@ router.post('/', requireRole('admin'), async (req, res) => {
 /* ── PATCH /api/tickets/:id ───────────────────────────────────────────── */
 router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
     const isTech = req.user.role === 'technician';
-    let { status, event_start, event_end, event_location, title, description, client_id, ticket_type } = req.body;
+    let { status, event_start, event_end, event_location, title, description, client_id, ticket_type, poc_name, poc_phone } = req.body;
     const validStatuses = ['open', 'in_progress', 'resolved', 'closed'];
 
     if (status && !validStatuses.includes(status)) {
@@ -232,16 +237,20 @@ router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
     }
 
     try {
+        /* Snapshot current state for the technician-access check and status-change
+           detection. */
+        const cur = await pool.query('SELECT status, assignee_ids FROM service_tickets WHERE id = $1', [req.params.id]);
+        if (cur.rowCount === 0) return res.status(404).json({ error: 'Ticket not found.' });
+        const prevStatus = cur.rows[0].status;
+
         /* Technicians may only change the STATUS of tickets assigned to them —
-           no editing details (assignees, schedule, location). */
+           no editing details (assignees, schedule, location, POC). */
         if (isTech) {
-            const own = await pool.query('SELECT assignee_ids FROM service_tickets WHERE id = $1', [req.params.id]);
-            if (own.rowCount === 0) return res.status(404).json({ error: 'Ticket not found.' });
-            if (!(own.rows[0].assignee_ids || []).includes(req.user.id)) {
+            if (!(cur.rows[0].assignee_ids || []).includes(req.user.id)) {
                 return res.status(403).json({ error: 'Technicians can only update tickets assigned to them.' });
             }
             if (!status) return res.status(403).json({ error: 'Technicians can only change ticket status.' });
-            event_start = event_end = event_location = title = description = client_id = ticket_type = undefined;
+            event_start = event_end = event_location = title = description = client_id = ticket_type = poc_name = poc_phone = undefined;
         }
 
         await pool.query(
@@ -257,9 +266,11 @@ router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
                  description    = COALESCE($7, description),
                  client_id      = COALESCE($8::int, client_id),
                  ticket_type    = COALESCE($9, ticket_type),
+                 poc_name       = COALESCE($10, poc_name),
+                 poc_phone      = COALESCE($11, poc_phone),
                  source         = CASE WHEN $3::timestamp IS NOT NULL THEN 'calendar' ELSE source END,
                  updated_at     = NOW()
-             WHERE id = $10`,
+             WHERE id = $12`,
             [
                 status         || null,
                 assigneeIds,
@@ -270,6 +281,8 @@ router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
                 description ?? null,
                 client_id      || null,
                 ticket_type    || null,
+                poc_name       || null,
+                poc_phone      || null,
                 req.params.id,
             ]
         );
@@ -309,6 +322,30 @@ router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
         if (ticket.google_event_id) {
             const label = (ticket.assignee_names || []).join(', ') || null;
             gcalUpdate(ticket.google_event_id, ticket, label).catch(() => {});
+        }
+
+        /* Notify accounting + assigned technicians when the status actually changes. */
+        if (status && status !== prevStatus) {
+            try {
+                const recips = await pool.query(
+                    `SELECT DISTINCT email, name FROM users WHERE role = 'accounting' OR id = ANY($1)`,
+                    [ticket.assignee_ids || []]
+                );
+                const to = recips.rows.map(r => r.email).filter(Boolean);
+                if (to.length) {
+                    const done = status === 'resolved' || status === 'closed';
+                    await sendTemplated(to, `Ticket status updated: ${ticket.title}`, 'Ticket Status Updated', {
+                        intro: `Ticket #${ticket.id} status changed to "${status.replace('_', ' ')}".`,
+                        fields: [
+                            { label: 'Title',      value: ticket.title, hi: true },
+                            { label: 'Type',       value: ticket.ticket_type || 'Service' },
+                            { label: 'New Status', value: status.replace('_', ' '), badge: done ? 'badge-green' : 'badge-yellow' },
+                            { label: 'Client',     value: ticket.poc_name ? `${ticket.poc_name}${ticket.poc_phone ? ` · ${ticket.poc_phone}` : ''}` : '—' },
+                            { label: 'Updated By', value: req.user.name },
+                        ],
+                    });
+                }
+            } catch (e) { console.error('Status-change notify failed:', e.message); }
         }
 
         return res.json(ticket);

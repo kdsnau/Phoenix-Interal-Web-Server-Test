@@ -10,6 +10,7 @@ const NAV = {
         { divider: 'Operations' },
         { path: '/dashboard', label: 'Dashboard' },
         { path: '/tickets',   label: 'Tickets'   },
+        { path: '/calls',     label: 'Calls'     },
         { path: '/projects',  label: 'Projects'  },
         { path: '/calendar',  label: 'Calendar'  },
         { path: '/compliance', label: 'Compliance' },
@@ -26,6 +27,7 @@ const NAV = {
     accounting: [
         { divider: 'Operations' },
         { path: '/dashboard',  label: 'Dashboard'  },
+        { path: '/calls',      label: 'Calls'      },
         { path: '/projects',   label: 'Projects'   },
         { path: '/calendar',   label: 'Calendar'   },
         { path: '/compliance', label: 'Compliance' },
@@ -45,6 +47,7 @@ const NAV = {
         { divider: 'Operations' },
         { path: '/dashboard',  label: 'Dashboard'  },
         { path: '/tickets',    label: 'Tickets'    },
+        { path: '/calls',      label: 'Calls'      },
         { path: '/projects',   label: 'Projects'   },
         { path: '/calendar',   label: 'Calendar'   },
         { path: '/compliance', label: 'Compliance' },

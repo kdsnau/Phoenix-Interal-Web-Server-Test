@@ -25,7 +25,7 @@ export default function Profile() {
             ) : error ? (
                 <div className="error-msg">{error}</div>
             ) : (
-                <ProfileCard data={data} />
+                <ProfileCard data={data} editable />
             )}
         </Layout>
     );

@@ -26,6 +26,7 @@ const dmpRoutes        = require('./routes/dmp');
 const complianceRoutes = require('./routes/compliance');
 const reminderRoutes   = require('./routes/reminders');
 const profileRoutes    = require('./routes/profile');
+const callsRoutes      = require('./routes/calls');
 const { startScheduler } = require('./services/monitoringScheduler');
 
 const app  = express();
@@ -65,6 +66,7 @@ app.use('/api/dmp',         dmpRoutes);
 app.use('/api/compliance',  complianceRoutes);
 app.use('/api/reminders',   reminderRoutes);
 app.use('/api/profile',     profileRoutes);
+app.use('/api/calls',       callsRoutes);
 
 app.get('/api/health', (_, res) => res.json({ status: 'ok' }));
 

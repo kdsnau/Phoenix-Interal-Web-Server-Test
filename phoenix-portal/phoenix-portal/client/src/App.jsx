@@ -16,6 +16,7 @@ import Calendar  from './pages/Calendar';
 import Cameras   from './pages/Cameras';
 import Compliance from './pages/Compliance';
 import Profile    from './pages/Profile';
+import Calls      from './pages/Calls';
 
 function PrivateRoute({ children, roles }) {
     const { user } = useAuth();
@@ -46,6 +47,7 @@ function AppRoutes() {
             <Route path="/cameras"    element={<PrivateRoute><Cameras /></PrivateRoute>} />
             <Route path="/compliance" element={<PrivateRoute><Compliance /></PrivateRoute>} />
             <Route path="/profile"    element={<PrivateRoute><Profile /></PrivateRoute>} />
+            <Route path="/calls"      element={<PrivateRoute><Calls /></PrivateRoute>} />
             <Route path="*"           element={<Navigate to={user ? '/dashboard' : '/login'} />} />
         </Routes>
     );

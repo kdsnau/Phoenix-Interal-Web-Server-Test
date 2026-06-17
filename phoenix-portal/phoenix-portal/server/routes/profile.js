@@ -4,6 +4,9 @@ const { authenticate, requireRole } = require('../middleware/requireRole');
 
 const router = express.Router();
 
+/* Free-text note the user keeps on their own profile. */
+pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_note TEXT`).catch(() => {});
+
 /* Build a work profile for a user: hours worked (from finished, scheduled
    tickets they're assigned to), ticket counts, assigned vehicle(s), and the
    inventory they've consumed on jobs. */
@@ -11,7 +14,7 @@ async function buildProfile(userId) {
     const id = Number(userId);
     if (!Number.isInteger(id)) return null;
 
-    const u = await pool.query('SELECT id, name, email, role, created_at FROM users WHERE id = $1', [id]);
+    const u = await pool.query('SELECT id, name, email, role, created_at, profile_note FROM users WHERE id = $1', [id]);
     if (u.rowCount === 0) return null;
 
     const [stats, byType, vehicles, inventory, recent] = await Promise.all([
@@ -134,6 +137,18 @@ router.get('/', authenticate, async (req, res) => {
     }
 });
 
+/* PUT /api/profile/note { note } — update your OWN profile note. */
+router.put('/note', authenticate, async (req, res) => {
+    const note = typeof req.body.note === 'string' ? req.body.note : '';
+    try {
+        await pool.query('UPDATE users SET profile_note = $1 WHERE id = $2', [note, req.user.id]);
+        res.json({ note });
+    } catch (err) {
+        console.error('Profile note error:', err);
+        res.status(500).json({ error: 'Failed to save note.' });
+    }
+});
+
 /* GET /api/profile/leaderboard?period=month|all — hours-worked ranking (techs). */
 router.get('/leaderboard', authenticate, async (req, res) => {
     try {
@@ -151,6 +166,8 @@ router.get('/:id', requireRole('admin'), async (req, res) => {
     try {
         const data = await buildProfile(req.params.id);
         if (!data) return res.status(404).json({ error: 'User not found.' });
+        /* The profile note is private to its owner — never expose it to others. */
+        if (Number(req.params.id) !== req.user.id && data.user) data.user.profile_note = null;
         res.json(data);
     } catch (err) {
         console.error('Profile error:', err);

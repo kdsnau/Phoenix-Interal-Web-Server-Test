@@ -45,11 +45,32 @@ function extractText(msg) {
     }
     return '';
 }
-function authorOf(msg, userMap) {
-    if (msg.user)              return userMap[msg.user] || msg.user;
+/* The poster identity — for these bot-posted call logs this is the integration
+   name ("Incoming Phone Call" / "Customer Service Request") = the call category. */
+function posterOf(msg, userMap) {
     if (msg.bot_profile?.name) return msg.bot_profile.name;
     if (msg.username)          return msg.username;
+    if (msg.user)              return userMap[msg.user] || msg.user;
     return 'Unknown';
+}
+
+const MENTION_RE = /<@(U[A-Z0-9]+)(?:\|[^>]*)?>/g;
+
+/* First @user mention in the message → Slack user ID (who took the call). */
+function firstMention(text) {
+    const m = String(text || '').match(/<@(U[A-Z0-9]+)/);
+    return m ? m[1] : null;
+}
+
+/* Make Slack markup readable: resolve <@U..> mentions, <!date..> tokens, links. */
+function cleanText(text, userMap) {
+    return String(text || '')
+        .replace(/<!date\^\d+(?:\^[^|>]*)?\|([^>]+)>/g, '$1')         // date token → fallback
+        .replace(MENTION_RE, (_, uid) => `@${userMap[uid] || uid}`)   // user mention → @name
+        .replace(/<#C[A-Z0-9]+\|([^>]+)>/g, '#$1')                    // channel mention
+        .replace(/<(https?:\/\/[^|>]+)\|([^>]+)>/g, '$2')             // link with label
+        .replace(/<(https?:\/\/[^>]+)>/g, '$1')                       // bare link
+        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
 }
 function slackErr(e) {
     const code = e?.data?.error;
@@ -77,20 +98,34 @@ router.get('/', authenticate, async (req, res) => {
         /* Drop channel-join / system noise, keep human + bot posts. */
         messages = messages.filter(m => !m.subtype || m.subtype === 'bot_message');
 
-        const ids = [...new Set(messages.map(m => m.user).filter(Boolean))];
+        /* Resolve display names for posters AND for every @mentioned user. */
+        const ids = new Set();
+        for (const m of messages) {
+            if (m.user) ids.add(m.user);
+            for (const mm of extractText(m).matchAll(MENTION_RE)) ids.add(mm[1]);
+        }
         const userMap = {};
         for (const uid of ids) {
             try { const info = await slack.users.info({ user: uid }); userMap[uid] = info.user?.real_name || info.user?.name || uid; }
             catch { userMap[uid] = uid; }
         }
 
-        const calls = messages
-            .map(m => ({ ts: m.ts, date: new Date(Number(m.ts) * 1000).toISOString(), author: authorOf(m, userMap), text: extractText(m) }))
-            .filter(c => c.text);
+        const calls = messages.map(m => {
+            const raw = extractText(m);
+            const mid = firstMention(raw);
+            return {
+                ts:       m.ts,
+                date:     new Date(Number(m.ts) * 1000).toISOString(),
+                category: posterOf(m, userMap),                // bot/poster name → call category
+                receiver: mid ? (userMap[mid] || mid) : null,  // @mentioned user → who took the call
+                text:     cleanText(raw, userMap),
+            };
+        }).filter(c => c.text);
 
+        /* "Calls taken" tallies the receiver — the staff member who took the call. */
         const tally = {};
-        for (const c of calls) tally[c.author] = (tally[c.author] || 0) + 1;
-        const byPerson = Object.entries(tally).map(([author, count]) => ({ author, count })).sort((a, b) => b.count - a.count);
+        for (const c of calls) { const who = c.receiver || 'Unassigned'; tally[who] = (tally[who] || 0) + 1; }
+        const byPerson = Object.entries(tally).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
 
         res.json({ configured: true, channel, calls, byPerson });
     } catch (e) {

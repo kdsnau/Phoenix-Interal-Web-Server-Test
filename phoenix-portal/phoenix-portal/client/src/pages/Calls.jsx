@@ -10,6 +10,7 @@ export default function Calls() {
     const [error, setError]     = useState('');
     const [channel, setChannel] = useState('');
     const [chMsg, setChMsg]     = useState('');
+    const [cat, setCat]         = useState('all');   // category filter
 
     const load = () => {
         setLoading(true);
@@ -30,8 +31,14 @@ export default function Calls() {
         catch (e) { setChMsg(e.response?.data?.error || 'Save failed.'); }
     }
 
-    const calls    = data?.calls || [];
-    const byPerson = data?.byPerson || [];
+    const allCalls   = data?.calls || [];
+    const categories = [...new Set(allCalls.map(c => c.category).filter(Boolean))];
+    const calls      = cat === 'all' ? allCalls : allCalls.filter(c => c.category === cat);
+
+    /* Tally "calls taken" by receiver, respecting the active category filter. */
+    const tally = {};
+    for (const c of calls) { const who = c.receiver || 'Unassigned'; tally[who] = (tally[who] || 0) + 1; }
+    const byPerson = Object.entries(tally).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
 
     return (
         <Layout>
@@ -62,18 +69,30 @@ export default function Calls() {
                 </p>
             ) : (
                 <>
-                    {/* Calls taken, by person */}
+                    {/* Category filter */}
+                    {categories.length > 0 && (
+                        <div className="alarm-service-tabs" style={{ marginBottom: 16 }}>
+                            {['all', ...categories].map(c => (
+                                <button key={c} className={`alarm-tab ${cat === c ? 'active' : ''}`} onClick={() => setCat(c)}>
+                                    {c === 'all' ? 'All' : c}{' '}
+                                    <span className="alarm-tab-count">{c === 'all' ? allCalls.length : allCalls.filter(x => x.category === c).length}</span>
+                                </button>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Calls taken, by receiver */}
                     <div className="dash-section-label" style={{ marginBottom: 10 }}>Calls Taken</div>
                     {byPerson.length === 0 ? (
                         <div style={{ color: 'var(--text-dim)', fontSize: 13, marginBottom: 20 }}>No calls in the channel yet.</div>
                     ) : (
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 24 }}>
                             {byPerson.map(p => (
-                                <span key={p.author} style={{
+                                <span key={p.name} style={{
                                     fontSize: 13, border: '1px solid var(--border)', borderRadius: 4,
                                     padding: '6px 12px', background: 'var(--bg-2)', color: 'var(--text-hi)',
                                 }}>
-                                    @{p.author} <span style={{ color: 'var(--accent)', fontFamily: 'var(--font-mono)' }}>· {p.count}</span>
+                                    {p.name} <span style={{ color: 'var(--accent)', fontFamily: 'var(--font-mono)' }}>· {p.count}</span>
                                 </span>
                             ))}
                         </div>
@@ -83,17 +102,20 @@ export default function Calls() {
                     <div className="dash-section-label" style={{ marginBottom: 10 }}>Recent Calls</div>
                     <div className="table-card">
                         <table className="data-table">
-                            <thead><tr><th style={{ width: 160 }}>When</th><th style={{ width: 140 }}>Taken By</th><th>Details</th></tr></thead>
+                            <thead><tr><th style={{ width: 150 }}>When</th><th style={{ width: 160 }}>Category</th><th style={{ width: 140 }}>Taken By</th><th>Details</th></tr></thead>
                             <tbody>
                                 {calls.length === 0 && (
-                                    <tr><td colSpan={3} style={{ color: 'var(--text-dim)', textAlign: 'center', padding: 24 }}>No calls found.</td></tr>
+                                    <tr><td colSpan={4} style={{ color: 'var(--text-dim)', textAlign: 'center', padding: 24 }}>No calls found.</td></tr>
                                 )}
                                 {calls.map((c, i) => (
                                     <tr key={c.ts || i}>
                                         <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>
                                             {new Date(c.date).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                                         </td>
-                                        <td style={{ color: 'var(--text-hi)' }}>@{c.author}</td>
+                                        <td style={{ fontSize: 12 }}>
+                                            <span className="tag tag-blue">{c.category}</span>
+                                        </td>
+                                        <td style={{ color: 'var(--text-hi)' }}>{c.receiver || '—'}</td>
                                         <td style={{ whiteSpace: 'pre-wrap', fontSize: 13 }}>{c.text}</td>
                                     </tr>
                                 ))}

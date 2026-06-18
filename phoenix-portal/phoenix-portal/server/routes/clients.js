@@ -309,6 +309,7 @@ router.post('/import-quickbooks', requireRole('admin'), upload.array('files', 12
     try {
         const customers = new Set();   // every QB top-level customer name we saw
         const parsedTx  = [];          // { name, kind, amount, num, date, desc }
+        const acctByName = new Map();  // lower(top-level customer) → QB "Account No." (from a customer-list export)
         let rows = 0;
 
         for (const file of req.files) {
@@ -338,11 +339,31 @@ router.post('/import-quickbooks', requireRole('admin'), upload.array('files', 12
                 if (!name || isJunkCustomer(name)) continue;
                 customers.add(name);
 
+                /* Customer-list exports carry an "Account No." — remember each
+                   customer's number so invoices (which only list a name) can match
+                   clients by number, not just by name. First (top-level) row wins. */
+                if (col['account no.'] != null) {
+                    const acct = String(row[col['account no.']] ?? '').trim();
+                    if (acct && !acctByName.has(name.toLowerCase())) acctByName.set(name.toLowerCase(), acct);
+                }
+
                 if (!kind) continue;
                 const amount = qbAmount(row[col['amount']]);
                 if (amount == null || amount === 0) continue;
+                const total = Math.abs(amount);
                 const num = String(row[col['num']] ?? '').trim() || null;
                 const sub = subAccount(raw);
+
+                /* Invoices split into paid / balance via the "Open Balance" column:
+                   total = Amount, balance = Open Balance (blank ⇒ fully paid),
+                   paid = total − balance. Payments aren't split. */
+                let balance_due = null, paid_amount = null;
+                if (kind === 'invoice') {
+                    const ob = qbAmount(row[col['open balance']]);
+                    balance_due = ob != null ? Math.min(Math.abs(ob), total) : 0;
+                    paid_amount = Math.max(0, total - balance_due);
+                }
+
                 let desc;
                 if (kind === 'payment') {
                     const meth = String(row[col['pay meth']] ?? '').trim();
@@ -353,7 +374,8 @@ router.post('/import-quickbooks', requireRole('admin'), upload.array('files', 12
                 if (sub) desc += ` — ${sub}`;
                 parsedTx.push({
                     name, kind,
-                    amount: Math.abs(amount),
+                    amount: total,
+                    balance_due, paid_amount,
                     num,
                     date: qbDate(row[col['date']]),
                     desc: desc.slice(0, 300),
@@ -361,50 +383,99 @@ router.post('/import-quickbooks', requireRole('admin'), upload.array('files', 12
             }
         }
 
-        const existing = await pool.query('SELECT id, name FROM clients');
+        const existing = await pool.query('SELECT id, name, customer_id FROM clients');
         const idByName = new Map(existing.rows.map(r => [(r.name || '').trim().toLowerCase(), r.id]));
         const have     = new Set(idByName.keys());
 
-        /* ── Ledger: insert invoice/payment rows, deduped on re-run. Matched customers
-              attach to a client_id; unmatched ones are stored by customer_name so they
-              still appear (flagged "unmonitored") on the Financials Client Billing tab. ── */
-        const existingRefs = await pool.query(
-            "SELECT client_id, customer_name, type, description, date, amount FROM client_transactions WHERE source = 'quickbooks'"
+        /* Number-first matching. A client's customer_id is its QB account number
+           (usually 4 digits). Index clients by that number (raw + 4-digit form),
+           and resolve each transaction's number from the customer-list Account No.
+           or the invoice Num prefix ("1408-348" → "1408"; "FC 2605" has none). */
+        const fourDigit = s => { const m = String(s || '').match(/(?<!\d)\d{4}(?!\d)/); return m ? m[0] : null; };
+        const numKey    = s => String(s || '').trim().toUpperCase().replace(/\s+/g, '');
+        const idByNum   = new Map();
+        for (const r of existing.rows) {
+            const raw = numKey(r.customer_id);
+            if (raw && !idByNum.has(raw)) idByNum.set(raw, r.id);
+            const fd = fourDigit(r.customer_id);
+            if (fd && !idByNum.has(fd)) idByNum.set(fd, r.id);
+        }
+        const resolveClientId = (t) => {
+            const acct   = acctByName.get(t.name.toLowerCase());
+            const prefix = (String(t.num || '').match(/^(\d{3,5})-\d+/) || [])[1] || null;
+            for (const cand of [numKey(acct), fourDigit(acct), numKey(prefix), fourDigit(prefix)]) {
+                if (cand && idByNum.has(cand)) return idByNum.get(cand);
+            }
+            return idByName.get(t.name.toLowerCase()) || null;   // last resort: by name
+        };
+
+        /* ── Ledger ──
+           Invoices upsert on their QuickBooks Num (ref_num) so re-importing an
+           updated report refreshes amount / paid / balance in place. Payments and
+           any numberless rows dedupe on a content key so repeats don't duplicate.
+           Unmatched customers are stored by customer_name so they still appear
+           (flagged "unmonitored") on the Financials Client Billing tab. ── */
+        const existingQb = await pool.query(
+            "SELECT id, client_id, customer_name, type, description, date, amount, ref_num FROM client_transactions WHERE source = 'quickbooks'"
         );
         const today = new Date().toISOString().slice(0, 10);
         const ymd   = d => (d instanceof Date ? d.toISOString().slice(0, 10) : d);
-        /* Dedupe key. The description carries the QB doc number + sub-job + pay method,
-           so distinct line items that share one check/invoice number across sub-jobs stay
-           separate, while a true re-import of the same row collapses. */
         const txKey = (cid, name, kind, date, amount, desc) =>
             `${cid ? `c|${cid}` : `u|${(name || '').toLowerCase()}`}|${kind}|${ymd(date)}|${Number(amount)}|${desc}`;
 
-        const seen = new Set(existingRefs.rows.map(r =>
-            txKey(r.client_id, r.customer_name, r.type, r.date, r.amount, r.description)
-        ));
+        const seen     = new Set();
+        const invByRef = new Map();   // QB invoice Num → existing row id (for balance refresh)
+        for (const r of existingQb.rows) {
+            if (r.type === 'invoice' && r.ref_num) invByRef.set(String(r.ref_num), r.id);
+            else seen.add(txKey(r.client_id, r.customer_name, r.type, r.date, r.amount, r.description));
+        }
+
         const toInsert = [];
+        const toUpdate = [];
         const matched  = new Set();
         for (const t of parsedTx) {
-            const cid  = idByName.get(t.name.toLowerCase()) || null;
+            const cid  = resolveClientId(t);
             const date = t.date || today;
             if (cid) matched.add(cid);
+
+            /* Invoices: refresh in place when the Num already exists, else insert. */
+            if (t.kind === 'invoice' && t.num) {
+                const existingId = invByRef.get(String(t.num));
+                if (existingId && existingId > 0) {
+                    toUpdate.push([existingId, cid, cid ? null : t.name, t.desc, t.amount, t.balance_due, t.paid_amount, date]);
+                } else if (!existingId) {
+                    invByRef.set(String(t.num), -1);   // claim the Num so a dup line in this file doesn't re-insert
+                    toInsert.push([cid, cid ? null : t.name, t.desc, t.amount, t.balance_due, t.paid_amount, t.kind, date, req.user.id, 'quickbooks', t.num]);
+                }
+                continue;
+            }
+
+            /* Payments / numberless rows: content-key dedupe. */
             const key = txKey(cid, t.name, t.kind, date, t.amount, t.desc);
             if (seen.has(key)) continue;
             seen.add(key);
-            toInsert.push([cid, cid ? null : t.name, t.desc, t.amount, t.kind, date, req.user.id, 'quickbooks', t.num]);
+            toInsert.push([cid, cid ? null : t.name, t.desc, t.amount, t.balance_due, t.paid_amount, t.kind, date, req.user.id, 'quickbooks', t.num]);
         }
         for (let i = 0; i < toInsert.length; i += 500) {
             const chunk = toInsert.slice(i, i + 500);
             const ph = chunk.map((_, j) => {
-                const b = j * 9;
-                return `($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8},$${b + 9})`;
+                const b = j * 11;
+                return `($${b+1},$${b+2},$${b+3},$${b+4},$${b+5},$${b+6},$${b+7},$${b+8},$${b+9},$${b+10},$${b+11})`;
             }).join(',');
             await pool.query(
                 `INSERT INTO client_transactions
-                    (client_id, customer_name, description, amount, type, date, created_by, source, ref_num)
+                    (client_id, customer_name, description, amount, balance_due, paid_amount, type, date, created_by, source, ref_num)
                  VALUES ${ph}`,
                 chunk.flat()
             );
+        }
+        for (let i = 0; i < toUpdate.length; i += 500) {
+            const chunk = toUpdate.slice(i, i + 500);
+            await Promise.all(chunk.map(u => pool.query(
+                `UPDATE client_transactions
+                    SET client_id = $2, customer_name = $3, description = $4,
+                        amount = $5, balance_due = $6, paid_amount = $7, date = $8
+                  WHERE id = $1`, u)));
         }
         const txMatched     = toInsert.filter(r => r[0] !== null).length;
         const txUnmonitored = toInsert.length - txMatched;
@@ -431,6 +502,7 @@ router.post('/import-quickbooks', requireRole('admin'), upload.array('files', 12
             rows,
             qb_customers: customers.size,
             tx_added: toInsert.length,
+            tx_updated: toUpdate.length,
             tx_matched: txMatched,
             tx_unmonitored: txUnmonitored,
             clients_matched: matched.size,

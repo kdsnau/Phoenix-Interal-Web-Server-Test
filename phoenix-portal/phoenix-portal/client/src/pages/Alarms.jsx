@@ -1294,8 +1294,8 @@ export default function Alarms() {
             const { data } = await api.post('/clients/import-quickbooks', fd, {
                 headers: { 'Content-Type': 'multipart/form-data' },
             });
-            const txBits = data.tx_added > 0
-                ? ` · ${data.tx_added} transactions (${data.tx_matched} to ${data.clients_matched} clients, ${data.tx_unmonitored} unmonitored)`
+            const txBits = (data.tx_added > 0 || data.tx_updated > 0)
+                ? ` · ${data.tx_added} new${data.tx_updated > 0 ? `, ${data.tx_updated} refreshed` : ''} transactions (${data.tx_matched} to ${data.clients_matched} clients, ${data.tx_unmonitored} unmonitored)`
                 : '';
             setImportMsg(`${data.qb_customers} customers${txBits} · ${data.added} new unmonitored · ${data.total} total`);
             loadUnmonitored();

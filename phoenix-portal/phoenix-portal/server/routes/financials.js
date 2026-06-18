@@ -368,4 +368,18 @@ router.post('/clear-unmonitored', requireRole('admin'), async (_req, res) => {
     } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to clear unmonitored entries.' }); }
 });
 
+/* POST /api/financials/clear-invoices — one-time blank-slate wipe of every invoice
+   row (any source) ahead of re-importing from QuickBooks. Payments are preserved.
+   GET-style preview when commit !== true; deletes when commit === true. */
+router.post('/clear-invoices', requireRole('admin'), async (req, res) => {
+    try {
+        if (req.body.commit !== true) {
+            const r = await pool.query("SELECT COUNT(*)::int AS n FROM client_transactions WHERE type = 'invoice'");
+            return res.json({ committed: false, count: r.rows[0].n });
+        }
+        const r = await pool.query("DELETE FROM client_transactions WHERE type = 'invoice'");
+        res.json({ committed: true, deleted: r.rowCount });
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to clear invoices.' }); }
+});
+
 module.exports = router;

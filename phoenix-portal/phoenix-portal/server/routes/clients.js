@@ -2,7 +2,6 @@ const express = require('express');
 const multer  = require('multer');
 const fs      = require('fs');
 const path    = require('path');
-const { execFile } = require('child_process');
 const XLSX    = require('xlsx');
 const { WebClient } = require('@slack/web-api');
 const pool    = require('../db/pool');
@@ -761,128 +760,6 @@ router.post('/prune-inactive', requireRole('admin'), async (req, res) => {
             .then(() => { removed++; }).catch(e => console.error('prune remove failed:', c.id, e.message));
     }
     res.json({ committed: true, ...preview, removed });
-});
-
-/* POST /api/clients/scrape-invoices  { commit?, path?, limit? } — read invoice
-   PDFs from each customer folder (via pdftotext), parse amount/date/invoice #,
-   and create client_transaction invoices linked by the 4-digit customer number.
-   Dry-run by default; deduped by invoice #; bounded per call by `limit`. */
-const execFileP = (cmd, args) => new Promise((resolve, reject) =>
-    execFile(cmd, args, { maxBuffer: 24 * 1024 * 1024, timeout: 20000 }, (err, stdout) => err ? reject(err) : resolve(stdout)));
-
-function parseInvoice(text) {
-    const pick = (labels) => {
-        for (const l of labels) {
-            const m = text.match(new RegExp(`\\b${l}\\b[^\\S\\n]+\\$\\s*([\\d,]+\\.\\d{2})`, 'i'));
-            if (m) return Number(m[1].replace(/,/g, ''));
-        }
-        return null;
-    };
-    const toISO = (mdy) => {
-        const m = String(mdy).match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
-        if (!m) return null;
-        let [, mo, d, y] = m; if (y.length === 2) y = '20' + y;
-        return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
-    };
-    const inv  = text.match(/Invoice #\s*([A-Za-z0-9][A-Za-z0-9-]*)/i);
-    const cust = text.match(/Customer #\s*(\d{3,6})/i);
-    const date = text.match(/Invoice Date[\s\S]{0,80}?(\d{1,2}\/\d{1,2}\/\d{2,4})/i) || text.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})/);
-
-    const total   = pick(['Total', 'Subtotal']);
-    const balance = pick(['Balance']);
-    const credits = pick(['Credits', 'Payments']);
-    /* Paid = explicit credits, else Total − Balance. Balance defaults to Total. */
-    const bal  = balance != null ? balance : total;
-    const paid = credits != null ? credits : (total != null && bal != null ? Math.max(0, total - bal) : null);
-    return {
-        invoiceNum:  inv  ? inv[1]  : null,
-        customerNum: cust ? cust[1] : null,
-        date:        date ? toISO(date[1]) : null,
-        amount:      total,          /* total invoiced */
-        balance_due: bal,
-        paid_amount: paid,
-    };
-}
-
-router.post('/scrape-invoices', requireRole('admin'), async (req, res) => {
-    const commit = req.body.commit === true;
-    const root   = (req.body.path || process.env.CLIENTS_DRIVE_ROOT || '/mnt/sitemaps/Invoices/Invoices - Customers').trim();
-    const LIMIT  = Math.min(Number(req.body.limit) || 250, 1000);
-    const fourDigit = s => { const m = String(s || '').match(/(?<!\d)\d{4}(?!\d)/); return m ? m[0] : null; };
-
-    const clients = (await pool.query('SELECT id, name, customer_id FROM clients')).rows;
-    const clientByNum = new Map();
-    for (const c of clients) { const n = fourDigit(c.customer_id); if (n && !clientByNum.has(n)) clientByNum.set(n, c); }
-
-    const existingRefs = new Set(
-        (await pool.query("SELECT ref_num FROM client_transactions WHERE ref_num IS NOT NULL").catch(() => ({ rows: [] })))
-            .rows.map(r => String(r.ref_num))
-    );
-
-    let folders;
-    try { folders = (await fs.promises.readdir(root, { withFileTypes: true })).filter(e => e.isDirectory()).map(e => e.name); }
-    catch (e) { return res.status(502).json({ error: `Cannot read invoices folder at ${root} (${e.code || e.message}).`, root }); }
-
-    const toCreate = [];
-    let skippedDup = 0, skippedNoData = 0, skippedNoClient = 0, reachedLimit = false;
-
-    outer:
-    for (const folder of folders) {
-        const num = fourDigit(folder);
-        if (!num) continue;
-        const client = clientByNum.get(num);
-        if (!client) { skippedNoClient++; continue; }   /* only scrape folders we have a client for */
-
-        let files;
-        try { files = (await fs.promises.readdir(path.join(root, folder), { withFileTypes: true })).filter(e => e.isFile() && /\.pdf$/i.test(e.name)).map(e => e.name); }
-        catch { continue; }
-
-        for (const file of files) {
-            const fnRef = (file.match(/(?<!\d)(\d{3,6}-\d+)(?!\d)/) || [])[1];   /* invoice # often in the filename */
-            if (fnRef && existingRefs.has(fnRef)) { skippedDup++; continue; }
-            if (toCreate.length >= LIMIT) { reachedLimit = true; break outer; }
-
-            let text;
-            try { text = await execFileP('pdftotext', ['-layout', path.join(root, folder, file), '-']); }
-            catch (e) { skippedNoData++; if (e.code === 'ENOENT') return res.status(503).json({ error: 'pdftotext is not installed on the server (sudo apt install poppler-utils).' }); continue; }
-
-            const inv = parseInvoice(text);
-            const ref = inv.invoiceNum || fnRef;
-            if (!ref || inv.amount == null) { skippedNoData++; continue; }
-            if (existingRefs.has(ref)) { skippedDup++; continue; }
-            existingRefs.add(ref);
-            toCreate.push({
-                client_id: client.id, client: client.name, ref, date: inv.date,
-                amount: inv.amount, balance_due: inv.balance_due, paid_amount: inv.paid_amount,
-            });
-        }
-    }
-
-    const sum = key => toCreate.reduce((s, t) => s + (Number(t[key]) || 0), 0);
-    const preview = {
-        root,
-        to_create:         toCreate.length,
-        total_amount:      sum('amount'),
-        total_balance_due: sum('balance_due'),
-        total_paid:        sum('paid_amount'),
-        skipped_dup:       skippedDup,
-        skipped_no_data:   skippedNoData,
-        skipped_no_client: skippedNoClient,
-        reached_limit:     reachedLimit,
-        sample: toCreate.slice(0, 50).map(t =>
-            `${t.client} — ${t.ref} — ${t.date || '?'} — total $${Number(t.amount).toFixed(2)} · paid $${Number(t.paid_amount || 0).toFixed(2)} · due $${Number(t.balance_due ?? t.amount).toFixed(2)}`),
-    };
-    if (!commit) return res.json({ committed: false, ...preview });
-
-    let created = 0;
-    for (const t of toCreate) {
-        await pool.query(
-            `INSERT INTO client_transactions (client_id, type, amount, balance_due, paid_amount, date, description, ref_num, source, customer_name)
-             VALUES ($1, 'invoice', $2, $3, $4, $5, $6, $7, 'pdf', $8)`,
-            [t.client_id, t.amount, t.balance_due ?? null, t.paid_amount ?? null, t.date || null, `Invoice ${t.ref}`, t.ref, t.client]
-        ).then(() => { created++; }).catch(e => console.error('scrape insert failed:', t.ref, e.message));
-    }
-    res.json({ committed: true, ...preview, created });
 });
 
 /* GET /api/clients/:id */

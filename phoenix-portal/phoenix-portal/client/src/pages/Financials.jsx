@@ -217,29 +217,48 @@ function ExpensesTable({ records, isAdmin, onDelete }) {
 /* -----------------------------------------------------------------------
    Client transactions table
    ----------------------------------------------------------------------- */
-function ClientTransactionsTable({ transactions }) {
+function ClientTransactionsTable({ transactions, canDelete, onDelete }) {
+    const [filter, setFilter] = useState('all');
     if (transactions.length === 0) return <div className="fin-empty">No client transactions found.</div>;
     const fmt = n => `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
 
     const invoices    = transactions.filter(t => t.type === 'invoice');
+    const payments    = transactions.filter(t => t.type === 'payment');
     const sumInvoiced = invoices.reduce((s, t) => s + (Number(t.amount) || 0), 0);
     const sumPaid     = invoices.reduce((s, t) => s + (Number(t.paid_amount) || 0), 0);
     const sumBalance  = invoices.reduce((s, t) => s + (t.balance_due != null ? Number(t.balance_due) : (Number(t.amount) || 0)), 0);
+    const sumPayments = payments.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+
+    const rows    = filter === 'invoice' ? invoices : filter === 'payment' ? payments : transactions;
+    const colSpan = canDelete ? 8 : 7;
 
     return (
         <>
-            {invoices.length > 0 && (
+            <div className="fin-section-tabs" style={{ marginBottom: 16 }}>
+                <button className={`fin-tab ${filter === 'all' ? 'active' : ''}`}     onClick={() => setFilter('all')}>All<span className="fin-tab-count">{transactions.length}</span></button>
+                <button className={`fin-tab ${filter === 'invoice' ? 'active' : ''}`} onClick={() => setFilter('invoice')}>Invoices<span className="fin-tab-count">{invoices.length}</span></button>
+                <button className={`fin-tab ${filter === 'payment' ? 'active' : ''}`} onClick={() => setFilter('payment')}>Payments<span className="fin-tab-count">{payments.length}</span></button>
+            </div>
+
+            {filter === 'payment' ? (
+                <div className="stats-grid" style={{ marginBottom: 16 }}>
+                    <div className="stat-card"><div className="stat-label">Total Payments</div><div className="stat-value" style={{ color: 'var(--green)' }}>{fmt(sumPayments)}</div></div>
+                </div>
+            ) : invoices.length > 0 && (
                 <div className="stats-grid" style={{ marginBottom: 16 }}>
                     <div className="stat-card"><div className="stat-label">Total Invoiced</div><div className="stat-value">{fmt(sumInvoiced)}</div></div>
                     <div className="stat-card"><div className="stat-label">Paid</div><div className="stat-value" style={{ color: 'var(--green)' }}>{fmt(sumPaid)}</div></div>
                     <div className="stat-card"><div className="stat-label">Balance Due</div><div className="stat-value" style={{ color: 'var(--red)' }}>{fmt(sumBalance)}</div></div>
                 </div>
             )}
+
             <div className="fin-table-wrap">
                 <table className="fin-table">
-                    <thead><tr><th>Client</th><th>Description</th><th>Type</th><th>Total</th><th>Paid</th><th>Balance Due</th><th>Date</th></tr></thead>
+                    <thead><tr><th>Client</th><th>Description</th><th>Type</th><th>Total</th><th>Paid</th><th>Balance Due</th><th>Date</th>{canDelete && <th></th>}</tr></thead>
                     <tbody>
-                        {transactions.map(t => {
+                        {rows.length === 0 ? (
+                            <tr><td colSpan={colSpan} className="fin-empty">No {filter === 'all' ? '' : `${filter} `}entries.</td></tr>
+                        ) : rows.map(t => {
                             const isInvoice = t.type === 'invoice';
                             const total   = Number(t.amount) || 0;
                             const paid    = t.paid_amount != null ? Number(t.paid_amount) : (t.type === 'payment' ? total : null);
@@ -259,6 +278,11 @@ function ClientTransactionsTable({ transactions }) {
                                     <td className="fin-amount-income fin-mono">{paid != null ? fmt(paid) : '—'}</td>
                                     <td className="fin-amount-expense fin-mono">{balance != null ? fmt(balance) : '—'}</td>
                                     <td className="fin-mono">{t.date ? new Date(t.date).toLocaleDateString() : new Date(t.created_at).toLocaleDateString()}</td>
+                                    {canDelete && (
+                                        <td style={{ textAlign: 'right' }}>
+                                            <button className="btn btn-ghost" style={{ fontSize: 11, color: 'var(--red)' }} onClick={() => onDelete(t.id)}>Delete</button>
+                                        </td>
+                                    )}
                                 </tr>
                             );
                         })}
@@ -352,7 +376,8 @@ const money = n => `$${Number(n || 0).toLocaleString()}`;
 
 export default function Financials() {
     const { user } = useAuth();
-    const isAdmin  = user.role === 'admin';
+    const isAdmin   = user.role === 'admin';
+    const canManage = user.role === 'admin' || user.role === 'accounting';
 
     const [workOrders, setWorkOrders] = useState([]);
     const [records,    setRecords]    = useState([]);
@@ -420,6 +445,14 @@ export default function Financials() {
             const ctx = await api.get('/financials/client-transactions').catch(() => ({ data: [] }));
             setClientTx(ctx.data);
         } catch (e) { setClearMsg(e.response?.data?.error || 'Clear failed.'); }
+    }
+    async function deleteClientTx(id) {
+        if (!confirm('Delete this billing entry? This cannot be undone.')) return;
+        try {
+            await api.delete(`/financials/client-transactions/${id}`);
+            setClientTx(prev => prev.filter(t => t.id !== id));
+            refreshSummary();
+        } catch (e) { setClearMsg(e.response?.data?.error || 'Delete failed.'); }
     }
     async function clearInvoices() {
         let count;
@@ -514,7 +547,7 @@ export default function Financials() {
                                 {clearMsg && <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{clearMsg}</span>}
                             </div>
                         )}
-                        <ClientTransactionsTable transactions={clientTx} />
+                        <ClientTransactionsTable transactions={clientTx} canDelete={canManage} onDelete={deleteClientTx} />
                     </>
                 )}
             </div>

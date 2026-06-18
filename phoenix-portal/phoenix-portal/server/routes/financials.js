@@ -200,6 +200,17 @@ router.get('/client-transactions', requireRole('accounting', 'admin'), async (re
     }
 });
 
+/* DELETE /api/financials/client-transactions/:id
+   Remove a single billing entry regardless of source or linked client
+   (covers unmonitored rows that have no client_id). */
+router.delete('/client-transactions/:id', requireRole('accounting', 'admin'), async (req, res) => {
+    try {
+        const r = await pool.query('DELETE FROM client_transactions WHERE id = $1 RETURNING id', [req.params.id]);
+        if (r.rowCount === 0) return res.status(404).json({ error: 'Entry not found.' });
+        res.json({ success: true });
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to delete entry.' }); }
+});
+
 /* GET /api/financials/inventory
    Returns stock-on-hand totals at cost and at sale price,
    broken down by category — only active items with qty > 0. */

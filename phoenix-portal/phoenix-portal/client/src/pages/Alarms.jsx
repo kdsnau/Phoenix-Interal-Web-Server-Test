@@ -1217,6 +1217,72 @@ function PruneModal({ onClose, onDone }) {
     );
 }
 
+/* Admin: scrape invoice PDFs from the Customers share into client transactions.
+   Preview first; deduped by invoice #; bounded per run. */
+function ScrapeModal({ onClose, onDone }) {
+    const [preview, setPreview]       = useState(null);
+    const [loading, setLoading]       = useState(true);
+    const [committing, setCommitting] = useState(false);
+    const [error, setError]           = useState('');
+    const [result, setResult]         = useState(null);
+
+    useEffect(() => {
+        api.post('/clients/scrape-invoices', { commit: false })
+            .then(r => setPreview(r.data))
+            .catch(e => setError(e.response?.data?.error || 'Failed to scan invoices.'))
+            .finally(() => setLoading(false));
+    }, []);
+
+    async function commit() {
+        if (!confirm(`Create ${preview.to_create} invoice transaction(s)?`)) return;
+        setCommitting(true); setError('');
+        try { const { data } = await api.post('/clients/scrape-invoices', { commit: true }); setResult(data); onDone(); }
+        catch (e) { setError(e.response?.data?.error || 'Scrape failed.'); }
+        finally { setCommitting(false); }
+    }
+
+    const box = { maxHeight: 240, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 4, padding: 8, fontSize: 12, fontFamily: 'var(--font-mono)' };
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 640, width: '100%' }}>
+                <div className="modal-title">Scrape Invoice PDFs → Transactions</div>
+                {error && <div className="error-msg">{error}</div>}
+                {loading ? (
+                    <p style={{ color: 'var(--text-dim)' }}>Scanning invoice PDFs… this can take a minute.</p>
+                ) : preview && (
+                    <>
+                        <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>
+                            {preview.to_create} new invoice(s) — total ${Number(preview.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })},
+                            {' '}paid ${Number(preview.total_paid).toLocaleString(undefined, { minimumFractionDigits: 2 })},
+                            {' '}due ${Number(preview.total_balance_due).toLocaleString(undefined, { minimumFractionDigits: 2 })}.
+                            {preview.skipped_dup > 0 ? ` ${preview.skipped_dup} already imported.` : ''}
+                            {preview.skipped_no_data > 0 ? ` ${preview.skipped_no_data} unparseable.` : ''}
+                            {preview.reached_limit ? ' (Batch limit hit — re-run to continue.)' : ''}
+                        </p>
+                        <div className="alarm-label" style={{ margin: '8px 0 6px' }}>Sample ({preview.sample.length})</div>
+                        <div style={box}>
+                            {preview.sample.length === 0 ? <span style={{ color: 'var(--text-dim)' }}>Nothing new to import.</span> :
+                                preview.sample.map((s, i) => <div key={i}>{s}</div>)}
+                        </div>
+                        {result ? (
+                            <>
+                                <div style={{ marginTop: 12, color: 'var(--green)', fontSize: 13 }}>Done — created {result.created} transaction(s).{result.reached_limit ? ' Re-run to import the rest.' : ''}</div>
+                                <div className="modal-actions"><button className="btn btn-primary" onClick={onClose}>Close</button></div>
+                            </>
+                        ) : (
+                            <div className="modal-actions">
+                                <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                                <button className="btn btn-primary" onClick={commit} disabled={committing || preview.to_create === 0}>{committing ? 'Importing…' : 'Import invoices'}</button>
+                            </div>
+                        )}
+                    </>
+                )}
+            </div>
+        </div>
+    );
+}
+
 export default function Alarms() {
     const { user }                          = useAuth();
     const [clients, setClients]             = useState([]);
@@ -1228,6 +1294,7 @@ export default function Alarms() {
     const [showAddClient, setShowAddClient] = useState(false);
     const [showRebuild, setShowRebuild]     = useState(false);
     const [showPrune, setShowPrune]         = useState(false);
+    const [showScrape, setShowScrape]       = useState(false);
     const [permits, setPermits]       = useState([]);
     const [permitsLoading, setPermitsLoading] = useState(false);
 
@@ -1328,6 +1395,7 @@ export default function Alarms() {
                             <>
                                 <button className="btn btn-ghost" onClick={() => setShowRebuild(true)}>↻ Rebuild from drive</button>
                                 <button className="btn btn-ghost" onClick={() => setShowPrune(true)}>✕ Prune inactive</button>
+                                <button className="btn btn-ghost" onClick={() => setShowScrape(true)}>⬇ Scrape invoices</button>
                                 <button className="btn btn-primary" onClick={() => setShowAddClient(true)}>
                                     + Add Client
                                 </button>
@@ -1488,6 +1556,12 @@ export default function Alarms() {
                 {showPrune && (
                     <PruneModal
                         onClose={() => setShowPrune(false)}
+                        onDone={fetchClients}
+                    />
+                )}
+                {showScrape && (
+                    <ScrapeModal
+                        onClose={() => setShowScrape(false)}
                         onDone={fetchClients}
                     />
                 )}

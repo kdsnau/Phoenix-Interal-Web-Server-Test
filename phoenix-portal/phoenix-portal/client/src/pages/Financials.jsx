@@ -219,41 +219,53 @@ function ExpensesTable({ records, isAdmin, onDelete }) {
    ----------------------------------------------------------------------- */
 function ClientTransactionsTable({ transactions }) {
     if (transactions.length === 0) return <div className="fin-empty">No client transactions found.</div>;
-    const totals = transactions.reduce((acc, t) => { acc[t.type] = (acc[t.type] || 0) + Number(t.amount); return acc; }, {});
+    const fmt = n => `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+
+    const invoices    = transactions.filter(t => t.type === 'invoice');
+    const sumInvoiced = invoices.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+    const sumPaid     = invoices.reduce((s, t) => s + (Number(t.paid_amount) || 0), 0);
+    const sumBalance  = invoices.reduce((s, t) => s + (t.balance_due != null ? Number(t.balance_due) : (Number(t.amount) || 0)), 0);
+
     return (
-        <div className="fin-table-wrap">
-            <table className="fin-table">
-                <thead><tr><th>Client</th><th>Description</th><th>Amount</th><th>Type</th><th>Date</th></tr></thead>
-                <tbody>
-                    {transactions.map(t => (
-                        <tr key={t.id}>
-                            <td>
-                                <div className="fin-name">
-                                    {t.client_name}
-                                    {t.unmonitored && <span className="tag-dim" style={{ marginLeft: 6, fontSize: 10 }}>unmonitored</span>}
-                                </div>
-                                {t.customer_id && <div className="fin-mono">{t.customer_id}</div>}
-                            </td>
-                            <td style={{ color: '#c9d4e0' }}>{t.description}</td>
-                            <td className={t.type === 'payment' ? 'fin-amount-income' : 'fin-amount-expense'}>
-                                {t.type === 'payment' ? '+' : ''}${Number(t.amount).toLocaleString()}
-                            </td>
-                            <td>
-                                <span className={t.type === 'payment' ? 'tag-green' : t.type === 'invoice' ? 'tag-yellow' : 'tag-dim'}>{t.type}</span>
-                            </td>
-                            <td className="fin-mono">{t.date ? new Date(t.date).toLocaleDateString() : new Date(t.created_at).toLocaleDateString()}</td>
-                        </tr>
-                    ))}
-                    {Object.entries(totals).map(([type, sum]) => (
-                        <tr key={`total-${type}`} style={{ borderTop: '1px solid #2a3040' }}>
-                            <td colSpan={2} style={{ color: '#5c6e82', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{type} total</td>
-                            <td className={type === 'payment' ? 'fin-amount-income' : 'fin-amount-expense'}>${sum.toLocaleString()}</td>
-                            <td /><td />
-                        </tr>
-                    ))}
-                </tbody>
-            </table>
-        </div>
+        <>
+            {invoices.length > 0 && (
+                <div className="stats-grid" style={{ marginBottom: 16 }}>
+                    <div className="stat-card"><div className="stat-label">Total Invoiced</div><div className="stat-value">{fmt(sumInvoiced)}</div></div>
+                    <div className="stat-card"><div className="stat-label">Paid</div><div className="stat-value" style={{ color: 'var(--green)' }}>{fmt(sumPaid)}</div></div>
+                    <div className="stat-card"><div className="stat-label">Balance Due</div><div className="stat-value" style={{ color: 'var(--red)' }}>{fmt(sumBalance)}</div></div>
+                </div>
+            )}
+            <div className="fin-table-wrap">
+                <table className="fin-table">
+                    <thead><tr><th>Client</th><th>Description</th><th>Type</th><th>Total</th><th>Paid</th><th>Balance Due</th><th>Date</th></tr></thead>
+                    <tbody>
+                        {transactions.map(t => {
+                            const isInvoice = t.type === 'invoice';
+                            const total   = Number(t.amount) || 0;
+                            const paid    = t.paid_amount != null ? Number(t.paid_amount) : (t.type === 'payment' ? total : null);
+                            const balance = t.balance_due != null ? Number(t.balance_due) : (isInvoice ? total : null);
+                            return (
+                                <tr key={t.id}>
+                                    <td>
+                                        <div className="fin-name">
+                                            {t.client_name}
+                                            {t.unmonitored && <span className="tag-dim" style={{ marginLeft: 6, fontSize: 10 }}>unmonitored</span>}
+                                        </div>
+                                        {t.customer_id && <div className="fin-mono">{t.customer_id}</div>}
+                                    </td>
+                                    <td style={{ color: '#c9d4e0' }}>{t.description}</td>
+                                    <td><span className={t.type === 'payment' ? 'tag-green' : t.type === 'invoice' ? 'tag-yellow' : 'tag-dim'}>{t.type}</span></td>
+                                    <td className="fin-mono">{fmt(total)}</td>
+                                    <td className="fin-amount-income fin-mono">{paid != null ? fmt(paid) : '—'}</td>
+                                    <td className="fin-amount-expense fin-mono">{balance != null ? fmt(balance) : '—'}</td>
+                                    <td className="fin-mono">{t.date ? new Date(t.date).toLocaleDateString() : new Date(t.created_at).toLocaleDateString()}</td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        </>
     );
 }
 

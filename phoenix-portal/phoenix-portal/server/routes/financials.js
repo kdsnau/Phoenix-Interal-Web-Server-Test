@@ -184,7 +184,7 @@ router.get('/fleet', requireRole('accounting', 'admin'), async (req, res) => {
 router.get('/client-transactions', requireRole('accounting', 'admin'), async (req, res) => {
     try {
         const result = await pool.query(`
-            SELECT ct.id, ct.description, ct.amount, ct.type, ct.date, ct.created_at,
+            SELECT ct.id, ct.description, ct.amount, ct.balance_due, ct.paid_amount, ct.type, ct.date, ct.created_at,
                    COALESCE(c.name, ct.customer_name) AS client_name,
                    c.customer_id,
                    (ct.client_id IS NULL) AS unmonitored

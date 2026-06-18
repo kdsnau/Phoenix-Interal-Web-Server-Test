@@ -54,34 +54,37 @@ router.get('/', requireRole('accounting', 'admin'), async (req, res) => {
 /* GET /api/financials/summary — work-order + expense totals */
 router.get('/summary', requireRole('accounting', 'admin'), async (req, res) => {
     try {
-        const [woRes, expRes, fleetRes] = await Promise.all([
+        const [billRes, expRes, fleetRes] = await Promise.all([
+            /* Authoritative billing comes from the QuickBooks-imported ledger:
+               invoiced = invoice totals, paid = invoice paid + standalone payments,
+               balance = open balance (falls back to the invoice total when unknown). */
             pool.query(`
                 SELECT
-                    COALESCE(SUM(amount) FILTER (WHERE status = 'closed_paid'), 0) AS gross,
-                    COALESCE(SUM(amount) FILTER (WHERE status = 'open'),        0) AS open_invoices,
-                    COALESCE(SUM(amount) FILTER (WHERE status = 'deadbeat'),    0) AS unpaid_closed
-                FROM work_orders
-            `).catch(() => ({ rows: [{ gross: 0, open_invoices: 0, unpaid_closed: 0 }] })),
+                    COALESCE(SUM(amount) FILTER (WHERE type = 'invoice'), 0) AS invoiced,
+                    COALESCE(SUM(COALESCE(paid_amount, 0)) FILTER (WHERE type = 'invoice'), 0)
+                      + COALESCE(SUM(amount) FILTER (WHERE type = 'payment'), 0)            AS paid,
+                    COALESCE(SUM(COALESCE(balance_due, amount)) FILTER (WHERE type = 'invoice'), 0) AS balance
+                FROM client_transactions
+            `).catch(() => ({ rows: [{ invoiced: 0, paid: 0, balance: 0 }] })),
             pool.query("SELECT COALESCE(SUM(amount), 0) AS exp FROM financial_records WHERE type = 'expense'"),
             pool.query("SELECT COALESCE(SUM(amount), 0) AS fleet FROM vehicle_invoices")
                 .catch(() => ({ rows: [{ fleet: 0 }] })),
         ]);
 
-        const gross        = Number(woRes.rows[0].gross);
-        const openInv      = Number(woRes.rows[0].open_invoices);
-        const unpaidClosed = Number(woRes.rows[0].unpaid_closed);
+        const invoiced     = Number(billRes.rows[0].invoiced);
+        const paid         = Number(billRes.rows[0].paid);
+        const balance      = Number(billRes.rows[0].balance);
         const recordExp    = Number(expRes.rows[0].exp);
         const fleetExp     = Number(fleetRes.rows[0].fleet);
         const expenseTotal = recordExp + fleetExp;   /* fleet counts against revenue */
 
         return res.json({
-            gross_total:         gross,                /* payments */
-            invoice_gross_total: openInv + gross,      /* open invoices + payments */
-            open_invoice_total:  openInv,
-            unpaid_closed_total: unpaidClosed,         /* deadbeat — informational only */
-            expense_total:       expenseTotal,
-            fleet_expenses:      fleetExp,
-            net:                 gross - expenseTotal,
+            total_invoiced: invoiced,
+            total_paid:     paid,
+            balance_due:    balance,
+            expense_total:  expenseTotal,
+            fleet_expenses: fleetExp,
+            net:            paid - expenseTotal,
         });
     } catch (err) {
         console.error(err);

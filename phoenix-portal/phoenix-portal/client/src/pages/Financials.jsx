@@ -444,6 +444,7 @@ export default function Financials() {
             setClearMsg(`Cleared ${data.deleted} unmonitored entr${data.deleted === 1 ? 'y' : 'ies'}.`);
             const ctx = await api.get('/financials/client-transactions').catch(() => ({ data: [] }));
             setClientTx(ctx.data);
+            refreshSummary();
         } catch (e) { setClearMsg(e.response?.data?.error || 'Clear failed.'); }
     }
     async function deleteClientTx(id) {
@@ -465,6 +466,7 @@ export default function Financials() {
             setClearMsg(`Cleared ${data.deleted} invoice entr${data.deleted === 1 ? 'y' : 'ies'}.`);
             const ctx = await api.get('/financials/client-transactions').catch(() => ({ data: [] }));
             setClientTx(ctx.data);
+            refreshSummary();
         } catch (e) { setClearMsg(e.response?.data?.error || 'Clear failed.'); }
     }
 
@@ -484,14 +486,19 @@ export default function Financials() {
                 {summary && (
                     <div className="stats-grid" style={{ marginBottom: 24 }}>
                         <div className="stat-card">
-                            <div className="stat-label">Gross Total</div>
-                            <div className="stat-value" style={{ color: 'var(--green)' }}>{money(summary.gross_total)}</div>
-                            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>payments collected</div>
+                            <div className="stat-label">Total Invoiced</div>
+                            <div className="stat-value" style={{ color: 'var(--accent)' }}>{money(summary.total_invoiced)}</div>
+                            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>billed to clients</div>
                         </div>
                         <div className="stat-card">
-                            <div className="stat-label">Invoice + Gross</div>
-                            <div className="stat-value" style={{ color: 'var(--accent)' }}>{money(summary.invoice_gross_total)}</div>
-                            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>incl. {money(summary.open_invoice_total)} open</div>
+                            <div className="stat-label">Paid</div>
+                            <div className="stat-value" style={{ color: 'var(--green)' }}>{money(summary.total_paid)}</div>
+                            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>collected</div>
+                        </div>
+                        <div className="stat-card">
+                            <div className="stat-label">Balance Due</div>
+                            <div className="stat-value" style={{ color: 'var(--red)' }}>{money(summary.balance_due)}</div>
+                            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>open balance</div>
                         </div>
                         <div className="stat-card">
                             <div className="stat-label">Expense Total</div>
@@ -505,11 +512,7 @@ export default function Financials() {
                             <div className="stat-value" style={{ color: Number(summary.net) >= 0 ? 'var(--green)' : 'var(--red)' }}>
                                 {Number(summary.net) < 0 ? '-' : ''}${Math.abs(Number(summary.net)).toLocaleString()}
                             </div>
-                        </div>
-                        <div className="stat-card">
-                            <div className="stat-label">Unpaid Closed (Deadbeat)</div>
-                            <div className="stat-value" style={{ color: 'var(--red)' }}>{money(summary.unpaid_closed_total)}</div>
-                            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>excluded from totals</div>
+                            <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>paid − expenses</div>
                         </div>
                         <div className="stat-card">
                             <div className="stat-label">Monthly Recurring (MRR)</div>

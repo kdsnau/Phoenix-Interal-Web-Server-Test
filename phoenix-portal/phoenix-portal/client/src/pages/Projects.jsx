@@ -285,13 +285,17 @@ function groupAndMerge(list) {
         /* Combine unique RFQ numbers */
         const rfqs = [...new Set(group.map(p => p.rfq).filter(Boolean))].join(', ');
 
+        /* The member owning the most recent visit is authoritative — use ITS
+           server-computed (override-aware) completion, not the raw Slack visit
+           flag, so the Complete/Reopen button is reflected here. */
+        const newestMember = group.find(p => p.name === allVisits[0]?._sourceName) || primary;
+
         return {
             ...primary,
             names:     group.map(p => p.name),
             visits:    allVisits,
             lastVisit: Math.max(...group.map(p => p.lastVisit)),
-            /* Most recent visit across the whole group is authoritative */
-            completed: allVisits[0]?.completed ?? primary.completed,
+            completed: newestMember.completed,
             rfq:       rfqs || primary.rfq,
         };
     });

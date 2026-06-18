@@ -611,6 +611,24 @@ router.get('/:id/site-maps/download', authenticate, async (req, res) => {
     }
 });
 
+/* Most-recently-modified FILE inside a customer folder (its invoices), recursing
+   a couple levels. The folder's OWN mtime is ignored — only the files count, so a
+   touched/renamed folder full of old invoices still reads as old. Returns 0 (very
+   old) when there are no files at all. */
+async function newestFileMtimeMs(dir, depth = 0) {
+    let newest = 0, entries;
+    try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return 0; }
+    for (const e of entries) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) {
+            if (depth < 3) { const m = await newestFileMtimeMs(full, depth + 1); if (m > newest) newest = m; }
+        } else {
+            try { const st = await fs.promises.stat(full); if (st.mtimeMs > newest) newest = st.mtimeMs; } catch { /* ignore */ }
+        }
+    }
+    return newest;
+}
+
 /* POST /api/clients/rebuild-from-drive  { commit?, path? } — rebuild the client
    list from the per-client folders on the Customers share. Dry-run by default:
    returns what WOULD be added/removed. commit:true performs it. Monitored clients
@@ -637,23 +655,9 @@ router.post('/rebuild-from-drive', requireRole('admin'), async (req, res) => {
     for (const c of existing) { const n = fourDigit(c.customer_id) || fourDigit(c.name); if (n && !existingByNum.has(n)) existingByNum.set(n, c); }
     const taken = new Set(existing.map(c => c.customer_id));
 
-    /* Only ADD customers whose folder has an invoice (file) modified within 3 years. */
+    /* Only ADD customers whose newest invoice file was modified within 3 years. */
     const cutoff = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 3);
     const cutoffMs = cutoff.getTime();
-    async function newestMtimeMs(dir, depth = 0) {
-        let newest = 0, entries;
-        try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return 0; }
-        try { newest = (await fs.promises.stat(dir)).mtimeMs; } catch { /* ignore */ }
-        for (const e of entries) {
-            const full = path.join(dir, e.name);
-            if (e.isDirectory()) {
-                if (depth < 2) { const m = await newestMtimeMs(full, depth + 1); if (m > newest) newest = m; }
-            } else {
-                try { const st = await fs.promises.stat(full); if (st.mtimeMs > newest) newest = st.mtimeMs; } catch { /* ignore */ }
-            }
-        }
-        return newest;
-    }
 
     const toAdd = [], matchedNums = new Set(), folderNums = new Set();
     let skippedNoNumber = 0, skippedInactive = 0;
@@ -662,7 +666,7 @@ router.post('/rebuild-from-drive', requireRole('admin'), async (req, res) => {
         if (!num) { skippedNoNumber++; continue; }       /* deprecated — no 4-digit number */
         folderNums.add(num);
         if (existingByNum.has(num)) { matchedNums.add(num); continue; }   /* already a client */
-        const newest = await newestMtimeMs(path.join(root, f));
+        const newest = await newestFileMtimeMs(path.join(root, f));
         if (newest >= cutoffMs) toAdd.push({ name: cleanName(f), customer_id: num, folder: f });
         else skippedInactive++;                          /* no invoice modified in 3 years */
     }
@@ -714,17 +718,6 @@ router.post('/prune-inactive', requireRole('admin'), async (req, res) => {
     const commit = req.body.commit === true;
     const root   = (req.body.path || process.env.CLIENTS_DRIVE_ROOT || '/mnt/sitemaps/Invoices/Invoices - Customers').trim();
     const fourDigit = s => { const m = String(s || '').match(/(?<!\d)\d{4}(?!\d)/); return m ? m[0] : null; };
-    async function newestMtimeMs(dir, depth = 0) {
-        let newest = 0, entries;
-        try { entries = await fs.promises.readdir(dir, { withFileTypes: true }); } catch { return 0; }
-        try { newest = (await fs.promises.stat(dir)).mtimeMs; } catch { /* ignore */ }
-        for (const e of entries) {
-            const full = path.join(dir, e.name);
-            if (e.isDirectory()) { if (depth < 2) { const m = await newestMtimeMs(full, depth + 1); if (m > newest) newest = m; } }
-            else { try { const st = await fs.promises.stat(full); if (st.mtimeMs > newest) newest = st.mtimeMs; } catch { /* ignore */ } }
-        }
-        return newest;
-    }
 
     let folders;
     try {
@@ -746,7 +739,7 @@ router.post('/prune-inactive', requireRole('admin'), async (req, res) => {
         if (isProtected(c)) continue;
         const num    = fourDigit(c.customer_id) || fourDigit(c.name);
         const folder = num ? folderByNum.get(num) : null;
-        const active = folder ? (await newestMtimeMs(path.join(root, folder))) >= cutoffMs : false;
+        const active = folder ? (await newestFileMtimeMs(path.join(root, folder))) >= cutoffMs : false;
         if (!active) toRemove.push(c);
     }
 

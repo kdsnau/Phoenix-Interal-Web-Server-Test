@@ -93,7 +93,7 @@ router.get('/', async (req, res) => {
     try {
         const [slackResult, overrideResult, manualResult] = await Promise.all([
             slack.conversations.history({ channel: CHANNEL_ID, limit: 1000 }),
-            pool.query('SELECT name, completed FROM project_completions').catch(() => ({ rows: [] })),
+            pool.query('SELECT name, completed, updated_at FROM project_completions').catch(() => ({ rows: [] })),
             pool.query('SELECT * FROM manual_projects ORDER BY created_at DESC').catch(() => ({ rows: [] })),
         ]);
 
@@ -101,7 +101,12 @@ router.get('/', async (req, res) => {
 
         /* Build override lookup: normalised name → boolean */
         const overrideMap = {};
-        overrideResult.rows.forEach(r => { overrideMap[r.name] = r.completed; });
+        overrideResult.rows.forEach(r => { overrideMap[r.name] = { completed: r.completed, updatedAt: new Date(r.updated_at).getTime() }; });
+        /* override wins when it's newer than the latest Slack visit (ts in seconds). */
+        const overrideWins = (name, lastVisitTs) => {
+            const ov = overrideMap[normalizeKey(name)];
+            return ov && ov.updatedAt >= Number(lastVisitTs) * 1000 ? ov : null;
+        };
 
         const map = {};
 
@@ -152,16 +157,8 @@ router.get('/', async (req, res) => {
             .map(p => ({
                 name:      p.name,
                 rfq:       p.rfq,
-                /* Slack-detected completion is authoritative when true.
-                   A DB override of false cannot un-complete something Slack
-                   already confirmed complete (avoids stale overrides blocking
-                   STATUS: COMPLETE entries). The override CAN still manually
-                   mark things complete when Slack didn't detect it. */
-                completed: p.slackCompleted
-                    ? true
-                    : (normalizeKey(p.name) in overrideMap
-                        ? overrideMap[normalizeKey(p.name)]
-                        : false),
+                /* Manual Complete/Reopen wins if newer than the latest Slack visit. */
+                completed: overrideWins(p.name, p.lastVisit)?.completed ?? p.slackCompleted,
                 lastVisit: p.lastVisit,
                 visits:    p.visits.sort((a, b) => b.ts - a.ts),
             }))
@@ -176,11 +173,7 @@ router.get('/', async (req, res) => {
             return {
                 name:      mp.name,
                 rfq:       mp.rfq || '',
-                completed: mp.completed
-                    ? true
-                    : (normalizeKey(mp.name) in overrideMap
-                        ? overrideMap[normalizeKey(mp.name)]
-                        : false),
+                completed: overrideWins(mp.name, tsSeconds)?.completed ?? mp.completed,
                 lastVisit: tsSeconds,
                 visits:    [{
                     ts:          tsSeconds,

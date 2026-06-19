@@ -29,6 +29,7 @@ const profileRoutes    = require('./routes/profile');
 const callsRoutes      = require('./routes/calls');
 const vaultRoutes      = require('./routes/vault');
 const technotesRoutes  = require('./routes/technotes');
+const dashboardRoutes  = require('./routes/dashboard');
 const { startScheduler } = require('./services/monitoringScheduler');
 
 const app  = express();
@@ -71,6 +72,7 @@ app.use('/api/profile',     profileRoutes);
 app.use('/api/calls',       callsRoutes);
 app.use('/api/vault',       vaultRoutes);
 app.use('/api/tech-notes',  technotesRoutes);
+app.use('/api/dashboard',   dashboardRoutes);
 
 app.get('/api/health', (_, res) => res.json({ status: 'ok' }));
 

@@ -181,73 +181,60 @@ function AlertPanel({ title, items, emptyMsg, renderItem }) {
 }
 
 /* -----------------------------------------------------------------------
-   Role-specific stat rows
+   Summary notes — at-a-glance cards for the signed-in user
    ----------------------------------------------------------------------- */
-function AdminStats({ stats, mrr, openTickets }) {
-    const userCounts   = Object.fromEntries(stats.users.map(u => [u.role, Number(u.count)]));
-    const ticketCounts = Object.fromEntries(stats.tickets.map(t => [t.status, Number(t.count)]));
-    return (
-        <div className="stats-grid">
-            <div className="stat-card">
-                <div className="stat-label">MRR</div>
-                <div className="stat-value accent">${Number(mrr).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-            </div>
-            <div className="stat-card">
-                <div className="stat-label">Open Tickets</div>
-                <div className="stat-value yellow">{openTickets}</div>
-            </div>
-            <div className="stat-card">
-                <div className="stat-label">Revenue</div>
-                <div className="stat-value green">${Number(stats.finance.total_income).toLocaleString()}</div>
-            </div>
-            <div className="stat-card">
-                <div className="stat-label">Expenses</div>
-                <div className="stat-value red">${Number(stats.finance.total_expenses).toLocaleString()}</div>
-            </div>
-            <div className="stat-card">
-                <div className="stat-label">Technicians</div>
-                <div className="stat-value">{userCounts.technician || 0}</div>
-            </div>
-        </div>
-    );
-}
-
-function TechnicianStats({ tickets }) {
-    const open    = tickets.filter(t => t.status === 'open').length;
-    const inprog  = tickets.filter(t => t.status === 'in_progress').length;
-    const resolved = tickets.filter(t => t.status === 'resolved').length;
-    return (
-        <div className="stats-grid">
-            <div className="stat-card"><div className="stat-label">My Tickets</div><div className="stat-value accent">{tickets.length}</div></div>
-            <div className="stat-card"><div className="stat-label">Open</div><div className="stat-value yellow">{open}</div></div>
-            <div className="stat-card"><div className="stat-label">In Progress</div><div className="stat-value blue">{inprog}</div></div>
-            <div className="stat-card"><div className="stat-label">Resolved</div><div className="stat-value green">{resolved}</div></div>
-        </div>
-    );
-}
-
-function AccountingStats({ summary, mrr }) {
-    const net = Number(summary.net);
-    return (
-        <div className="stats-grid">
-            <div className="stat-card">
-                <div className="stat-label">MRR</div>
-                <div className="stat-value accent">${Number(mrr).toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
-            </div>
-            <div className="stat-card">
-                <div className="stat-label">Total Income</div>
-                <div className="stat-value green">${Number(summary.total_income).toLocaleString()}</div>
-            </div>
-            <div className="stat-card">
-                <div className="stat-label">Total Expenses</div>
-                <div className="stat-value red">${Number(summary.total_expenses).toLocaleString()}</div>
-            </div>
-            <div className="stat-card">
-                <div className="stat-label">Net</div>
-                <div className={`stat-value ${net >= 0 ? 'green' : 'red'}`}>
-                    {net < 0 ? '-' : ''}${Math.abs(net).toLocaleString()}
+function NoteCard({ label, value, sub, color, to, onClick }) {
+    const body = (
+        <>
+            <div className="stat-label">{label}</div>
+            <div className="stat-value" style={color ? { color } : undefined}>{value}</div>
+            {sub && (
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {sub}
                 </div>
-            </div>
+            )}
+        </>
+    );
+    if (to)      return <Link to={to} className="stat-card" style={{ textDecoration: 'none' }}>{body}</Link>;
+    if (onClick) return <div className="stat-card" style={{ cursor: 'pointer' }} onClick={onClick}>{body}</div>;
+    return <div className="stat-card">{body}</div>;
+}
+
+function SummaryNotes({ summary, posts, user, onOpenBoard }) {
+    const s          = summary || {};
+    const recent     = posts[0];
+    const lb         = s.leaderboard;
+    const unread     = s.unread_messages || { count: 0, senders: [] };
+    const canTickets = user.role === 'technician' || user.role === 'admin';
+    const roleLabel  = user.role.charAt(0).toUpperCase() + user.role.slice(1);
+
+    return (
+        <div className="stats-grid" style={{ marginBottom: 24 }}>
+            <NoteCard label="Active Clients"   value={s.active_clients ?? '—'}   color="var(--accent)" to="/clients" sub="in the directory" />
+            <NoteCard label="Tickets Assigned" value={s.assigned_tickets ?? '—'} color="var(--yellow)" to={canTickets ? '/tickets' : undefined} sub="open · assigned to you" />
+            <NoteCard label="Technicians"      value={s.technicians ?? '—'}      to={user.role === 'admin' ? '/admin' : undefined} sub="on the team" />
+            <NoteCard
+                label="Most Recent Board Post"
+                value={recent ? (recent.author_name || 'Admin') : '—'}
+                color="var(--text-hi)"
+                onClick={onOpenBoard}
+                sub={recent ? `${recent.content} · ${timeAgo(recent.created_at)}` : 'No posts yet'}
+            />
+            <NoteCard
+                label="Unread Messages"
+                value={unread.count}
+                color={unread.count > 0 ? 'var(--red)' : undefined}
+                to="/messages"
+                sub={unread.count > 0 ? `from ${unread.senders.join(', ')}` : 'all caught up'}
+            />
+            <NoteCard
+                label="Leaderboard Position"
+                value={lb ? `#${lb.rank}` : '—'}
+                color="var(--accent)"
+                to="/profile"
+                sub={lb ? `of ${lb.total}` : 'unranked'}
+            />
+            <NoteCard label="Assigned Role" value={roleLabel} sub={user.name} />
         </div>
     );
 }
@@ -257,7 +244,7 @@ function AccountingStats({ summary, mrr }) {
    ----------------------------------------------------------------------- */
 export default function Dashboard() {
     const { user } = useAuth();
-    const [roleData,   setRoleData]   = useState(null);
+    const [summary,    setSummary]    = useState(null);
     const [alerts,     setAlerts]     = useState(null);
     const [reminders,  setReminders]  = useState(null);
     const [loading,    setLoading]    = useState(true);
@@ -268,18 +255,13 @@ export default function Dashboard() {
     useEffect(() => {
         async function load() {
             try {
-                const alertsFetch    = api.get('/admin/alerts').catch(() => ({ data: null }));
-                const remindersFetch = api.get('/reminders').catch(() => ({ data: null }));
-                let roleFetch;
-                if      (user.role === 'admin')      roleFetch = api.get('/admin/stats');
-                else if (user.role === 'technician') roleFetch = api.get('/tickets');
-                else                                 roleFetch = api.get('/financials/summary');
-
-                const [alertsRes, roleRes, remRes] = await Promise.all([
-                    alertsFetch, roleFetch.catch(() => ({ data: null })), remindersFetch,
+                const [summaryRes, alertsRes, remRes] = await Promise.all([
+                    api.get('/dashboard/summary').catch(() => ({ data: null })),
+                    api.get('/admin/alerts').catch(() => ({ data: null })),
+                    api.get('/reminders').catch(() => ({ data: null })),
                 ]);
+                setSummary(summaryRes.data);
                 setAlerts(alertsRes.data);
-                setRoleData(roleRes.data);
                 setReminders(remRes.data);
             } catch (e) {
                 console.error(e);
@@ -325,10 +307,8 @@ export default function Dashboard() {
 
             {!loading && (
                 <>
-                    {/* Role-specific stats */}
-                    {user.role === 'admin'      && roleData && <AdminStats      stats={roleData}   mrr={alerts?.mrr || 0} openTickets={alerts?.openTickets || 0} />}
-                    {user.role === 'technician' && roleData && <TechnicianStats tickets={roleData} />}
-                    {user.role === 'accounting' && roleData && <AccountingStats summary={roleData} mrr={alerts?.mrr || 0} />}
+                    {/* Summary notes — at-a-glance cards for the signed-in user */}
+                    <SummaryNotes summary={summary} posts={posts} user={user} onOpenBoard={openBoard} />
 
                     {/* Reminders — role-aware to-do list */}
                     {reminders && <RemindersSection data={reminders} />}

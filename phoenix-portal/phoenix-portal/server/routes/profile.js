@@ -191,3 +191,4 @@ router.get('/:id', requireRole('admin'), async (req, res) => {
 });
 
 module.exports = router;
+module.exports.getLeaderboard = getLeaderboard;   /* reused by the dashboard summary */

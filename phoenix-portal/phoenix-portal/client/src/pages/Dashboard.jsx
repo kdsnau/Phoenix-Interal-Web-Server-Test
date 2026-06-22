@@ -328,7 +328,7 @@ export default function Dashboard() {
                                     items={alerts.vehicleIssues}
                                     renderItem={v => (
                                         <div key={v.id} className="dash-alert-row">
-                                            <span className="dash-alert-name">{v.name}</span>
+                                            <span className="dash-alert-name">{[v.make, v.model].filter(Boolean).join(' ') || v.name}</span>
                                             <span className={`tag ${v.open_issues >= 4 ? 'tag-red' : 'tag-yellow'}`}>
                                                 {v.open_issues} open
                                             </span>

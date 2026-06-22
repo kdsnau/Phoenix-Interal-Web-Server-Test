@@ -104,11 +104,11 @@ router.get('/alerts', authenticate, async (req, res) => {
 
         const [vehicleIssues, permitsExpiring, tagsExpiring, mrrRow, openTickets] = await Promise.all([
             pool.query(`
-                SELECT v.id, v.name, v.vehicle_id, COUNT(vn.id)::int AS open_issues
+                SELECT v.id, v.name, v.vehicle_id, v.make, v.model, COUNT(vn.id)::int AS open_issues
                 FROM vehicles v
                 JOIN vehicle_notes vn ON vn.vehicle_id = v.id AND vn.resolved = FALSE
                 WHERE TRUE ${vFilter}
-                GROUP BY v.id, v.name, v.vehicle_id
+                GROUP BY v.id, v.name, v.vehicle_id, v.make, v.model
                 ORDER BY open_issues DESC
             `, vParams).catch(() => ({ rows: [] })),
             pool.query(`

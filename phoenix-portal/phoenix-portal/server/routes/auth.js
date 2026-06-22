@@ -3,12 +3,22 @@ const bcrypt   = require('bcryptjs');
 const jwt      = require('jsonwebtoken');
 const pool     = require('../db/pool');
 const { sendTemplated } = require('../config/mailer');
-const { authenticate } = require('../middleware/requireRole');
+const { authenticate, requireRole } = require('../middleware/requireRole');
+const { rateLimit } = require('../middleware/rateLimit');
 
 const router = express.Router();
 
-/* POST /api/auth/register */
-router.post('/register', async (req, res) => {
+/* Login throttling: a generous per-network cap to stop automated spray, plus a
+   tighter per-account cap (cleared on a successful login) to blunt targeted
+   brute force without locking out a legitimate user. */
+const loginKeyIp   = req => `login-ip:${req.ip}`;
+const loginKeyAcct = req => `login-acct:${String(req.body?.email || '').trim().toLowerCase()}`;
+const loginIpLimiter   = rateLimit({ windowMs: 15 * 60 * 1000, max: 50, key: loginKeyIp,   message: 'Too many login attempts from this network. Please wait a few minutes.' });
+const loginAcctLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, key: loginKeyAcct, message: 'Too many attempts for this account. Please wait a few minutes.' });
+
+/* POST /api/auth/register — admin only. Accounts are provisioned by an admin;
+   this endpoint must never be reachable unauthenticated (it sets the role). */
+router.post('/register', requireRole('admin'), async (req, res) => {
     const { name, email, password, role } = req.body;
 
     if (!name || !email || !password || !role) {
@@ -72,7 +82,7 @@ router.post('/register', async (req, res) => {
 });
 
 /* POST /api/auth/login */
-router.post('/login', async (req, res) => {
+router.post('/login', loginIpLimiter, loginAcctLimiter, async (req, res) => {
     const { email, password } = req.body;
 
     if (!email || !password) {
@@ -98,6 +108,7 @@ router.post('/login', async (req, res) => {
             { expiresIn: '8h' }
         );
 
+        loginAcctLimiter.reset(loginKeyAcct(req));   /* clear the per-account counter on success */
         return res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
     } catch (err) {
         console.error(err);

@@ -9,6 +9,12 @@ client/build/
 .env
 .env.local
 .env.*.local
+test.env
+*.env
+!*.env.example
+
+# Database backups (written outside the repo by default; ignore if pointed here)
+backups/
 
 # Logs
 logs/

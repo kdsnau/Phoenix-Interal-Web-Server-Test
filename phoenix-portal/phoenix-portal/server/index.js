@@ -35,6 +35,21 @@ const { startScheduler } = require('./services/monitoringScheduler');
 const app  = express();
 const PORT = process.env.PORT || 5000;
 
+/* Behind the Caddy reverse proxy on the same host — trust X-Forwarded-* only
+   from loopback so req.ip is the real client (needed for login rate limiting). */
+app.set('trust proxy', 'loopback');
+
+/* Baseline security response headers (no extra deps). HSTS is intentionally
+   left to Caddy, which terminates TLS; the Node origin itself is plain HTTP. */
+app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('X-XSS-Protection', '0');
+    res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+    next();
+});
+
 const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:5173').split(',').map(o => o.trim());
 app.use(cors({ origin: (origin, cb) => cb(null, !origin || allowedOrigins.includes(origin)) }));
 app.use(express.json());

@@ -18,10 +18,25 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/../.env"
 
-# Load DB_* from the server .env (KEY=value lines).
-if [ -f "$ENV_FILE" ]; then
-    set -a; . "$ENV_FILE"; set +a
-fi
+# Pull just the DB_* settings from the server .env. We deliberately DON'T
+# `source` the file — a value with a space or shell metacharacter would get
+# executed as a command. This reads each value literally. Existing environment
+# variables win, so you can still override any of them inline.
+read_env() {
+    [ -f "$ENV_FILE" ] || return 0
+    local v
+    v="$(sed -n "s/^[[:space:]]*\(export[[:space:]]\+\)\?$1=//p" "$ENV_FILE" | head -n1)"
+    v="${v%$'\r'}"               # tolerate CRLF line endings
+    v="${v%\"}"; v="${v#\"}"     # strip one layer of surrounding quotes
+    v="${v%\'}"; v="${v#\'}"
+    printf '%s' "$v"
+}
+
+DB_HOST="${DB_HOST:-$(read_env DB_HOST)}"
+DB_PORT="${DB_PORT:-$(read_env DB_PORT)}"
+DB_NAME="${DB_NAME:-$(read_env DB_NAME)}"
+DB_USER="${DB_USER:-$(read_env DB_USER)}"
+DB_PASSWORD="${DB_PASSWORD:-$(read_env DB_PASSWORD)}"
 
 BACKUP_DIR="${BACKUP_DIR:-$HOME/phoenix-backups}"   # default: OUTSIDE the git repo
 KEEP="${KEEP:-14}"

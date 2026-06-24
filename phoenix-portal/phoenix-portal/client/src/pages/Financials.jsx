@@ -370,134 +370,6 @@ function FleetTable({ invoices }) {
 }
 
 /* -----------------------------------------------------------------------
-   Snapshot board — In Progress / Complete / Deadbeat (the "Daily Update")
-   ----------------------------------------------------------------------- */
-const SNAP_TYPES = [
-    { key: 'in_progress', label: 'In Progress' },
-    { key: 'complete',    label: 'Complete' },
-    { key: 'deadbeat',    label: 'Deadbeat' },
-];
-
-function SnapshotModal({ type, onClose, onCreated }) {
-    const inProgress = type === 'in_progress';
-    const typeLabel  = SNAP_TYPES.find(t => t.key === type)?.label || type;
-    const [form, setForm]     = useState({ customer: '', rfq: '', hours: '', scheduled_date: '', invoice_num: '', email_date: '', notes: '' });
-    const [error, setError]   = useState('');
-    const [saving, setSaving] = useState(false);
-    const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-
-    async function submit(e) {
-        e.preventDefault();
-        if (!form.customer.trim()) { setError('Customer is required.'); return; }
-        setSaving(true); setError('');
-        try {
-            const { data } = await api.post('/snapshot', { type, ...form });
-            onCreated(data);
-            onClose();
-        } catch (err) { setError(err.response?.data?.error || 'Failed to add entry.'); }
-        finally { setSaving(false); }
-    }
-
-    return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal" onClick={e => e.stopPropagation()}>
-                <div className="modal-title">Add {typeLabel} Entry</div>
-                {error && <div className="error-msg">{error}</div>}
-                <form onSubmit={submit}>
-                    <div className="form-group">
-                        <label className="form-label">Customer</label>
-                        <input value={form.customer} onChange={e => set('customer', e.target.value)} required autoFocus />
-                    </div>
-                    {inProgress ? (
-                        <>
-                            <div className="form-group"><label className="form-label">RFQ</label><input value={form.rfq} onChange={e => set('rfq', e.target.value)} /></div>
-                            <div className="form-group"><label className="form-label">Hours</label><input type="number" min="0" step="0.5" value={form.hours} onChange={e => set('hours', e.target.value)} /></div>
-                            <div className="form-group"><label className="form-label">Scheduled Date</label><input value={form.scheduled_date} onChange={e => set('scheduled_date', e.target.value)} placeholder="TBD or M/D/YY" /></div>
-                        </>
-                    ) : (
-                        <>
-                            <div className="form-group"><label className="form-label">Invoice #</label><input value={form.invoice_num} onChange={e => set('invoice_num', e.target.value)} /></div>
-                            <div className="form-group"><label className="form-label">Email Date</label><input value={form.email_date} onChange={e => set('email_date', e.target.value)} placeholder="M/D/YY" /></div>
-                            <div className="form-group"><label className="form-label">RFQ</label><input value={form.rfq} onChange={e => set('rfq', e.target.value)} /></div>
-                        </>
-                    )}
-                    <div className="form-group"><label className="form-label">Notes</label><textarea rows={3} value={form.notes} onChange={e => set('notes', e.target.value)} /></div>
-                    <div className="modal-actions">
-                        <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-                        <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Adding…' : 'Add Entry'}</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    );
-}
-
-function SnapshotTab({ entries, canManage, onCreated, onDelete }) {
-    const [subTab, setSubTab]   = useState('in_progress');
-    const [showAdd, setShowAdd] = useState(false);
-    const inProgress = subTab === 'in_progress';
-    const rows   = entries.filter(e => e.type === subTab);
-    const counts = Object.fromEntries(SNAP_TYPES.map(t => [t.key, entries.filter(e => e.type === t.key).length]));
-
-    return (
-        <>
-            <div className="fin-section-tabs" style={{ marginBottom: 12, alignItems: 'center' }}>
-                {SNAP_TYPES.map(t => (
-                    <button key={t.key} className={`fin-tab ${subTab === t.key ? 'active' : ''}`} onClick={() => setSubTab(t.key)}>
-                        {t.label}<span className="fin-tab-count">{counts[t.key]}</span>
-                    </button>
-                ))}
-                {canManage && (
-                    <button className="btn btn-primary" style={{ marginLeft: 'auto', fontSize: 12 }} onClick={() => setShowAdd(true)}>+ Add Entry</button>
-                )}
-            </div>
-
-            <div className="fin-table-wrap">
-                <table className="fin-table">
-                    <thead>
-                        {inProgress ? (
-                            <tr><th>Customer</th><th>RFQ</th><th>Hours</th><th>Scheduled</th><th>Notes</th>{canManage && <th></th>}</tr>
-                        ) : (
-                            <tr><th>Customer</th><th>Invoice #</th><th>Email Date</th><th>RFQ</th><th>Notes</th>{canManage && <th></th>}</tr>
-                        )}
-                    </thead>
-                    <tbody>
-                        {rows.length === 0 ? (
-                            <tr><td colSpan={canManage ? 6 : 5} className="fin-empty">No entries.</td></tr>
-                        ) : rows.map(e => (
-                            <tr key={e.id}>
-                                <td style={{ fontWeight: 500, color: 'var(--text-hi)' }}>{e.customer}</td>
-                                {inProgress ? (
-                                    <>
-                                        <td className="fin-mono">{e.rfq || '—'}</td>
-                                        <td className="fin-mono">{e.hours != null ? e.hours : '—'}</td>
-                                        <td className="fin-mono">{e.scheduled_date || '—'}</td>
-                                    </>
-                                ) : (
-                                    <>
-                                        <td className="fin-mono">{e.invoice_num || '—'}</td>
-                                        <td className="fin-mono">{e.email_date || '—'}</td>
-                                        <td className="fin-mono">{e.rfq || '—'}</td>
-                                    </>
-                                )}
-                                <td style={{ color: '#c9d4e0', whiteSpace: 'pre-wrap' }}>{e.notes}</td>
-                                {canManage && (
-                                    <td style={{ textAlign: 'right' }}>
-                                        <button className="btn btn-ghost" style={{ fontSize: 11, color: 'var(--red)' }} onClick={() => onDelete(e.id)}>Delete</button>
-                                    </td>
-                                )}
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-
-            {showAdd && <SnapshotModal type={subTab} onClose={() => setShowAdd(false)} onCreated={onCreated} />}
-        </>
-    );
-}
-
-/* -----------------------------------------------------------------------
    Main Financials page
    ----------------------------------------------------------------------- */
 const money = n => `$${Number(n || 0).toLocaleString()}`;
@@ -514,7 +386,6 @@ export default function Financials() {
     const [fleet,      setFleet]      = useState([]);
     const [clientTx,   setClientTx]   = useState([]);
     const [inventory,  setInventory]  = useState(null);
-    const [snapshot,   setSnapshot]   = useState([]);
     const [loading,    setLoading]    = useState(true);
     const [tab,        setTab]        = useState('workorders');
     const [showModal,  setShowModal]  = useState(false);
@@ -525,7 +396,7 @@ export default function Financials() {
     async function load() {
         setLoading(true);
         try {
-            const [wo, recs, sum, mon, fl, ctx, inv, snap] = await Promise.all([
+            const [wo, recs, sum, mon, fl, ctx, inv] = await Promise.all([
                 api.get('/financials/work-orders').catch(() => ({ data: [] })),
                 api.get('/financials'),
                 api.get('/financials/summary'),
@@ -533,7 +404,6 @@ export default function Financials() {
                 api.get('/financials/fleet').catch(() => ({ data: [] })),
                 api.get('/financials/client-transactions').catch(() => ({ data: [] })),
                 api.get('/financials/inventory').catch(() => ({ data: null })),
-                api.get('/snapshot').catch(() => ({ data: [] })),
             ]);
             setWorkOrders(wo.data);
             setRecords(recs.data);
@@ -542,7 +412,6 @@ export default function Financials() {
             setFleet(fl.data);
             setClientTx(ctx.data);
             setInventory(inv.data);
-            setSnapshot(snap.data);
         } finally { setLoading(false); }
     }
 
@@ -603,12 +472,6 @@ export default function Financials() {
 
     const onWorkOrder = (w) => { setWorkOrders(prev => [w, ...prev]); refreshSummary(); };
     const onExpense   = (r) => { setRecords(prev => [r, ...prev]); refreshSummary(); api.get('/financials/monthly').then(m => setMonthly(m.data)).catch(() => {}); };
-    const onSnapshotCreated = (e) => setSnapshot(prev => [e, ...prev]);
-    async function deleteSnapshot(id) {
-        if (!confirm('Delete this snapshot entry?')) return;
-        try { await api.delete(`/snapshot/${id}`); setSnapshot(prev => prev.filter(s => s.id !== id)); }
-        catch (err) { console.error(err); }
-    }
 
     const mrr = monthly?.mrr ?? 0;
 
@@ -666,7 +529,6 @@ export default function Financials() {
                     <button className={`fin-tab ${tab === 'fleet' ? 'active' : ''}`} onClick={() => setTab('fleet')}>Fleet Expenses<span className="fin-tab-count">{fleet.length}</span></button>
                     <button className={`fin-tab ${tab === 'clients' ? 'active' : ''}`} onClick={() => setTab('clients')}>Client Billing<span className="fin-tab-count">{clientTx.length}</span></button>
                     <button className={`fin-tab ${tab === 'inventory' ? 'active' : ''}`} onClick={() => setTab('inventory')}>Inventory Assets{inventory?.by_category?.length > 0 && <span className="fin-tab-count">{inventory.by_category.length}</span>}</button>
-                    <button className={`fin-tab ${tab === 'snapshot' ? 'active' : ''}`} onClick={() => setTab('snapshot')}>Snapshot<span className="fin-tab-count">{snapshot.length}</span></button>
                 </div>
 
                 {loading ? (
@@ -679,8 +541,6 @@ export default function Financials() {
                     <FleetTable invoices={fleet} />
                 ) : tab === 'inventory' ? (
                     <InventoryTable data={inventory} />
-                ) : tab === 'snapshot' ? (
-                    <SnapshotTab entries={snapshot} canManage={canManage} onCreated={onSnapshotCreated} onDelete={deleteSnapshot} />
                 ) : (
                     <>
                         {isAdmin && (

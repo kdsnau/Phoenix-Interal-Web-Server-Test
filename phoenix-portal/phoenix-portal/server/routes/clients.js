@@ -717,6 +717,103 @@ router.post('/rebuild-from-drive', requireRole('admin'), async (req, res) => {
     res.json({ committed: true, ...preview, added, removed });
 });
 
+/* POST /api/clients/rebuild-from-audit  (multipart: file=.xlsx, commit?) — reconcile
+   the client list against an authoritative alarm-audit spreadsheet. Match is by the
+   "Account #" customer number (3–6 digits, since the names are mangled). Dry-run by
+   default. Adds audit customers we don't have (service inferred from BURG/FIRE labels);
+   removes clients whose number isn't in the audit — EXCEPT protected ones (monitored
+   or already labeled fire/alarm/access). Matched clients are left untouched. */
+router.post('/rebuild-from-audit', requireRole('admin'), upload.single('file'), async (req, res) => {
+    const commit = req.body.commit === true || req.body.commit === 'true';
+    if (!req.file) return res.status(400).json({ error: 'Upload the audit .xlsx (field "file").' });
+
+    const custNum    = s => { const m = String(s == null ? '' : s).match(/\d{3,6}/); return m ? m[0] : null; };
+    const cleanName  = n => String(n || '').replace(/\([^)]*\)/g, '').replace(/\s{2,}/g, ' ').trim();
+    const auditServices = (name) => {                       /* read only the (…) labels */
+        const out = [];
+        for (const g of (String(name || '').match(/\(([^)]*)\)/g) || [])) {
+            const flat = g.toUpperCase().replace(/[^A-Z]/g, '');
+            if (flat.includes('BURG'))                   out.push('alarm');
+            if (/F[YWI]RE/.test(flat) || flat.includes('FIRE')) out.push('fire');
+        }
+        return out;
+    };
+
+    let wb;
+    try { wb = XLSX.read(req.file.buffer, { type: 'buffer' }); }
+    catch { return res.status(400).json({ error: 'Could not read that file — is it a valid .xlsx?' }); }
+
+    /* Authoritative set: every customer number across all sheets except "Deactivated". */
+    const auditMap   = new Map();   // num → { name, services:Set }
+    const sheetsUsed = [];
+    for (const sn of wb.SheetNames) {
+        if (sn.trim().toLowerCase() === 'deactivated') continue;
+        sheetsUsed.push(sn);
+        const json = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: '' });
+        let hi = json.findIndex(r => r.some(c => String(c).trim().toLowerCase() === 'account #'));
+        let acctCol = 4, nameCol = 2;
+        if (hi >= 0) {
+            acctCol = json[hi].findIndex(c => String(c).trim().toLowerCase() === 'account #');
+            const nc = json[hi].findIndex(c => String(c).trim().toLowerCase() === 'customer name');
+            if (nc >= 0) nameCol = nc;
+        } else hi = 0;
+        for (let i = hi + 1; i < json.length; i++) {
+            const num = custNum(json[i][acctCol]);
+            if (!num) continue;
+            const rawName = String(json[i][nameCol] ?? '').trim();
+            let e = auditMap.get(num);
+            if (!e) { e = { name: '', services: new Set() }; auditMap.set(num, e); }
+            if (!e.name && rawName) e.name = rawName;
+            for (const s of auditServices(rawName)) e.services.add(s);
+        }
+    }
+    if (auditMap.size === 0) return res.status(400).json({ error: 'No customer numbers found — is this the right file/format?' });
+
+    const existing = (await pool.query('SELECT id, name, customer_id, monitoring_enabled, services FROM clients')).rows;
+    const existingByNum = new Map();
+    for (const c of existing) { const n = custNum(c.customer_id) || custNum(c.name); if (n && !existingByNum.has(n)) existingByNum.set(n, c); }
+    const taken = new Set(existing.map(c => c.customer_id));
+
+    const toAdd = [], matchedNums = new Set();
+    for (const [num, e] of auditMap) {
+        if (existingByNum.has(num)) { matchedNums.add(num); continue; }
+        toAdd.push({ customer_id: num, name: cleanName(e.name) || `Customer ${num}`, services: [...e.services] });
+    }
+
+    /* Protected = monitored OR already labeled fire/alarm/access — never removed. */
+    const isProtected = c => c.monitoring_enabled || (Array.isArray(c.services) && c.services.length > 0);
+    const auditNums = new Set(auditMap.keys());
+    const toRemove = existing.filter(c => {
+        if (isProtected(c)) return false;
+        const num = custNum(c.customer_id) || custNum(c.name);
+        return !num || !auditNums.has(num);
+    });
+
+    const preview = {
+        sheets_used:     sheetsUsed,
+        audit_count:     auditMap.size,
+        to_add:          toAdd.map(a => `${a.customer_id} — ${a.name}${a.services.length ? ` [${a.services.join(', ')}]` : ''}`),
+        matched_count:   matchedNums.size,
+        to_remove:       toRemove.map(c => ({ id: c.id, name: c.name, customer_id: c.customer_id })),
+        protected_count: existing.filter(isProtected).length,
+    };
+    if (!commit) return res.json({ committed: false, ...preview });
+
+    const uniqueCid = (cid) => { let out = cid, i = 2; while (taken.has(out)) out = `${cid}-${i++}`; taken.add(out); return out; };
+    let added = 0, removed = 0;
+    for (const a of toAdd) {
+        await pool.query(
+            'INSERT INTO clients (name, customer_id, vendor, services, monitoring_enabled) VALUES ($1, $2, $3, $4, FALSE)',
+            [a.name, uniqueCid(a.customer_id), 'generic', a.services]
+        ).then(() => { added++; }).catch(e => console.error('audit add failed:', a.customer_id, e.message));
+    }
+    for (const c of toRemove) {
+        await pool.query('DELETE FROM clients WHERE id = $1', [c.id])
+            .then(() => { removed++; }).catch(e => console.error('audit remove failed:', c.id, e.message));
+    }
+    res.json({ committed: true, ...preview, added, removed });
+});
+
 /* POST /api/clients/prune-inactive  { commit?, path? } — remove clients whose
    invoice folder hasn't been modified in 3 years. Dry-run by default. Monitored
    and typed (fire/alarm/access) clients are always protected. */

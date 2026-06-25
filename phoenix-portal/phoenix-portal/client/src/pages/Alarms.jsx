@@ -1155,6 +1155,95 @@ function RebuildModal({ onClose, onDone }) {
     );
 }
 
+/* Admin: reconcile the client list against an uploaded alarm-audit .xlsx.
+   Match by customer number; preview first; protected (monitored/labeled) clients kept. */
+function AuditModal({ onClose, onDone }) {
+    const [file, setFile]             = useState(null);
+    const [preview, setPreview]       = useState(null);
+    const [loading, setLoading]       = useState(false);
+    const [committing, setCommitting] = useState(false);
+    const [error, setError]           = useState('');
+    const [result, setResult]         = useState(null);
+
+    async function send(commit) {
+        if (!file) { setError('Choose the audit .xlsx first.'); return; }
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('commit', commit ? 'true' : 'false');
+        if (commit) setCommitting(true); else setLoading(true);
+        setError('');
+        try {
+            const { data } = await api.post('/clients/rebuild-from-audit', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+            if (commit) { setResult(data); onDone(); } else { setPreview(data); }
+        } catch (e) { setError(e.response?.data?.error || 'Failed.'); }
+        finally { setLoading(false); setCommitting(false); }
+    }
+
+    function pick(e) {
+        setFile(e.target.files?.[0] || null);
+        setPreview(null); setResult(null); setError('');
+    }
+
+    async function commit() {
+        if (!confirm(`Add ${preview.to_add.length} client(s) and remove ${preview.to_remove.length}? Protected (monitored / fire-alarm-access) clients are kept. This cannot be undone.`)) return;
+        await send(true);
+    }
+
+    const box = { maxHeight: 220, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 4, padding: 8, fontSize: 12 };
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 640, width: '100%' }}>
+                <div className="modal-title">Rebuild Client List from Audit</div>
+                {error && <div className="error-msg">{error}</div>}
+
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+                    <input type="file" accept=".xlsx,.xls" onChange={pick} />
+                    <button className="btn btn-ghost" onClick={() => send(false)} disabled={!file || loading}>{loading ? 'Reading…' : 'Preview'}</button>
+                </div>
+
+                {preview && (
+                    <>
+                        <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>
+                            {preview.audit_count} customer(s) across {preview.sheets_used.length} sheet(s). {preview.matched_count} already match; {preview.protected_count} protected client(s) kept (monitored or labeled).
+                        </p>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 10 }}>
+                            <div>
+                                <div className="alarm-label" style={{ marginBottom: 6 }}>Add ({preview.to_add.length})</div>
+                                <div style={box}>
+                                    {preview.to_add.length === 0 ? <span style={{ color: 'var(--text-dim)' }}>None</span> :
+                                        preview.to_add.map((n, i) => <div key={i} style={{ color: 'var(--green)' }}>+ {n}</div>)}
+                                </div>
+                            </div>
+                            <div>
+                                <div className="alarm-label" style={{ marginBottom: 6 }}>Remove ({preview.to_remove.length})</div>
+                                <div style={box}>
+                                    {preview.to_remove.length === 0 ? <span style={{ color: 'var(--text-dim)' }}>None</span> :
+                                        preview.to_remove.map(c => <div key={c.id} style={{ color: 'var(--red)' }}>− {c.name} <span style={{ color: 'var(--text-dim)' }}>({c.customer_id})</span></div>)}
+                                </div>
+                            </div>
+                        </div>
+                        {result ? (
+                            <>
+                                <div style={{ marginTop: 12, color: 'var(--green)', fontSize: 13 }}>Done — added {result.added}, removed {result.removed}.</div>
+                                <div className="modal-actions"><button className="btn btn-primary" onClick={onClose}>Close</button></div>
+                            </>
+                        ) : (
+                            <div className="modal-actions">
+                                <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                                <button className="btn btn-danger" onClick={commit} disabled={committing}>{committing ? 'Applying…' : 'Commit changes'}</button>
+                            </div>
+                        )}
+                    </>
+                )}
+                {!preview && (
+                    <div className="modal-actions"><button className="btn btn-ghost" onClick={onClose}>Cancel</button></div>
+                )}
+            </div>
+        </div>
+    );
+}
+
 /* Admin: remove clients whose invoice folder hasn't been touched in 3 years.
    Preview first; monitored/typed clients are protected. */
 function PruneModal({ onClose, onDone }) {
@@ -1228,6 +1317,7 @@ export default function Alarms() {
     const [showAddClient, setShowAddClient] = useState(false);
     const [showRebuild, setShowRebuild]     = useState(false);
     const [showPrune, setShowPrune]         = useState(false);
+    const [showAudit, setShowAudit]         = useState(false);
     const [permits, setPermits]       = useState([]);
     const [permitsLoading, setPermitsLoading] = useState(false);
 
@@ -1327,6 +1417,7 @@ export default function Alarms() {
                         {user.role === 'admin' && (
                             <>
                                 <button className="btn btn-ghost" onClick={() => setShowRebuild(true)}>↻ Rebuild from drive</button>
+                                <button className="btn btn-ghost" onClick={() => setShowAudit(true)}>⇪ Rebuild from audit</button>
                                 <button className="btn btn-ghost" onClick={() => setShowPrune(true)}>✕ Prune inactive</button>
                                 <button className="btn btn-primary" onClick={() => setShowAddClient(true)}>
                                     + Add Client
@@ -1488,6 +1579,12 @@ export default function Alarms() {
                 {showPrune && (
                     <PruneModal
                         onClose={() => setShowPrune(false)}
+                        onDone={fetchClients}
+                    />
+                )}
+                {showAudit && (
+                    <AuditModal
+                        onClose={() => setShowAudit(false)}
                         onDone={fetchClients}
                     />
                 )}

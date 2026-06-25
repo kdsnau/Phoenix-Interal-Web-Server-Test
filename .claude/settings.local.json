@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --test)",
+      "Bash(npm install *)",
+      "Bash(node -e \"const app=require\\('./src/index.js'\\); const s=app.listen\\(4055,\\(\\)=>{ const http=require\\('http'\\); http.get\\('http://localhost:4055/health',r=>{let d='';r.on\\('data',c=>d+=c\\);r.on\\('end',\\(\\)=>{console.log\\('HEALTH',r.statusCode,d\\); s.close\\(\\); }\\);}\\); }\\);\")",
+      "Bash(docker --version)",
+      "Bash(command -v postgres pg_ctl pg_isready)",
+      "Read(//c/Program Files/PostgreSQL/**)",
+      "Bash(powershell.exe -NoProfile -Command \"Get-Service -Name 'postgres*' -ErrorAction SilentlyContinue | Select-Object Name,Status | Format-Table -AutoSize\")",
+      "Bash('/c/Program Files/PostgreSQL/18/bin/psql.exe' --version)",
+      "Bash(PGPASSWORD='' '/c/Program Files/PostgreSQL/18/bin/psql.exe' -U postgres -h localhost -p 5432 -d postgres -c 'SELECT version\\(\\);')",
+      "Bash(export PGPASSWORD=postgres)",
+      "Bash('/c/Program Files/PostgreSQL/18/bin/psql.exe' -U postgres -h localhost -p 5432 -d phoenix_portal -w -c 'SELECT 1 AS ok;')",
+      "Bash(grep -rIESi \"db_password|database_url|pg_?password|db_user|db_name\" phoenix-portal --include=\"*.env\" --include=\"test.env\" -l)",
+      "Bash(node -e ' *)"
+    ]
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "phx-door-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Phoenix NFC door-access backend (API + rule engine + token service)",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test",
+    "migrate": "node scripts/migrate.js",
+    "seed-admin": "node scripts/seed-admin.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1"
+  }
+}

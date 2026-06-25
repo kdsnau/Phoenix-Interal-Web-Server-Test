@@ -9,7 +9,7 @@ tracking, and Arduino-based door readers.
 | Folder       | What it is                          | Stack                     | Status |
 |--------------|-------------------------------------|---------------------------|--------|
 | `backend/`   | API, rule engine, token service     | Node/Express + Postgres   | ✅ built + tested |
-| `admin-web/` | Admin dashboard (users/cards/rules) | React + Vite              | ⏳ planned |
+| `admin-web/` | Admin dashboard (users/cards/rules) | React + Vite              | ✅ built + verified live |
 | `mobile/`    | "Digital card" app                  | React Native              | ⏳ planned |
 | `firmware/`  | Door reader (one per door)          | Arduino Uno + PN532       | ⏳ planned |
 | `docs/`      | Parts list, wiring, provisioning    | —                         | ⏳ planned |

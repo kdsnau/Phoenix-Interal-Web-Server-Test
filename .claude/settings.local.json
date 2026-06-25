@@ -13,7 +13,15 @@
       "Bash(export PGPASSWORD=postgres)",
       "Bash('/c/Program Files/PostgreSQL/18/bin/psql.exe' -U postgres -h localhost -p 5432 -d phoenix_portal -w -c 'SELECT 1 AS ok;')",
       "Bash(grep -rIESi \"db_password|database_url|pg_?password|db_user|db_name\" phoenix-portal --include=\"*.env\" --include=\"test.env\" -l)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(printf 'postgres')",
+      "Bash('/c/Program Files/PostgreSQL/18/bin/initdb.exe' -D C:/Users/Ragna/phx-door-pgdata -U postgres -A scram-sha-256 --pwfile=C:/Users/Ragna/.phxpw.tmp -E UTF8)",
+      "Bash('/c/Program Files/PostgreSQL/18/bin/pg_ctl.exe' -D C:/Users/Ragna/phx-door-pgdata -o '-p 5433' -l C:/Users/Ragna/phx-door-pgdata/server.log start)",
+      "Bash('/c/Program Files/PostgreSQL/18/bin/pg_ctl.exe' -D C:/Users/Ragna/phx-door-pgdata status)",
+      "Bash(node src/index.js)",
+      "Bash(curl -s http://localhost:4000/health)",
+      "Bash(break)",
+      "Bash(node tools/e2e-demo.js)"
     ]
   }
 }

@@ -396,4 +396,24 @@ router.post('/clear-invoices', requireRole('admin'), async (req, res) => {
     } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to clear invoices.' }); }
 });
 
+/* GET /api/financials/mrr — monthly recurring revenue breakdown.
+   Every client with a recurring bill, normalized to a monthly figure and ranked
+   high → low. The client splits each client's MRR across its service types
+   (fire / alarm / access_control) for the source pie. */
+router.get('/mrr', requireRole('accounting', 'admin'), async (_req, res) => {
+    try {
+        const r = await pool.query(`
+            SELECT id, name, customer_id, services, billing_frequency,
+                   billing_amount / CASE COALESCE(billing_frequency, 'monthly')
+                       WHEN 'quarterly' THEN 3.0 WHEN 'yearly' THEN 12.0 ELSE 1.0 END AS mrr
+            FROM clients
+            WHERE billing_amount IS NOT NULL AND billing_amount > 0
+            ORDER BY mrr DESC, name ASC
+        `);
+        const clients = r.rows.map(c => ({ ...c, mrr: Number(c.mrr) }));
+        const total_mrr = clients.reduce((s, c) => s + c.mrr, 0);
+        res.json({ total_mrr, count: clients.length, clients });
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to load MRR.' }); }
+});
+
 module.exports = router;

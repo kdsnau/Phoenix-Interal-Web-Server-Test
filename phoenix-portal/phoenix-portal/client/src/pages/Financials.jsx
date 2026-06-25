@@ -370,6 +370,101 @@ function FleetTable({ invoices }) {
 }
 
 /* -----------------------------------------------------------------------
+   MRR breakdown — recurring revenue by source type + ranked clients
+   ----------------------------------------------------------------------- */
+const MRR_TYPES = [
+    { key: 'fire',           label: 'Fire',           color: '#d94040' },
+    { key: 'alarm',          label: 'Alarm',          color: '#d9a832' },
+    { key: 'access_control', label: 'Access Control', color: '#4a90d9' },
+    { key: 'other',          label: 'Other',          color: '#5c6e82' },
+];
+const SVC_TAG = { fire: 'tag-red', access_control: 'tag-blue', alarm: 'tag-yellow' };
+
+function MrrTab({ data }) {
+    if (!data) return <div className="fin-empty">Loading…</div>;
+    const clients = data.clients || [];
+    if (clients.length === 0) return <div className="fin-empty">No clients have recurring billing set. Add a Monthly Billing amount on the Admin → Billing tab.</div>;
+
+    const total = data.total_mrr || clients.reduce((s, c) => s + Number(c.mrr || 0), 0);
+    const fmt = n => `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+    /* Split each client's MRR evenly across its recognized services; none → "other". */
+    const buckets = { fire: 0, alarm: 0, access_control: 0, other: 0 };
+    for (const c of clients) {
+        const svcs = (c.services || []).filter(s => s === 'fire' || s === 'alarm' || s === 'access_control');
+        const mrr = Number(c.mrr) || 0;
+        if (svcs.length === 0) buckets.other += mrr;
+        else { const share = mrr / svcs.length; svcs.forEach(s => { buckets[s] += share; }); }
+    }
+    const segments = MRR_TYPES.map(t => ({ ...t, value: buckets[t.key] })).filter(s => s.value > 0.0001);
+
+    /* Donut rendered with stroke-dasharray so a single 100% slice draws cleanly. */
+    const R = 60, CX = 80, CY = 80, SW = 30, CIRC = 2 * Math.PI * R;
+    let acc = 0;
+
+    return (
+        <>
+            <div className="stats-grid" style={{ marginBottom: 20 }}>
+                <div className="stat-card"><div className="stat-label">Total MRR</div><div className="stat-value" style={{ color: 'var(--accent)' }}>{fmt(total)}</div></div>
+                <div className="stat-card"><div className="stat-label">Paying Clients</div><div className="stat-value">{clients.length}</div></div>
+                <div className="stat-card"><div className="stat-label">Annualized</div><div className="stat-value" style={{ color: 'var(--green)' }}>{fmt(total * 12)}</div></div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap', alignItems: 'center', marginBottom: 24 }}>
+                <svg viewBox="0 0 160 160" width="180" height="180" style={{ flexShrink: 0 }}>
+                    {segments.map(seg => {
+                        const frac = seg.value / total;
+                        const dash = `${frac * CIRC} ${CIRC}`;
+                        const offset = -acc * CIRC;
+                        acc += frac;
+                        return <circle key={seg.key} cx={CX} cy={CY} r={R} fill="none" stroke={seg.color} strokeWidth={SW} strokeDasharray={dash} strokeDashoffset={offset} transform={`rotate(-90 ${CX} ${CY})`} />;
+                    })}
+                    <text x={CX} y={CY - 3} textAnchor="middle" style={{ fill: 'var(--text-hi)', fontSize: 15, fontWeight: 600 }}>{fmt(total).replace('.00', '')}</text>
+                    <text x={CX} y={CY + 14} textAnchor="middle" style={{ fill: 'var(--text-dim)', fontSize: 8, textTransform: 'uppercase', letterSpacing: '0.08em' }}>per month</text>
+                </svg>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 240 }}>
+                    {segments.map(seg => (
+                        <div key={seg.key} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <span style={{ width: 12, height: 12, borderRadius: 3, background: seg.color, flexShrink: 0 }} />
+                            <span style={{ color: 'var(--text-hi)', minWidth: 110 }}>{seg.label}</span>
+                            <span className="fin-mono" style={{ color: 'var(--text-hi)' }}>{fmt(seg.value)}</span>
+                            <span className="fin-mono" style={{ color: 'var(--text-dim)', marginLeft: 'auto' }}>{((seg.value / total) * 100).toFixed(1)}%</span>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            <div className="fin-table-wrap">
+                <table className="fin-table">
+                    <thead><tr><th style={{ width: 40 }}>#</th><th>Client</th><th>Sources</th><th style={{ textAlign: 'right' }}>MRR</th><th style={{ textAlign: 'right' }}>Share</th></tr></thead>
+                    <tbody>
+                        {clients.map((c, i) => {
+                            const tags = (c.services || []).filter(s => SVC_TAG[s]);
+                            return (
+                                <tr key={c.id}>
+                                    <td className="fin-mono" style={{ color: 'var(--text-dim)' }}>{i + 1}</td>
+                                    <td>
+                                        <div className="fin-name">{c.name}</div>
+                                        {c.customer_id && <div className="fin-mono" style={{ fontSize: 11, color: 'var(--text-dim)' }}>{c.customer_id}</div>}
+                                    </td>
+                                    <td>
+                                        {tags.length > 0
+                                            ? tags.map(s => <span key={s} className={`tag ${SVC_TAG[s]}`} style={{ marginRight: 4 }}>{s === 'access_control' ? 'access' : s}</span>)
+                                            : <span style={{ color: 'var(--text-dim)', fontSize: 12 }}>—</span>}
+                                    </td>
+                                    <td className="fin-mono" style={{ textAlign: 'right', color: 'var(--text-hi)' }}>{fmt(c.mrr)}</td>
+                                    <td className="fin-mono" style={{ textAlign: 'right', color: 'var(--text-dim)' }}>{((Number(c.mrr) / total) * 100).toFixed(1)}%</td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        </>
+    );
+}
+
+/* -----------------------------------------------------------------------
    Main Financials page
    ----------------------------------------------------------------------- */
 const money = n => `$${Number(n || 0).toLocaleString()}`;
@@ -386,6 +481,7 @@ export default function Financials() {
     const [fleet,      setFleet]      = useState([]);
     const [clientTx,   setClientTx]   = useState([]);
     const [inventory,  setInventory]  = useState(null);
+    const [mrrData,    setMrrData]    = useState(null);
     const [loading,    setLoading]    = useState(true);
     const [tab,        setTab]        = useState('workorders');
     const [showModal,  setShowModal]  = useState(false);
@@ -396,7 +492,7 @@ export default function Financials() {
     async function load() {
         setLoading(true);
         try {
-            const [wo, recs, sum, mon, fl, ctx, inv] = await Promise.all([
+            const [wo, recs, sum, mon, fl, ctx, inv, mrrRes] = await Promise.all([
                 api.get('/financials/work-orders').catch(() => ({ data: [] })),
                 api.get('/financials'),
                 api.get('/financials/summary'),
@@ -404,6 +500,7 @@ export default function Financials() {
                 api.get('/financials/fleet').catch(() => ({ data: [] })),
                 api.get('/financials/client-transactions').catch(() => ({ data: [] })),
                 api.get('/financials/inventory').catch(() => ({ data: null })),
+                api.get('/financials/mrr').catch(() => ({ data: null })),
             ]);
             setWorkOrders(wo.data);
             setRecords(recs.data);
@@ -412,6 +509,7 @@ export default function Financials() {
             setFleet(fl.data);
             setClientTx(ctx.data);
             setInventory(inv.data);
+            setMrrData(mrrRes.data);
         } finally { setLoading(false); }
     }
 
@@ -528,6 +626,7 @@ export default function Financials() {
                     <button className={`fin-tab ${tab === 'expenses' ? 'active' : ''}`} onClick={() => setTab('expenses')}>Expenses<span className="fin-tab-count">{expenses.length}</span></button>
                     <button className={`fin-tab ${tab === 'fleet' ? 'active' : ''}`} onClick={() => setTab('fleet')}>Fleet Expenses<span className="fin-tab-count">{fleet.length}</span></button>
                     <button className={`fin-tab ${tab === 'clients' ? 'active' : ''}`} onClick={() => setTab('clients')}>Client Billing<span className="fin-tab-count">{clientTx.length}</span></button>
+                    <button className={`fin-tab ${tab === 'mrr' ? 'active' : ''}`} onClick={() => setTab('mrr')}>MRR{mrrData?.count > 0 && <span className="fin-tab-count">{mrrData.count}</span>}</button>
                     <button className={`fin-tab ${tab === 'inventory' ? 'active' : ''}`} onClick={() => setTab('inventory')}>Inventory Assets{inventory?.by_category?.length > 0 && <span className="fin-tab-count">{inventory.by_category.length}</span>}</button>
                 </div>
 
@@ -541,6 +640,8 @@ export default function Financials() {
                     <FleetTable invoices={fleet} />
                 ) : tab === 'inventory' ? (
                     <InventoryTable data={inventory} />
+                ) : tab === 'mrr' ? (
+                    <MrrTab data={mrrData} />
                 ) : (
                     <>
                         {isAdmin && (

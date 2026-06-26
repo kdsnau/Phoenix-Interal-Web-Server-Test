@@ -1,8 +1,7 @@
--- One-time cleanup: collapse per-monitoring-account client rows (88-XXXX etc.)
--- back onto their real customer number. DRY-RUN by default (ends in ROLLBACK).
--- Review the output, then change the final ROLLBACK to COMMIT and re-run to apply.
--- Run: sudo -u postgres psql -d phoenix_portal -f server/scripts/dedupe-88-accounts.sql
--- Generated from "alarm audit(1).xlsx" with 117 monitoring-account mappings.
+-- READ-ONLY: shows duplicate client groups (same real customer number) and which
+-- row owns the invoices / monitoring / tickets, so we can pick the survivor and merge.
+-- Changes NOTHING (wrapped in a transaction that ROLLBACKs).
+-- Run: sudo -u postgres psql -d phoenix_portal -f server/scripts/diagnose-dupes.sql
 \set ON_ERROR_STOP on
 BEGIN;
 
@@ -126,37 +125,28 @@ INSERT INTO mon_map(mon,cust) VALUES
   ('885969','1408'),
   ('130917','1514');
 
--- Account-keyed rows = clients whose customer_id digits equal a monitoring account.
-CREATE TEMP TABLE plan ON COMMIT DROP AS
-SELECT c.id, c.name, c.customer_id, m.cust AS real_num,
-       EXISTS (SELECT 1 FROM clients r WHERE r.customer_id = m.cust AND r.id <> c.id) AS real_exists,
-       row_number() OVER (PARTITION BY m.cust ORDER BY c.id) AS rn
+CREATE TEMP TABLE cli ON COMMIT DROP AS
+SELECT c.id, c.name, c.customer_id, c.services,
+       COALESCE(m.cust, regexp_replace(c.customer_id, '[^0-9]', '', 'g')) AS real_num
 FROM clients c
-JOIN mon_map m ON m.mon = regexp_replace(c.customer_id, '[^0-9]', '', 'g');
+LEFT JOIN mon_map m ON m.mon = regexp_replace(c.customer_id, '[^0-9]', '', 'g');
 
 \echo ''
-\echo '=== PLAN (what will happen) ==='
-SELECT CASE WHEN real_exists THEN 'DELETE (dup of '||real_num||')'
-            WHEN rn = 1      THEN 'RENUMBER -> '||real_num
-            ELSE 'DELETE (extra acct for '||real_num||')' END AS action,
-       customer_id, real_num, name
-FROM plan ORDER BY 1, real_num;
-
-\echo ''
-\echo '=== 88-style rows NOT covered by the audit (left untouched - review) ==='
-SELECT customer_id, name FROM clients
-WHERE (customer_id LIKE '88-%' OR (customer_id ~ '^88' AND length(customer_id) = 6))
-  AND regexp_replace(customer_id, '[^0-9]', '', 'g') NOT IN (SELECT mon FROM mon_map);
-
-UPDATE clients SET customer_id = p.real_num
-  FROM plan p WHERE clients.id = p.id AND NOT p.real_exists AND p.rn = 1;
-DELETE FROM clients USING plan p
-  WHERE clients.id = p.id AND (p.real_exists OR p.rn > 1);
+\echo '=== DUPLICATE GROUPS (same customer, >1 row) — inv/mon/tix = linked rows ==='
+SELECT cli.real_num, cli.id, cli.customer_id, cli.services,
+       (SELECT count(*) FROM client_transactions t  WHERE t.client_id  = cli.id) AS inv,
+       (SELECT count(*) FROM client_monitoring  cm WHERE cm.client_id = cli.id) AS mon,
+       (SELECT count(*) FROM service_tickets    st WHERE st.client_id = cli.id) AS tix,
+       cli.name
+FROM cli
+JOIN (SELECT real_num FROM cli GROUP BY real_num HAVING count(*) > 1) g USING (real_num)
+ORDER BY cli.real_num, inv DESC, mon DESC;
 
 \echo ''
 \echo '=== SUMMARY ==='
-SELECT (SELECT count(*) FROM plan WHERE real_exists OR rn > 1)      AS deleted,
-       (SELECT count(*) FROM plan WHERE NOT real_exists AND rn = 1) AS renumbered,
-       (SELECT count(*) FROM clients)                              AS clients_after;
+SELECT (SELECT count(*) FROM clients) AS total_clients,
+       count(DISTINCT real_num) FILTER (WHERE n > 1) AS dup_customers,
+       count(*) FILTER (WHERE n > 1)                 AS rows_in_dup_groups
+FROM (SELECT real_num, count(*) OVER (PARTITION BY real_num) AS n FROM cli) x;
 
-ROLLBACK;  -- <<< change to COMMIT and re-run to apply
+ROLLBACK;

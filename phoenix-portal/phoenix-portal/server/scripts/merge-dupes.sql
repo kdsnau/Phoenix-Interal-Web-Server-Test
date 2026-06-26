@@ -229,12 +229,15 @@ UPDATE clients c SET services = t.services
 FROM surv s JOIN tgt t ON t.real_num = s.real_num
 WHERE c.id = s.survivor_id AND c.services IS DISTINCT FROM t.services;
 
--- 3. ensure the survivor carries monitoring if ANY row in its group did (BEFORE deletes)
-INSERT INTO client_monitoring (client_id, next_email_at)
-SELECT s.survivor_id, NOW() + INTERVAL '7 days'
-FROM surv s
-WHERE EXISTS (SELECT 1 FROM cli l JOIN client_monitoring cm ON cm.client_id = l.id WHERE l.real_num = s.real_num)
-ON CONFLICT (client_id) DO NOTHING;
+-- 3. move losers' monitoring rows onto the survivor (BEFORE any delete), then collapse
+--    to one row per survivor. client_monitoring has no unique constraint on client_id,
+--    so we re-point and de-dup by ctid rather than ON CONFLICT.
+UPDATE client_monitoring cm SET client_id = s.survivor_id
+FROM cli l JOIN surv s ON s.real_num = l.real_num
+WHERE cm.client_id = l.id AND l.id <> s.survivor_id;
+DELETE FROM client_monitoring a USING client_monitoring b
+WHERE a.client_id = b.client_id AND a.ctid > b.ctid
+  AND a.client_id IN (SELECT survivor_id FROM surv);
 
 -- 4. re-point children from losers onto their survivor
 UPDATE service_tickets     x SET client_id = s.survivor_id FROM cli l JOIN surv s ON s.real_num = l.real_num WHERE x.client_id = l.id AND l.id <> s.survivor_id;

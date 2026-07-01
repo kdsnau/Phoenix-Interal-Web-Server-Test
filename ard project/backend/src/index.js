@@ -40,8 +40,9 @@ app.use((err, req, res, next) => {
 });
 
 if (require.main === module) {
-    app.listen(config.port, () => {
-        console.log(`phx-door-backend listening on http://localhost:${config.port}`);
+    // Bind all IPv4 interfaces so phones/readers on the LAN can reach it.
+    app.listen(config.port, '0.0.0.0', () => {
+        console.log(`phx-door-backend listening on 0.0.0.0:${config.port}`);
     });
 }
 

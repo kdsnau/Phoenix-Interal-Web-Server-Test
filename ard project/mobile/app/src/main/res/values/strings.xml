@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Phoenix Door</string>
+    <string name="hce_service_desc">Phoenix Door digital access card</string>
+    <string name="hce_aid_group_desc">Phoenix Door</string>
+</resources>

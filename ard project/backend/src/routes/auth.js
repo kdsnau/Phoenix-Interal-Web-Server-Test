@@ -14,7 +14,11 @@ router.post(
         const { email, password } = req.body || {};
         if (!email || !password) return res.status(400).json({ error: 'missing_credentials' });
 
-        const { rows } = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+        // Email is case-insensitive (and trimmed) — phone keyboards love to
+        // auto-capitalize, which must not break sign-in.
+        const { rows } = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [
+            String(email).trim(),
+        ]);
         const user = rows[0];
         if (!user || !user.password_hash || !user.active) {
             return res.status(401).json({ error: 'invalid_login' });

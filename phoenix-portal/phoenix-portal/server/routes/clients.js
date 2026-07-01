@@ -116,6 +116,10 @@ async function walkDwg(dir, base = dir, depth = 0, out = []) {
 /* ── Schema migrations ────────────────────────────────────────────────── */
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS permit_number   TEXT`).catch(() => {});
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS permit_expires  DATE`).catch(() => {});
+/* Canonical QuickBooks customer number — shared across a customer's billing anchor
+   + monitored panel rows. Imports dedupe on this so the anchor/panel duplication
+   that forced the 2026-06 cleanup can't silently come back. */
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS customer_number TEXT`).catch(() => {});
 /* Site & contact */
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS site_address    TEXT`).catch(() => {});
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS contact_name    TEXT`).catch(() => {});
@@ -318,7 +322,11 @@ router.post('/import-quickbooks', requireRole('admin'), upload.array('files', 12
             }
         }
 
-        const existing = await pool.query('SELECT id, name, customer_id FROM clients');
+        /* Prefer the billing/umbrella row (no service labels) so a customer's
+           transactions land on its rollup row rather than a random panel. */
+        const existing = await pool.query(
+            'SELECT id, name, customer_id, customer_number FROM clients ORDER BY (COALESCE(array_length(services,1),0)=0) DESC, id'
+        );
         const idByName = new Map(existing.rows.map(r => [(r.name || '').trim().toLowerCase(), r.id]));
         const have     = new Set(idByName.keys());
 
@@ -328,6 +336,8 @@ router.post('/import-quickbooks', requireRole('admin'), upload.array('files', 12
            or the invoice Num prefix ("1408-348" → "1408"; "FC 2605" has none). */
         const idByNum = new Map();
         for (const r of existing.rows) {
+            const cn = numKey(r.customer_number);            // authoritative QB number
+            if (cn && !idByNum.has(cn)) idByNum.set(cn, r.id);
             const raw = numKey(r.customer_id);
             if (raw && !idByNum.has(raw)) idByNum.set(raw, r.id);
             const fd = fourDigit(r.customer_id);
@@ -656,9 +666,14 @@ router.post('/rebuild-from-drive', requireRole('admin'), async (req, res) => {
     const fourDigit = s => { const m = String(s || '').match(/(?<!\d)\d{4}(?!\d)/); return m ? m[0] : null; };
     const cleanName = f => f.replace(/(?<!\d)\d{4}(?!\d)/, '').replace(/\s{2,}/g, ' ').replace(/^[\s\-_.]+|[\s\-_.]+$/g, '').trim() || f;
 
-    const existing = (await pool.query('SELECT id, name, customer_id, monitoring_enabled, services FROM clients')).rows;
+    const existing = (await pool.query('SELECT id, name, customer_id, customer_number, monitoring_enabled, services FROM clients')).rows;
     const existingByNum = new Map();
-    for (const c of existing) { const n = fourDigit(c.customer_id) || fourDigit(c.name); if (n && !existingByNum.has(n)) existingByNum.set(n, c); }
+    for (const c of existing) {
+        /* authoritative customer_number first, then the legacy 4-digit heuristic */
+        for (const n of [c.customer_number, fourDigit(c.customer_id), fourDigit(c.name)]) {
+            if (n && !existingByNum.has(String(n))) existingByNum.set(String(n), c);
+        }
+    }
     const taken = new Set(existing.map(c => c.customer_id));
 
     /* Only ADD customers whose newest invoice file was modified within 3 years. */
@@ -684,7 +699,7 @@ router.post('/rebuild-from-drive', requireRole('admin'), async (req, res) => {
     const isProtected = c => c.monitoring_enabled || (Array.isArray(c.services) && c.services.length > 0);
     const toRemove = existing.filter(c => {
         if (isProtected(c)) return false;
-        const num = fourDigit(c.customer_id) || fourDigit(c.name);
+        const num = c.customer_number || fourDigit(c.customer_id) || fourDigit(c.name);
         return !num || !folderNums.has(num);
     });
 
@@ -706,8 +721,8 @@ router.post('/rebuild-from-drive', requireRole('admin'), async (req, res) => {
     let added = 0, removed = 0;
     for (const a of toAdd) {
         await pool.query(
-            'INSERT INTO clients (name, customer_id, vendor, services, monitoring_enabled) VALUES ($1, $2, $3, $4, FALSE)',
-            [a.name, uniqueCid(a.customer_id), 'generic', []]
+            'INSERT INTO clients (name, customer_id, customer_number, vendor, services, monitoring_enabled) VALUES ($1, $2, $3, $4, $5, FALSE)',
+            [a.name, uniqueCid(a.customer_id), a.customer_id, 'generic', []]
         ).then(() => { added++; }).catch(e => console.error('rebuild add failed:', a.folder, e.message));
     }
     for (const c of toRemove) {
@@ -769,9 +784,14 @@ router.post('/rebuild-from-audit', requireRole('admin'), upload.single('file'), 
     }
     if (auditMap.size === 0) return res.status(400).json({ error: 'No customer numbers found — is this the right file/format?' });
 
-    const existing = (await pool.query('SELECT id, name, customer_id, monitoring_enabled, services FROM clients')).rows;
+    const existing = (await pool.query('SELECT id, name, customer_id, customer_number, monitoring_enabled, services FROM clients')).rows;
     const existingByNum = new Map();
-    for (const c of existing) { const n = custNum(c.customer_id) || custNum(c.name); if (n && !existingByNum.has(n)) existingByNum.set(n, c); }
+    for (const c of existing) {
+        /* authoritative customer_number first, then the mangled-name number heuristic */
+        for (const n of [c.customer_number, custNum(c.customer_id), custNum(c.name)]) {
+            if (n && !existingByNum.has(String(n))) existingByNum.set(String(n), c);
+        }
+    }
     const taken = new Set(existing.map(c => c.customer_id));
 
     const toAdd = [], matchedNums = new Set();
@@ -785,7 +805,7 @@ router.post('/rebuild-from-audit', requireRole('admin'), upload.single('file'), 
     const auditNums = new Set(auditMap.keys());
     const toRemove = existing.filter(c => {
         if (isProtected(c)) return false;
-        const num = custNum(c.customer_id) || custNum(c.name);
+        const num = c.customer_number || custNum(c.customer_id) || custNum(c.name);
         return !num || !auditNums.has(num);
     });
 
@@ -803,8 +823,8 @@ router.post('/rebuild-from-audit', requireRole('admin'), upload.single('file'), 
     let added = 0, removed = 0;
     for (const a of toAdd) {
         await pool.query(
-            'INSERT INTO clients (name, customer_id, vendor, services, monitoring_enabled) VALUES ($1, $2, $3, $4, FALSE)',
-            [a.name, uniqueCid(a.customer_id), 'generic', a.services]
+            'INSERT INTO clients (name, customer_id, customer_number, vendor, services, monitoring_enabled) VALUES ($1, $2, $3, $4, $5, FALSE)',
+            [a.name, uniqueCid(a.customer_id), a.customer_id, 'generic', a.services]
         ).then(() => { added++; }).catch(e => console.error('audit add failed:', a.customer_id, e.message));
     }
     for (const c of toRemove) {
@@ -832,7 +852,7 @@ router.post('/prune-inactive', requireRole('admin'), async (req, res) => {
     const folderByNum = new Map();
     for (const f of folders) { const n = fourDigit(f); if (n && !folderByNum.has(n)) folderByNum.set(n, f); }
 
-    const existing = (await pool.query('SELECT id, name, customer_id, monitoring_enabled, services FROM clients')).rows;
+    const existing = (await pool.query('SELECT id, name, customer_id, customer_number, monitoring_enabled, services FROM clients')).rows;
     const isProtected = c => c.monitoring_enabled || (Array.isArray(c.services) && c.services.length > 0);
     const cutoff = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 3);
     const cutoffMs = cutoff.getTime();
@@ -840,7 +860,7 @@ router.post('/prune-inactive', requireRole('admin'), async (req, res) => {
     const toRemove = [];
     for (const c of existing) {
         if (isProtected(c)) continue;
-        const num    = fourDigit(c.customer_id) || fourDigit(c.name);
+        const num    = c.customer_number || fourDigit(c.customer_id) || fourDigit(c.name);
         const folder = num ? folderByNum.get(num) : null;
         const active = folder ? (await newestFileMtimeMs(path.join(root, folder))) >= cutoffMs : false;
         if (!active) toRemove.push(c);

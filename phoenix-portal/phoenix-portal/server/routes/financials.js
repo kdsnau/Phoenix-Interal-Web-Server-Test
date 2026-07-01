@@ -403,14 +403,31 @@ router.post('/clear-invoices', requireRole('admin'), async (req, res) => {
 router.get('/mrr', requireRole('accounting', 'admin'), async (_req, res) => {
     try {
         const r = await pool.query(`
-            SELECT id, name, customer_id, services, billing_frequency,
+            SELECT id, name, customer_id, customer_number, services, billing_frequency,
                    billing_amount / CASE COALESCE(billing_frequency, 'monthly')
                        WHEN 'quarterly' THEN 3.0 WHEN 'yearly' THEN 12.0 ELSE 1.0 END AS mrr
             FROM clients
             WHERE billing_amount IS NOT NULL AND billing_amount > 0
-            ORDER BY mrr DESC, name ASC
         `);
-        const clients = r.rows.map(c => ({ ...c, mrr: Number(c.mrr) }));
+        /* Roll up per customer (rows sharing a customer_number), so a
+           multi-location customer reports ONE combined MRR line instead of one
+           per panel. Falls back to customer_id for rows with no number yet. */
+        const groups = new Map();
+        for (const c of r.rows) {
+            const key = (c.customer_number && String(c.customer_number).trim()) || c.customer_id || `id:${c.id}`;
+            let g = groups.get(key);
+            if (!g) { g = { customer_id: key, name: '', services: new Set(), mrr: 0, panels: 0 }; groups.set(key, g); }
+            g.mrr    += Number(c.mrr) || 0;
+            g.panels += 1;
+            (c.services || []).forEach(s => g.services.add(s));
+            /* Prefer the billing/umbrella row's name (no service labels); strip a
+               trailing " : Billing" so it reads as the plain customer. */
+            const clean = String(c.name || '').replace(/\s*:\s*Billing\s*$/i, '').trim();
+            if (!g.name || !(c.services && c.services.length)) g.name = clean || g.name;
+        }
+        const clients = [...groups.values()]
+            .map(g => ({ ...g, services: [...g.services] }))
+            .sort((a, b) => b.mrr - a.mrr || a.name.localeCompare(b.name));
         const total_mrr = clients.reduce((s, c) => s + c.mrr, 0);
         res.json({ total_mrr, count: clients.length, clients });
     } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to load MRR.' }); }

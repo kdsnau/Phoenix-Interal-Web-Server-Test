@@ -1306,6 +1306,29 @@ function PruneModal({ onClose, onDone }) {
     );
 }
 
+/* A customer's billing anchor + monitored panels share a customer_number.
+   Group them so multi-location customers (The Pharm, PAL, GG&D…) collapse into
+   one expandable roll-up card instead of a wall of near-duplicate tiles. */
+const svcClass = s => s === 'fire' ? 'tag-red' : s === 'access_control' ? 'tag-blue' : 'tag-yellow';
+
+function groupClients(list) {
+    const map = new Map();
+    for (const c of list) {
+        const key = (c.customer_number && String(c.customer_number).trim()) || c.customer_id || `id:${c.id}`;
+        let g = map.get(key);
+        if (!g) { g = { key, name: '', rows: [], services: new Set() }; map.set(key, g); }
+        g.rows.push(c);
+        (c.services || []).forEach(s => g.services.add(s));
+    }
+    for (const g of map.values()) {
+        g.rows.sort((a, b) => (a.services || []).length - (b.services || []).length);   // umbrella (no labels) first
+        const umb = g.rows.find(r => !(r.services || []).length) || g.rows[0];
+        g.name = String(umb.name || '').replace(/\s*:\s*Billing\s*$/i, '').trim() || umb.name;
+        g.services = [...g.services];
+    }
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export default function Alarms() {
     const { user }                          = useAuth();
     const [clients, setClients]             = useState([]);
@@ -1318,6 +1341,7 @@ export default function Alarms() {
     const [showRebuild, setShowRebuild]     = useState(false);
     const [showPrune, setShowPrune]         = useState(false);
     const [showAudit, setShowAudit]         = useState(false);
+    const [expanded, setExpanded]           = useState(() => new Set());   // expanded customer roll-up groups
     const [permits, setPermits]       = useState([]);
     const [permitsLoading, setPermitsLoading] = useState(false);
 
@@ -1357,6 +1381,14 @@ export default function Alarms() {
     async function openClient(c) {
         const r = await api.get(`/clients/${c.id}`);
         setSelected(r.data);
+    }
+
+    function toggleGroup(key) {
+        setExpanded(prev => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key); else next.add(key);
+            return next;
+        });
     }
 
     async function refreshSelected() {
@@ -1536,23 +1568,61 @@ export default function Alarms() {
                 ) : serviceTab !== 'permits' && serviceTab !== 'unmonitored' && (
                     <div className="alarm-client-grid">
                         {clients.length === 0 && <div className="alarm-empty">No clients found.</div>}
-                        {clients.map(c => (
-                            <div key={c.id} className="alarm-client-card" onClick={() => openClient(c)}>
-                                <div className="alarm-client-name">{c.name}</div>
-                                <div className="alarm-client-meta">
-                                    <span className="tag-dim">{c.customer_id}</span>
-                                    {(c.services || []).map(s => (
-                                        <span key={s} className={`${s === 'fire' ? 'tag-red' : s === 'access_control' ? 'tag-blue' : 'tag-yellow'}`}>{s}</span>
-                                    ))}
-                                    {c.monitoring_enabled && <span className="tag-green">monitored</span>}
-                                    {c.permit_expires && (() => {
-                                        const days = Math.ceil((new Date(c.permit_expires) - new Date()) / 86400000);
-                                        if (days > 60) return null;
-                                        return <span className={`tag ${days < 0 ? 'tag-red' : 'tag-yellow'}`}>Permit {days < 0 ? 'EXPIRED' : `exp. ${days}d`}</span>;
-                                    })()}
+                        {groupClients(clients).map(g => {
+                            /* Single row → an ordinary client card. */
+                            if (g.rows.length === 1) {
+                                const c = g.rows[0];
+                                return (
+                                    <div key={c.id} className="alarm-client-card" onClick={() => openClient(c)}>
+                                        <div className="alarm-client-name">{c.name}</div>
+                                        <div className="alarm-client-meta">
+                                            <span className="tag-dim">{c.customer_id}</span>
+                                            {(c.services || []).map(s => (
+                                                <span key={s} className={svcClass(s)}>{s}</span>
+                                            ))}
+                                            {c.monitoring_enabled && <span className="tag-green">monitored</span>}
+                                            {c.permit_expires && (() => {
+                                                const days = Math.ceil((new Date(c.permit_expires) - new Date()) / 86400000);
+                                                if (days > 60) return null;
+                                                return <span className={`tag ${days < 0 ? 'tag-red' : 'tag-yellow'}`}>Permit {days < 0 ? 'EXPIRED' : `exp. ${days}d`}</span>;
+                                            })()}
+                                        </div>
+                                    </div>
+                                );
+                            }
+                            /* Multi-location customer → one expandable roll-up card. */
+                            const isOpen = expanded.has(g.key);
+                            const monCnt = g.rows.filter(r => r.monitoring_enabled).length;
+                            return (
+                                <div key={g.key} className="alarm-client-card" style={{ gridColumn: '1 / -1' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }} onClick={() => toggleGroup(g.key)}>
+                                        <span style={{ color: 'var(--text-dim)', width: 12, flexShrink: 0 }}>{isOpen ? '▾' : '▸'}</span>
+                                        <div style={{ flex: 1, minWidth: 0 }}>
+                                            <div className="alarm-client-name">{g.name}</div>
+                                            <div className="alarm-client-meta">
+                                                <span className="tag-dim">{g.key}</span>
+                                                <span className="tag-blue">{g.rows.length} panels</span>
+                                                {g.services.map(s => <span key={s} className={svcClass(s)}>{s}</span>)}
+                                                {monCnt > 0 && <span className="tag-green">{monCnt} monitored</span>}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {isOpen && (
+                                        <div style={{ marginTop: 10, paddingTop: 8, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                            {g.rows.map(c => (
+                                                <div key={c.id} onClick={() => openClient(c)}
+                                                    style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 4, cursor: 'pointer', background: 'rgba(255,255,255,0.03)' }}>
+                                                    <span style={{ flex: 1, minWidth: 0, color: 'var(--text-hi)', fontSize: 13 }}>{c.name}</span>
+                                                    <span className="tag-dim" style={{ fontSize: 11 }}>{c.customer_id}</span>
+                                                    {(c.services || []).map(s => <span key={s} className={svcClass(s)}>{s}</span>)}
+                                                    {c.monitoring_enabled && <span className="tag-green">monitored</span>}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 )}
 

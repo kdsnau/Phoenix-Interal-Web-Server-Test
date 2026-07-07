@@ -10,6 +10,7 @@ import Admin      from './pages/Admin';
 import Fleet      from './pages/Fleet';
 import Alarms     from './pages/Alarms';
 import Inventory  from './pages/Inventory';
+import Licenses   from './pages/Licenses';
 import Projects   from './pages/Projects';
 import AI        from './pages/AI';
 import Feedback  from './pages/Feedback';
@@ -44,6 +45,7 @@ function AppRoutes() {
             {/* Legacy path — keep old bookmarks/links working */}
             <Route path="/alarms"     element={<Navigate to="/clients" replace />} />
             <Route path="/inventory"  element={<PrivateRoute><Inventory /></PrivateRoute>} />
+            <Route path="/licenses"   element={<PrivateRoute><Licenses /></PrivateRoute>} />
             <Route path="/projects"   element={<PrivateRoute><Projects /></PrivateRoute>} />
             <Route path="/ai"         element={<PrivateRoute><AI /></PrivateRoute>} />
             <Route path="/feedback"   element={<PrivateRoute><Feedback /></PrivateRoute>} />

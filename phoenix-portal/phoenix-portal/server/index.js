@@ -32,6 +32,7 @@ const technotesRoutes  = require('./routes/technotes');
 const dashboardRoutes  = require('./routes/dashboard');
 const snapshotRoutes   = require('./routes/snapshot');
 const timesheetRoutes  = require('./routes/timesheets');
+const licenseRoutes    = require('./routes/licenses');
 const { startScheduler } = require('./services/monitoringScheduler');
 
 const app  = express();
@@ -92,6 +93,7 @@ app.use('/api/tech-notes',  technotesRoutes);
 app.use('/api/dashboard',   dashboardRoutes);
 app.use('/api/snapshot',    snapshotRoutes);
 app.use('/api/timesheets',  timesheetRoutes);
+app.use('/api/licenses',    licenseRoutes);
 
 app.get('/api/health', (_, res) => res.json({ status: 'ok' }));
 

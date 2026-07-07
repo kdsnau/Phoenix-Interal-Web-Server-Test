@@ -76,9 +76,9 @@ export default function Timesheets() {
                     </div>
                 </div>
 
-                {sheet && !sheet.maps_configured && (
-                    <div className="error-msg" style={{ marginTop: 12 }}>
-                        Travel estimates are off — set <code>GOOGLE_MAPS_API_KEY</code> in the server .env to enable drive-time from {sheet.office}.
+                {sheet && (
+                    <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-dim)' }}>
+                        Travel estimated from the office ({sheet.office}).
                     </div>
                 )}
 
@@ -122,9 +122,9 @@ export default function Timesheets() {
                         </div>
 
                         <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 10 }}>
-                            Estimate: <strong>on-site</strong> = ticket entry→departure; <strong>travel</strong> = round-trip drive
-                            between the office and each ticket's location (Google Maps), counted once per ticket. Tickets with no
-                            usable address show “—” for travel.
+                            Estimate: <strong>on-site</strong> = ticket entry→departure; <strong>travel</strong> = round-trip
+                            straight-line distance between the office and each ticket's location × a road factor ÷ average speed,
+                            counted once per ticket. Rough by design; tickets with no usable address show “—”.
                         </div>
                     </>
                 )}

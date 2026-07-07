@@ -32,6 +32,6 @@ Thumbs.db
 # Android — contains SDK path and secrets, never commit
 local.properties
 .claude/
-
+ard project/
 # Misc
 *.pem

@@ -6,65 +6,91 @@ const router = express.Router();
 
 /* Office origin for travel estimates. Override in server/.env. */
 const OFFICE_ADDRESS = process.env.OFFICE_ADDRESS || '4001 E Broadway Rd 815, Phoenix, AZ';
-const mapsKey = () => process.env.GOOGLE_MAPS_API_KEY || '';
+/* Simple, no-cost estimate: straight-line distance × road-detour factor ÷ average
+   speed. Geocoding is the free OpenStreetMap/Nominatim service (no key). Tune via env. */
+const AVG_MPH = Number(process.env.TRAVEL_MPH || 32);       // effective drive speed
+const DETOUR  = Number(process.env.TRAVEL_DETOUR || 1.3);   // straight-line → road miles
+const GEO_UA  = 'PhoenixSecTechPortal/1.0 (internal timesheet travel estimate)';
 
 const round2   = n => Math.round((Number(n) || 0) * 100) / 100;
 const normAddr = a => String(a || '').replace(/\s+/g, ' ').trim();
 
-/* Cache office→address distance so Google is called once per unique address
-   (client addresses are stable, so a timesheet re-render costs no API calls). */
+/* Cache geocodes + computed distance so each unique address is looked up once
+   (client addresses are stable, so a timesheet re-render costs no lookups). */
 pool.query(`
     CREATE TABLE IF NOT EXISTS distance_cache (
         address     TEXT PRIMARY KEY,
+        lat         NUMERIC,
+        lng         NUMERIC,
         miles       NUMERIC,
         minutes     NUMERIC,
         status      TEXT,
         computed_at TIMESTAMP DEFAULT NOW()
     )
 `).catch(() => {});
+pool.query(`ALTER TABLE distance_cache ADD COLUMN IF NOT EXISTS lat NUMERIC`).catch(() => {});
+pool.query(`ALTER TABLE distance_cache ADD COLUMN IF NOT EXISTS lng NUMERIC`).catch(() => {});
 
-/* Google Distance Matrix: OFFICE → dest. Returns { miles, minutes } (one-way)
-   or null (no key / geocode failure). Caches OK results in distance_cache. */
+function haversineMiles(a, b) {
+    const R = 3958.8, rad = d => d * Math.PI / 180;
+    const dLat = rad(b.lat - a.lat), dLng = rad(b.lng - a.lng);
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+let officeCoords;   // memoized office lat/lng across requests
+
+/* Geocode an address to { lat, lng } via free OSM Nominatim, cached per address. */
+async function coordsFor(addrRaw) {
+    const addr = normAddr(addrRaw);
+    if (!addr) return null;
+    const hit = await pool.query('SELECT lat, lng FROM distance_cache WHERE address = $1 AND lat IS NOT NULL', [addr]).catch(() => null);
+    if (hit && hit.rowCount) return { lat: Number(hit.rows[0].lat), lng: Number(hit.rows[0].lng) };
+    if (typeof fetch !== 'function') return null;
+    try {
+        const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(addr);
+        const j   = await (await fetch(url, { headers: { 'User-Agent': GEO_UA } })).json();
+        const top = Array.isArray(j) && j[0];
+        if (!top || top.lat == null) {
+            await pool.query(
+                `INSERT INTO distance_cache (address, status, computed_at) VALUES ($1, 'NOT_FOUND', NOW())
+                 ON CONFLICT (address) DO UPDATE SET status = 'NOT_FOUND', computed_at = NOW()`, [addr]).catch(() => {});
+            return null;
+        }
+        const c = { lat: Number(top.lat), lng: Number(top.lon) };
+        await pool.query(
+            `INSERT INTO distance_cache (address, lat, lng, computed_at) VALUES ($1, $2, $3, NOW())
+             ON CONFLICT (address) DO UPDATE SET lat = EXCLUDED.lat, lng = EXCLUDED.lng, computed_at = NOW()`,
+            [addr, c.lat, c.lng]).catch(() => {});
+        return c;
+    } catch (e) {
+        console.error('Geocode error:', e.message);
+        return null;
+    }
+}
+
+/* Estimated OFFICE → dest one-way { miles, minutes } (straight-line × detour ÷ speed),
+   or null if either address can't be geocoded. Final result cached per dest address. */
 async function officeDistance(destRaw) {
     const dest = normAddr(destRaw);
     if (!dest) return null;
-
     const hit = await pool.query('SELECT miles, minutes, status FROM distance_cache WHERE address = $1', [dest]).catch(() => null);
-    if (hit && hit.rowCount && hit.rows[0].status === 'OK') {
+    if (hit && hit.rowCount && hit.rows[0].status === 'OK' && hit.rows[0].miles != null) {
         return { miles: Number(hit.rows[0].miles), minutes: Number(hit.rows[0].minutes) };
     }
-
-    const key = mapsKey();
-    if (!key || typeof fetch !== 'function') return null;
-    try {
-        const url = 'https://maps.googleapis.com/maps/api/distancematrix/json?units=imperial'
-            + `&origins=${encodeURIComponent(OFFICE_ADDRESS)}`
-            + `&destinations=${encodeURIComponent(dest)}&key=${key}`;
-        const j  = await (await fetch(url)).json();
-        const el = j && j.rows && j.rows[0] && j.rows[0].elements && j.rows[0].elements[0];
-        const status = (el && el.status) || j.status || 'UNKNOWN';
-        if (!el || status !== 'OK') {
-            await pool.query(
-                `INSERT INTO distance_cache (address, status, computed_at) VALUES ($1, $2, NOW())
-                 ON CONFLICT (address) DO UPDATE SET status = EXCLUDED.status, computed_at = NOW()`,
-                [dest, status]
-            ).catch(() => {});
-            return null;
-        }
-        const miles   = el.distance.value / 1609.344;
-        const minutes = el.duration.value / 60;
-        await pool.query(
-            `INSERT INTO distance_cache (address, miles, minutes, status, computed_at)
-             VALUES ($1, $2, $3, 'OK', NOW())
-             ON CONFLICT (address) DO UPDATE
-               SET miles = EXCLUDED.miles, minutes = EXCLUDED.minutes, status = 'OK', computed_at = NOW()`,
-            [dest, miles, minutes]
-        ).catch(() => {});
-        return { miles, minutes };
-    } catch (e) {
-        console.error('Distance Matrix error:', e.message);
-        return null;
-    }
+    if (!officeCoords) officeCoords = await coordsFor(OFFICE_ADDRESS);
+    if (!officeCoords) return null;
+    const dc = await coordsFor(dest);
+    if (!dc) return null;
+    const miles   = haversineMiles(officeCoords, dc) * DETOUR;
+    const minutes = (miles / AVG_MPH) * 60;
+    await pool.query(
+        `INSERT INTO distance_cache (address, lat, lng, miles, minutes, status, computed_at)
+         VALUES ($1, $2, $3, $4, $5, 'OK', NOW())
+         ON CONFLICT (address) DO UPDATE
+           SET lat = EXCLUDED.lat, lng = EXCLUDED.lng, miles = EXCLUDED.miles, minutes = EXCLUDED.minutes, status = 'OK', computed_at = NOW()`,
+        [dest, dc.lat, dc.lng, miles, minutes]).catch(() => {});
+    return { miles, minutes };
 }
 
 /* Estimated timesheet for one user over [start, end] (inclusive dates).
@@ -134,7 +160,7 @@ router.get('/', requireRole('accounting', 'admin'), async (req, res) => {
     if (!userId || !start || !end) return res.status(400).json({ error: 'user_id, start and end are required.' });
     try {
         const sheet = await buildTimesheet(userId, start, end);
-        res.json({ user_id: userId, start, end, office: OFFICE_ADDRESS, maps_configured: !!mapsKey(), ...sheet });
+        res.json({ user_id: userId, start, end, office: OFFICE_ADDRESS, ...sheet });
     } catch (err) { console.error('timesheet error:', err); res.status(500).json({ error: 'Failed to build timesheet.' }); }
 });
 
@@ -150,7 +176,7 @@ router.get('/summary', requireRole('accounting', 'admin'), async (req, res) => {
             if (sheet.rows.length) out.push({ user_id: u.id, name: u.name, tickets: sheet.rows.length, ...sheet.totals });
         }
         out.sort((a, b) => b.total_hours - a.total_hours);
-        res.json({ start, end, maps_configured: !!mapsKey(), staff: out });
+        res.json({ start, end, staff: out });
     } catch (err) { console.error('timesheet summary error:', err); res.status(500).json({ error: 'Failed to build summary.' }); }
 });
 

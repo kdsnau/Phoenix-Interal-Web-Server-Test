@@ -5,6 +5,7 @@ import Dashboard  from './pages/Dashboard';
 import Tickets    from './pages/Tickets';
 import Financials from './pages/Financials';
 import Snapshot   from './pages/Snapshot';
+import Timesheets from './pages/Timesheets';
 import Admin      from './pages/Admin';
 import Fleet      from './pages/Fleet';
 import Alarms     from './pages/Alarms';
@@ -36,6 +37,7 @@ function AppRoutes() {
             <Route path="/tickets"    element={<PrivateRoute roles={['technician','admin']}><Tickets /></PrivateRoute>} />
             <Route path="/financials" element={<PrivateRoute roles={['accounting','admin']}><Financials /></PrivateRoute>} />
             <Route path="/snapshot"   element={<PrivateRoute roles={['accounting','admin']}><Snapshot /></PrivateRoute>} />
+            <Route path="/timesheets" element={<PrivateRoute roles={['accounting','admin']}><Timesheets /></PrivateRoute>} />
             <Route path="/admin"      element={<PrivateRoute roles={['admin']}><Admin /></PrivateRoute>} />
             <Route path="/fleet"      element={<PrivateRoute><Fleet /></PrivateRoute>} />
             <Route path="/clients"    element={<PrivateRoute><Alarms /></PrivateRoute>} />

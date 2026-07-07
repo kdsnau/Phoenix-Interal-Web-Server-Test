@@ -19,6 +19,10 @@ app.use(
 
 app.get('/health', (req, res) => res.json({ ok: true, service: 'phx-door-backend' }));
 
+// Public (unauthenticated) time source so a clockless reader can get unix time
+// to sign its requests, without needing NTP/internet on the reader's LAN.
+app.get('/api/reader/time', (req, res) => res.json({ now: Math.floor(Date.now() / 1000) }));
+
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/users', require('./routes/users'));
 app.use('/api/credentials', require('./routes/credentials'));

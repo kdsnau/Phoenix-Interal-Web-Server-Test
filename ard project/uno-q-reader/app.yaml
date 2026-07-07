@@ -1,0 +1,7 @@
+name: Phoenix Door Reader
+description: "NFC door reader for the Arduino UNO Q. The MCU reads the PN532 and drives the relay/LEDs; the Linux side (Python) validates each tap over WiFi against the Phoenix Door backend."
+icon: 🚪
+version: "0.1.0"
+
+ports: []
+bricks: []

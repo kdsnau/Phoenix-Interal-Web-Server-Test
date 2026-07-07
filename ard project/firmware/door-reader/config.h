@@ -1,28 +1,28 @@
 #pragma once
 /*
- * Per-door configuration. Register a door in the admin dashboard (Doors ->
- * Register), which mints a one-time reader_key, and paste DOOR_ID + READER_KEY
- * here. Point SERVER_HOST at the site gateway (or the dev backend for testing).
+ * Per-door configuration. Values below are the "Bench Reader (Uno Q)" door
+ * registered in the dashboard. Treat READER_KEY as a secret.
  */
 
-// ---- identity (from the dashboard) ----
-#define DOOR_ID      1
-#define READER_KEY   "PASTE_64_HEX_CHAR_READER_KEY_FROM_THE_DASHBOARD"
+// ---- identity (from the dashboard: Doors -> Register) ----
+#define DOOR_ID      4
+#define READER_KEY   "dfa2f19879c8967520efbbcff7b56dfca48a51014c9f5ce8628f00b47f5de0f6"
 
 // ---- gateway / backend on the LAN ----
-#define SERVER_HOST  "192.168.10.224"   // gateway IP (or your dev PC for testing)
+#define SERVER_HOST  "192.168.10.224"   // PC hosting the backend (host-stack.ps1)
 #define SERVER_PORT  4000
 
 // ---- network ----
-// Many W5500 shields print a MAC on a sticker; otherwise keep this unique per door.
+// Many W5500 shields print a MAC on a sticker; keep this unique per door.
 #define MAC_BYTES    { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED }
 
-// The Uno has no clock, but signed requests need real time -> NTP on boot.
-#define NTP_HOST       "pool.ntp.org"
-#define NTP_RESYNC_MS  3600000UL        // re-sync hourly
+// The reader gets unix time from the backend (GET /api/reader/time) to sign
+// requests — no NTP/internet needed. Re-sync interval:
+#define TIME_RESYNC_MS  600000UL        // every 10 min
 
 // ---- pins ----
-// Avoid 10-13 (SPI) and 4 (SD CS) used by the Ethernet shield, and A4/A5 (I2C).
+// Ethernet Shield 2 uses SPI (ICSP) + D10 (W5500 CS) + D4 (SD CS). Keep clear of
+// those. PN532 is on I2C (dedicated SDA/SCL pins on the Uno Q, NOT A4/A5).
 #define PN532_IRQ    2
 #define PN532_RESET  3
 #define PIN_RELAY    7
@@ -38,12 +38,13 @@
   #define SERVO_UNLOCKED  110
 #endif
 
-// Read phones (HCE) in addition to UID cards? Get cards working first, then turn
-// this on — APDU reading over PN532 may need per-phone tuning on real hardware.
+// Read phones (HCE) as well as UID cards? Get cards working first.
 // #define ENABLE_PHONE_HCE
 
 #define DEFAULT_UNLOCK_MS 4000
 
-// If the gateway is unreachable AND the card isn't in the local fallback list:
+// If the backend/gateway is unreachable:
 //   false = deny (secure, recommended)   true = allow (fail-open)
+// (The site gateway provides the real offline allow-list; the reader itself is
+//  online-only to keep it simple.)
 #define FAIL_OPEN false

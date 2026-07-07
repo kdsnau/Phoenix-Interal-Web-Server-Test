@@ -13,7 +13,9 @@ $BACKEND = "C:\Users\Ragna\Downloads\PHXSECINTERNALTEST\ard project\backend"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Starting Postgres on 5433..."
     if (Test-Path "$DATA\postmaster.pid") { Remove-Item "$DATA\postmaster.pid" -Force -ErrorAction SilentlyContinue }
-    $log = "$DATA\pg-$(Get-Date -Format yyyyMMdd-HHmmss).log"
+    # IMPORTANT: log OUTSIDE the data dir. A log file inside $DATA collides with
+    # crash-recovery's fsync of the data dir ("sharing violation") and wedges startup.
+    $log = "C:\Users\Ragna\phx-door.log"
     & "$PG\pg_ctl.exe" -D $DATA -o "-p 5433" -l $log -w start
 } else {
     Write-Host "Postgres already running on 5433."

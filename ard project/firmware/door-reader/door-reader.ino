@@ -1,48 +1,42 @@
 /*
- * Phoenix Door — NETWORKED reader firmware
+ * Phoenix Door — NETWORKED reader firmware (Uno Q + Ethernet Shield 2)
  * --------------------------------------------------------------------------
- * Arduino Uno + W5500 Ethernet shield + PN532 ("NFC Module V3", I2C).
- * Reads a card UID (and optionally a phone token over HCE), asks the site
- * gateway/backend to decide via POST /api/reader/validate (HMAC-signed exactly
- * like backend/tools/reader-sim.js, so the server already accepts it), and
- * drives the lock. Falls back to a small local EEPROM allow-list if the gateway
- * is unreachable (hybrid).
+ * Reads a card UID (and optionally a phone token over HCE), asks the backend /
+ * gateway to decide via POST /api/reader/validate (HMAC-signed exactly like
+ * backend/tools/reader-sim.js, so the server already accepts it), and drives the
+ * lock. Gets unix time from the backend (GET /api/reader/time) so it can sign
+ * requests without an RTC or NTP.
  *
  * Libraries (Arduino IDE -> Library Manager):
  *   - "Adafruit PN532"  (+ "Adafruit BusIO")
  *   - "Crypto"          by Rhys Weatherley  (SHA256 / HMAC)
- *   - Ethernet          (bundled; supports the W5500 shield)
+ *   - "Ethernet"        (the W5500 shield)
  *
- * NOTE: this is at the edge of the Uno's 2 KB SRAM. If it's unstable, move to an
- * ESP32 (more RAM, WiFi, native TLS) — the code ports with minimal changes.
+ * Wiring: PN532 on I2C (dedicated SDA/SCL pins on the Uno Q, IRQ->D2, RST->D3);
+ * relay D7, green LED D5, red LED D6, buzzer D8. Ethernet Shield 2 stacks on top.
+ * See ../README.md.
  *
- * Wiring + DIP switches + setup: see ../README.md.
+ * If the backend is unreachable, the reader denies (FAIL_OPEN=false). The site
+ * gateway is what provides offline resilience in the full deployment.
  */
 #include <SPI.h>
 #include <Ethernet.h>
-#include <EthernetUdp.h>
 #include <Wire.h>
 #include <Adafruit_PN532.h>
 #include <Crypto.h>
 #include <SHA256.h>
-#include <EEPROM.h>
 #include "config.h"
 
 Adafruit_PN532 nfc(PN532_IRQ, PN532_RESET); // I2C
 EthernetClient client;
-EthernetUDP udp;
 byte mac[] = MAC_BYTES;
 
-// clock: unix seconds = ntpEpoch + (millis() - ntpAtMillis)/1000
-unsigned long ntpEpoch = 0;
-unsigned long ntpAtMillis = 0;
-unsigned long lastNtp = 0;
+// clock: unix seconds = timeBase + (millis() - timeAtMillis)/1000
+unsigned long timeBase = 0;
+unsigned long timeAtMillis = 0;
+unsigned long lastTimeSync = 0;
 
-// EEPROM offline allow-list (same layout as the standalone sketch)
-#define EE_COUNT_ADDR 0
-#define EE_BASE       1
-#define EE_MAX        20
-#define UID_MAX       7
+#define UID_MAX 7
 
 // ---------------------------------------------------------------------------
 void setup() {
@@ -55,16 +49,15 @@ void setup() {
 
   Serial.println(F("Phoenix Door reader booting..."));
   if (Ethernet.begin(mac) == 0) {
-    Serial.println(F("DHCP failed — check the Ethernet shield/cable."));
+    Serial.println(F("DHCP failed — check shield/cable."));
   } else {
     Serial.print(F("IP: ")); Serial.println(Ethernet.localIP());
   }
-  udp.begin(8888);
-  ntpSync();
+  syncTime();
 
   nfc.begin();
   if (!nfc.getFirmwareVersion()) {
-    Serial.println(F("PN532 not found — check wiring + DIP (I2C)."));
+    Serial.println(F("PN532 not found — check I2C wiring + DIP."));
     while (1) blinkErr();
   }
   nfc.SAMConfig();
@@ -72,8 +65,8 @@ void setup() {
 }
 
 void loop() {
-  if (millis() - lastNtp > NTP_RESYNC_MS) ntpSync();
-  Ethernet.maintain(); // renew DHCP lease
+  if (millis() - lastTimeSync > TIME_RESYNC_MS) syncTime();
+  Ethernet.maintain();
 
   uint8_t uid[UID_MAX];
   uint8_t uidLen = 0;
@@ -83,7 +76,6 @@ void loop() {
   toHex(uid, uidLen, uidHex);
   Serial.print(F("Tag: ")); Serial.println(uidHex);
 
-  // Build the validate request body (UID card, or a phone token if present).
   char body[80];
 #ifdef ENABLE_PHONE_HCE
   char token[72];
@@ -99,10 +91,8 @@ void loop() {
   int decision = validateOnline(body, unlockMs); // 1 grant, 0 deny, -1 unreachable
 
   if (decision < 0) {
-    // gateway unreachable -> local fallback
-    bool cached = eepromFindUid(uid, uidLen) >= 0;
-    decision = (cached || FAIL_OPEN) ? 1 : 0;
-    Serial.print(F("OFFLINE -> ")); Serial.println(decision ? F("granted (cache)") : F("denied"));
+    decision = FAIL_OPEN ? 1 : 0;
+    Serial.print(F("backend unreachable -> ")); Serial.println(decision ? F("granted (fail-open)") : F("denied"));
   }
 
   if (decision == 1) grant(unlockMs); else deny();
@@ -113,7 +103,7 @@ void loop() {
 // Returns 1 granted, 0 denied, -1 unreachable. Sets unlockMs on grant.
 int validateOnline(const char *body, unsigned long &unlockMs) {
   unsigned long ts = unixNow();
-  if (ts == 0) return -1; // no valid clock yet -> can't sign
+  if (ts == 0) { syncTime(); ts = unixNow(); if (ts == 0) return -1; }
 
   // base string MUST match backend/src/util/readerSig.js exactly
   char base[160];
@@ -121,20 +111,14 @@ int validateOnline(const char *body, unsigned long &unlockMs) {
   char sig[65];
   hmacHex(READER_KEY, base, sig);
 
-  if (!client.connect(SERVER_HOST, SERVER_PORT)) {
-    client.stop();
-    return -1;
-  }
+  if (!client.connect(SERVER_HOST, SERVER_PORT)) { client.stop(); return -1; }
   client.print(F("POST /api/reader/validate HTTP/1.1\r\nHost: "));
   client.print(F(SERVER_HOST));
   client.print(F("\r\nContent-Type: application/json\r\nContent-Length: "));
   client.print(strlen(body));
-  client.print(F("\r\nX-Reader-Id: "));
-  client.print(DOOR_ID);
-  client.print(F("\r\nX-Reader-Timestamp: "));
-  client.print(ts);
-  client.print(F("\r\nX-Reader-Signature: "));
-  client.print(sig);
+  client.print(F("\r\nX-Reader-Id: "));       client.print(DOOR_ID);
+  client.print(F("\r\nX-Reader-Timestamp: ")); client.print(ts);
+  client.print(F("\r\nX-Reader-Signature: ")); client.print(sig);
   client.print(F("\r\nConnection: close\r\n\r\n"));
   client.print(body);
 
@@ -145,24 +129,18 @@ int validateOnline(const char *body, unsigned long &unlockMs) {
 
 // Skip HTTP headers, then scan the small JSON body for the decision.
 int parseResponse(unsigned long &unlockMs) {
-  // wait for the response to start
   unsigned long t0 = millis();
-  while (!client.available() && millis() - t0 < 4000) { /* wait */ }
+  while (!client.available() && millis() - t0 < 4000) { if (!client.connected() && !client.available()) return -1; }
 
-  // skip headers: read until "\r\n\r\n"
-  int nl = 0;
-  t0 = millis();
+  int nl = 0; t0 = millis();
   while (millis() - t0 < 4000) {
-    if (!client.available()) { if (!client.connected()) return -1; continue; }
+    if (!client.available()) { if (!client.connected()) break; continue; }
     char c = client.read();
     if (c == '\r') continue;
     if (c == '\n') { if (++nl >= 2) break; } else nl = 0;
   }
 
-  // read the JSON body (small)
-  char bd[96];
-  int n = 0;
-  t0 = millis();
+  char bd[96]; int n = 0; t0 = millis();
   while ((client.connected() || client.available()) && n < (int)sizeof(bd) - 1 && millis() - t0 < 4000) {
     if (client.available()) bd[n++] = client.read();
   }
@@ -174,14 +152,39 @@ int parseResponse(unsigned long &unlockMs) {
   else return -1;
 
   char *p = strstr(bd, "unlock_ms");
-  if (p) {
-    p = strchr(p, ':');
-    if (p) {
-      unsigned long v = strtoul(p + 1, NULL, 10);
-      if (v > 0) unlockMs = v;
-    }
-  }
+  if (p) { p = strchr(p, ':'); if (p) { unsigned long v = strtoul(p + 1, NULL, 10); if (v > 0) unlockMs = v; } }
   return decision;
+}
+
+// ---- time from the backend (no NTP/RTC needed) ---------------------------
+unsigned long unixNow() {
+  if (timeBase == 0) return 0;
+  return timeBase + (millis() - timeAtMillis) / 1000;
+}
+
+void syncTime() {
+  lastTimeSync = millis();
+  if (!client.connect(SERVER_HOST, SERVER_PORT)) { client.stop(); return; }
+  client.print(F("GET /api/reader/time HTTP/1.1\r\nHost: "));
+  client.print(F(SERVER_HOST));
+  client.print(F("\r\nConnection: close\r\n\r\n"));
+
+  // read the whole response into a small buffer, then find "now":<digits>
+  char buf[200]; int n = 0;
+  unsigned long t0 = millis();
+  while ((client.connected() || client.available()) && n < (int)sizeof(buf) - 1 && millis() - t0 < 4000) {
+    if (client.available()) buf[n++] = client.read();
+  }
+  buf[n] = 0;
+  client.stop();
+
+  char *p = strstr(buf, "\"now\"");
+  if (p) { p = strchr(p, ':'); if (p) {
+    unsigned long now = strtoul(p + 1, NULL, 10);
+    if (now > 1700000000UL) { timeBase = now; timeAtMillis = millis();
+      Serial.print(F("time synced: ")); Serial.println(now); return; }
+  } }
+  Serial.println(F("time sync failed (will retry)."));
 }
 
 // ---- HMAC-SHA256 -> lowercase hex (65-char buffer) ------------------------
@@ -193,77 +196,25 @@ void hmacHex(const char *key, const char *msg, char *out) {
   uint8_t macOut[32];
   sha.finalizeHMAC(key, keyLen, macOut, sizeof(macOut));
   const char *hexd = "0123456789abcdef";
-  for (int i = 0; i < 32; i++) {
-    out[i * 2]     = hexd[macOut[i] >> 4];
-    out[i * 2 + 1] = hexd[macOut[i] & 0x0F];
-  }
+  for (int i = 0; i < 32; i++) { out[i * 2] = hexd[macOut[i] >> 4]; out[i * 2 + 1] = hexd[macOut[i] & 0x0F]; }
   out[64] = 0;
-}
-
-// ---- time (NTP) -----------------------------------------------------------
-unsigned long unixNow() {
-  if (ntpEpoch == 0) return 0;
-  return ntpEpoch + (millis() - ntpAtMillis) / 1000;
-}
-
-void ntpSync() {
-  byte pkt[48];
-  memset(pkt, 0, sizeof(pkt));
-  pkt[0] = 0b11100011; // LI, version, mode
-  if (udp.beginPacket(NTP_HOST, 123) == 0) { lastNtp = millis(); return; }
-  udp.write(pkt, sizeof(pkt));
-  udp.endPacket();
-
-  unsigned long t0 = millis();
-  while (millis() - t0 < 1500) {
-    if (udp.parsePacket() >= 48) {
-      udp.read(pkt, sizeof(pkt));
-      unsigned long secs1900 = ((unsigned long)pkt[40] << 24) | ((unsigned long)pkt[41] << 16) |
-                               ((unsigned long)pkt[42] << 8) | (unsigned long)pkt[43];
-      ntpEpoch = secs1900 - 2208988800UL; // 1900 -> 1970
-      ntpAtMillis = millis();
-      lastNtp = millis();
-      Serial.print(F("NTP epoch: ")); Serial.println(ntpEpoch);
-      return;
-    }
-  }
-  lastNtp = millis();
-  Serial.println(F("NTP sync failed (will retry)."));
 }
 
 #ifdef ENABLE_PHONE_HCE
 // Select our HCE AID and read the rotating token the phone returns.
-// Token response = <ascii token bytes> 90 00. Returns true if a token was read.
 bool readPhoneToken(char *out, int outCap) {
   uint8_t selectAid[] = {0x00, 0xA4, 0x04, 0x00, 0x08,
                          0xF0, 0x50, 0x48, 0x58, 0x44, 0x4F, 0x4F, 0x52, 0x00};
-  uint8_t resp[80];
-  uint8_t respLen = sizeof(resp);
+  uint8_t resp[80]; uint8_t respLen = sizeof(resp);
   if (!nfc.inDataExchange(selectAid, sizeof(selectAid), resp, &respLen)) return false;
-  if (respLen < 4) return false;                       // need token + 9000
+  if (respLen < 4) return false;
   if (resp[respLen - 2] != 0x90 || resp[respLen - 1] != 0x00) return false;
   int tokLen = respLen - 2;
   if (tokLen >= outCap) tokLen = outCap - 1;
-  memcpy(out, resp, tokLen);
-  out[tokLen] = 0;
+  memcpy(out, resp, tokLen); out[tokLen] = 0;
   return true;
 }
 #endif
-
-// ---- EEPROM offline allow-list (populate via the standalone sketch) -------
-int eepromFindUid(const uint8_t *uid, uint8_t len) {
-  uint8_t count = EEPROM.read(EE_COUNT_ADDR);
-  if (count > EE_MAX) return -1;
-  for (uint8_t i = 0; i < count; i++) {
-    int a = EE_BASE + i * (1 + UID_MAX);
-    if (EEPROM.read(a) != len) continue;
-    bool match = true;
-    for (uint8_t b = 0; b < len; b++)
-      if (EEPROM.read(a + 1 + b) != uid[b]) { match = false; break; }
-    if (match) return i;
-  }
-  return -1;
-}
 
 // ---- actuation + feedback -------------------------------------------------
 void grant(unsigned long unlockMs) {
@@ -286,31 +237,17 @@ void deny() {
 
 void unlockDoor() {
 #ifdef USE_SERVO
-  // servo handled by the standalone sketch's pattern; relay is the default here
+  // (servo variant handled like the standalone sketch; relay is the default)
 #endif
   digitalWrite(PIN_RELAY, HIGH);
 }
+void lockDoor() { digitalWrite(PIN_RELAY, LOW); }
 
-void lockDoor() {
-  digitalWrite(PIN_RELAY, LOW);
-}
-
-void beep(unsigned int freq, unsigned int ms) {
-  tone(PIN_BUZZER, freq, ms);
-  delay(ms);
-  noTone(PIN_BUZZER);
-}
-
-void blinkErr() {
-  digitalWrite(LED_RED, HIGH); delay(200);
-  digitalWrite(LED_RED, LOW);  delay(200);
-}
+void beep(unsigned int freq, unsigned int ms) { tone(PIN_BUZZER, freq, ms); delay(ms); noTone(PIN_BUZZER); }
+void blinkErr() { digitalWrite(LED_RED, HIGH); delay(200); digitalWrite(LED_RED, LOW); delay(200); }
 
 void toHex(const uint8_t *b, uint8_t len, char *out) {
   const char *hexd = "0123456789ABCDEF";
-  for (uint8_t i = 0; i < len; i++) {
-    out[i * 2]     = hexd[b[i] >> 4];
-    out[i * 2 + 1] = hexd[b[i] & 0x0F];
-  }
+  for (uint8_t i = 0; i < len; i++) { out[i * 2] = hexd[b[i] >> 4]; out[i * 2 + 1] = hexd[b[i] & 0x0F]; }
   out[len * 2] = 0;
 }

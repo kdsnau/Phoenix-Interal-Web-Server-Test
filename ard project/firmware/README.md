@@ -31,14 +31,20 @@ SPI bus stays free for the Ethernet shield.
 
 PN532 (I2C) → Uno:
 
-| PN532 | Uno |
-|---|---|
-| VCC | 5V |
-| GND | GND |
-| SDA | A4 |
-| SCL | A5 |
-| IRQ | D2 |
-| RSTO / RST | D3 |
+| PN532 | Classic Uno (AVR) | Uno Q / Uno R4 |
+|---|---|---|
+| VCC | 5V | 5V (or 3.3V) |
+| GND | GND | GND |
+| SDA | A4 | **`SDA` pin** (near AREF) — NOT A4 |
+| SCL | A5 | **`SCL` pin** (near AREF) — NOT A5 |
+| IRQ | D2 | D2 |
+| RSTO / RST | D3 | D3 |
+
+> **Important for the Uno Q / R4:** their default `Wire` I2C bus is on the dedicated
+> `SDA`/`SCL` header pins, and A4/A5 are analog-only (not on I2C). Wiring SDA/SCL to
+> A4/A5 on those boards gives "PN532 not found." (On the classic AVR Uno, A4/A5 *are*
+> SDA/SCL, so either works there.) A Qwiic/STEMMA connector, if present, is a separate
+> bus (`Wire1`).
 
 Outputs:
 
@@ -87,12 +93,23 @@ This proves the reader, lock, LEDs, and buzzer all work.
    signs `POST /api/reader/validate`, the backend runs the rule engine, and the door
    opens or not — and the tap shows up live on the **Activity** dashboard.
 
+Staged bring-up (recommended — isolate problems one at a time):
+1. Flash **`ethernet-test/ethernet-test.ino`** first. It does DHCP and GETs `/health`.
+   When Serial shows `{"ok":true,...}`, the shield + LAN + backend are confirmed.
+2. Then flash **`door-reader/door-reader.ino`**.
+
 How it decides:
-- **Online:** asks the gateway/backend each tap (authoritative).
-- **Offline** (gateway unreachable): checks the local EEPROM allow-list (enroll those via
-  the standalone sketch); `FAIL_OPEN` in `config.h` chooses deny (default) vs allow.
+- **Time:** the reader has no clock, so it fetches unix time from
+  `GET /api/reader/time` (no NTP/internet needed) to sign requests.
+- **Online:** asks the backend/gateway each tap (authoritative). If unreachable it
+  denies (`FAIL_OPEN=false`); the **site gateway** provides offline resilience in the
+  full deployment, so the reader itself stays online-only and simple.
 - **Phones:** set `#define ENABLE_PHONE_HCE` to also read a phone's rotating token over
   HCE (AID `F0504858444F4F52`, see `../docs/hce-protocol.md`). Get cards working first.
+
+> On the **Uno Q**: PN532 I2C is on the dedicated `SDA`/`SCL` pins (not A4/A5); there's
+> no AVR `EEPROM.h` (this sketch doesn't use it); and RAM is plentiful, so the classic
+> "tight SRAM" caveat below doesn't apply.
 
 ### Verifying without a real door
 The backend's `backend/tools/reader-sim.js` signs requests **identically** to this

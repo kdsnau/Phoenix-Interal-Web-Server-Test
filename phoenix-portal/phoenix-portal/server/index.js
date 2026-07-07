@@ -31,6 +31,7 @@ const vaultRoutes      = require('./routes/vault');
 const technotesRoutes  = require('./routes/technotes');
 const dashboardRoutes  = require('./routes/dashboard');
 const snapshotRoutes   = require('./routes/snapshot');
+const timesheetRoutes  = require('./routes/timesheets');
 const { startScheduler } = require('./services/monitoringScheduler');
 
 const app  = express();
@@ -90,6 +91,7 @@ app.use('/api/vault',       vaultRoutes);
 app.use('/api/tech-notes',  technotesRoutes);
 app.use('/api/dashboard',   dashboardRoutes);
 app.use('/api/snapshot',    snapshotRoutes);
+app.use('/api/timesheets',  timesheetRoutes);
 
 app.get('/api/health', (_, res) => res.json({ status: 'ok' }));
 

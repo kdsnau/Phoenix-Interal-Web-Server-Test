@@ -225,6 +225,27 @@ function normalizeLicense(lic) {
     };
 }
 
+/* Fetch the raw license list. Tries the modern REST path, then the legacy ec2
+   path — the portal-api user can often read /ec2/getLicenses when
+   /rest/v2/licenses returns 403 (permissions) or 404 (older build). */
+async function fetchLicensesRaw(server) {
+    let lastErr;
+    for (const url of ['/rest/v2/licenses', '/ec2/getLicenses']) {
+        try {
+            const { data } = await nvrRequest(server, { method: 'get', url });
+            if (Array.isArray(data))          return data;
+            if (Array.isArray(data?.licenses)) return data.licenses;
+            if (Array.isArray(data?.reply))    return data.reply;
+            return [];
+        } catch (err) {
+            lastErr = err;
+            const s = err.response?.status;
+            if (s !== 403 && s !== 404) throw err;   // only fall through on perm/not-found
+        }
+    }
+    throw lastErr;
+}
+
 /* DW /api/getEvents returns { reply: [ { eventParams: {...}, actionType, ... } ] }.
    Flatten eventParams into the shape the Cameras EventsLog expects; the camera
    name is resolved client-side from eventResourceId via the device list. */
@@ -382,13 +403,75 @@ router.get('/servers/:id/licenses', async (req, res) => {
     try {
         const server = await getServer(req.params.id);
         if (server.mock) return res.json(MOCK_LICENSES);
-        const { data } = await nvrRequest(server, { method: 'get', url: '/rest/v2/licenses' });
-        const list = Array.isArray(data) ? data : [];
+        const list = await fetchLicensesRaw(server);
         return res.json(list.map(normalizeLicense));
     } catch (err) {
         console.error('NVR licenses error:', err.message);
         return res.status(502).json({ error: 'Could not fetch licenses.', detail: err.message });
     }
+});
+
+/* POST /api/nvr/import-licenses [admin] — pull DW Spectrum licenses from every
+   linked (non-mock) server into the Licenses tracker. Upserts by license key,
+   and best-effort fills used seats from the system's in-use channel count. */
+router.post('/import-licenses', requireRole('admin'), async (_req, res) => {
+    const ids = (await pool.query('SELECT id FROM nvr_servers').catch(() => ({ rows: [] }))).rows;
+    let imported = 0, updated = 0, servers = 0;
+    const errors = [];
+
+    for (const { id } of ids) {
+        let server;
+        try { server = await getServer(id); } catch { continue; }
+        if (server.mock) continue;
+        servers++;
+        try {
+            const lics = (await fetchLicensesRaw(server)).map(normalizeLicense).filter(l => (l.channels > 0) || l.key);
+            if (!lics.length) continue;
+
+            /* System-wide used channels (devices currently consuming a license). */
+            let usedTotal = 0;
+            try {
+                const { data } = await nvrRequest(server, { method: 'get', url: '/rest/v2/devices' });
+                usedTotal = (Array.isArray(data) ? data : []).filter(d => d.isLicenseUsed ?? d.isLicensed).length;
+            } catch { /* usage optional */ }
+
+            /* DW omits per-license usage, so greedily allocate the used channels
+               across licenses (largest first) — the bars still reflect reality. */
+            const usedByKey = new Map();
+            let remaining = usedTotal;
+            for (const l of [...lics].sort((a, b) => (b.channels || 0) - (a.channels || 0))) {
+                const u = Math.min(l.channels || 0, Math.max(0, remaining));
+                usedByKey.set(l.key, u);
+                remaining -= u;
+            }
+
+            for (const l of lics) {
+                const total = l.channels || null;
+                const used  = usedByKey.get(l.key) || 0;
+                const exp   = l.expirationDate && /\d/.test(l.expirationDate) ? l.expirationDate : null;
+                const name  = `DW Spectrum — ${l.type || 'license'}${l.channels ? ` (${l.channels} ch)` : ''} · ${server.name}`;
+                const found = l.key
+                    ? await pool.query('SELECT id FROM licenses WHERE license_key = $1', [l.key])
+                    : await pool.query('SELECT id FROM licenses WHERE license_key IS NULL AND name = $1', [name]);
+                if (found.rowCount) {
+                    await pool.query(
+                        `UPDATE licenses SET name = $1, vendor = 'DW Spectrum', seats_total = $2, seats_used = $3,
+                                category = 'DW Spectrum', expires_at = $4, updated_at = NOW() WHERE id = $5`,
+                        [name, total, used, exp, found.rows[0].id]);
+                    updated++;
+                } else {
+                    await pool.query(
+                        `INSERT INTO licenses (name, vendor, license_key, seats_total, seats_used, category, expires_at)
+                         VALUES ($1, 'DW Spectrum', $2, $3, $4, 'DW Spectrum', $5)`,
+                        [name, l.key, total, used, exp]);
+                    imported++;
+                }
+            }
+        } catch (err) {
+            errors.push({ server: server.name, error: err.response?.status ? `HTTP ${err.response.status}` : err.message });
+        }
+    }
+    res.json({ imported, updated, servers, errors });
 });
 
 router.get('/servers/:id/mediaservers', async (req, res) => {

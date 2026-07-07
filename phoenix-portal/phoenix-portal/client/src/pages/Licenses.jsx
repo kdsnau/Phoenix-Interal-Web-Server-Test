@@ -105,6 +105,8 @@ export default function Licenses() {
     const [search, setSearch]     = useState('');
     const [modal, setModal]       = useState(null);   // {} = new, license = edit
     const [showKey, setShowKey]   = useState({});
+    const [importing, setImporting] = useState(false);
+    const [importMsg, setImportMsg] = useState('');
 
     function load() {
         setLoading(true);
@@ -128,6 +130,21 @@ export default function Licenses() {
             ? list.map(x => x.id === saved.id ? saved : x)
             : [...list, saved].sort((a, b) => a.name.localeCompare(b.name)));
     }
+    async function importDW() {
+        setImporting(true); setImportMsg('');
+        try {
+            const { data } = await api.post('/nvr/import-licenses');
+            const errs = (data.errors || []).length
+                ? ` · ${data.errors.length} server error(s): ${data.errors.map(e => `${e.server} (${e.error})`).join('; ')}`
+                : '';
+            setImportMsg(data.servers === 0
+                ? 'No NVR systems are linked yet.'
+                : `${data.imported} added, ${data.updated} updated from ${data.servers} system(s)${errs}`);
+            load();
+        } catch (e) {
+            setImportMsg(e.response?.data?.error || 'Import failed.');
+        } finally { setImporting(false); }
+    }
 
     const s = search.trim().toLowerCase();
     const filtered = s
@@ -141,9 +158,11 @@ export default function Licenses() {
                     <h1 className="page-title">Licenses</h1>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         <input placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)} />
+                        {isAdmin && <button className="btn btn-ghost" onClick={importDW} disabled={importing}>{importing ? 'Pulling…' : '⤓ Pull from DW Spectrum'}</button>}
                         {isAdmin && <button className="btn btn-primary" onClick={() => setModal({})}>+ Add License</button>}
                     </div>
                 </div>
+                {importMsg && <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-dim)' }}>{importMsg}</div>}
 
                 {loading ? <div className="alarm-empty">Loading…</div> : (
                     <div className="table-card" style={{ marginTop: 16 }}>

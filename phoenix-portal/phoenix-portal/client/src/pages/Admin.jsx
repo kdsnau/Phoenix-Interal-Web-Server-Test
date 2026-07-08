@@ -215,12 +215,60 @@ function BillingTab() {
     );
 }
 
+const fmtDay = k => { const [y, m, d] = String(k).split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); };
+
+/* Pending time-off requests from the Team Calendar — approve/deny here. */
+function TimeOffTab({ onResolved }) {
+    const [reqs, setReqs]       = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        api.get('/schedule/time-off/pending').then(r => setReqs(r.data)).catch(() => setReqs([])).finally(() => setLoading(false));
+    }, []);
+
+    async function decide(id, status) {
+        try {
+            await api.patch(`/schedule/time-off/${id}`, { status });
+            setReqs(rs => rs.filter(r => r.id !== id));
+            onResolved && onResolved();
+        } catch (e) { alert(e.response?.data?.error || 'Failed.'); }
+    }
+    const range = r => r.start_date === r.end_date ? fmtDay(r.start_date) : `${fmtDay(r.start_date)} – ${fmtDay(r.end_date)}`;
+
+    if (loading) return <p style={{ color: 'var(--text-dim)' }}>Loading…</p>;
+    return (
+        <div className="table-card">
+            <table className="data-table">
+                <thead><tr><th>Technician</th><th>Dates</th><th>Reason</th><th>Requested</th><th>Actions</th></tr></thead>
+                <tbody>
+                    {reqs.length === 0 && <tr><td colSpan={5} className="alarm-empty">No pending time-off requests.</td></tr>}
+                    {reqs.map(r => (
+                        <tr key={r.id}>
+                            <td style={{ fontWeight: 500, color: 'var(--text-hi)' }}>{r.user_name}</td>
+                            <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{range(r)}</td>
+                            <td style={{ color: 'var(--text-dim)', fontSize: 13 }}>{r.reason || '—'}</td>
+                            <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>{new Date(r.created_at).toLocaleDateString()}</td>
+                            <td style={{ whiteSpace: 'nowrap' }}>
+                                <button className="btn btn-primary" style={{ padding: '2px 10px', fontSize: 12 }} onClick={() => decide(r.id, 'approved')}>Approve</button>
+                                <button className="btn btn-ghost"   style={{ padding: '2px 10px', fontSize: 12, marginLeft: 6 }} onClick={() => decide(r.id, 'denied')}>Deny</button>
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
 export default function Admin() {
     const [tab, setTab]           = useState('users');
     const [users, setUsers]       = useState([]);
     const [loading, setLoading]   = useState(true);
     const [showModal, setShowModal] = useState(false);
     const [profileId, setProfileId] = useState(null);
+    const [pendingTO, setPendingTO] = useState(0);
+
+    useEffect(() => { api.get('/schedule/time-off/pending').then(r => setPendingTO(r.data.length)).catch(() => {}); }, []);
 
     const load = async () => {
         try {
@@ -271,9 +319,14 @@ export default function Admin() {
                 <button className={`alarm-tab ${tab === 'billing' ? 'active' : ''}`} onClick={() => setTab('billing')}>
                     Billing
                 </button>
+                <button className={`alarm-tab ${tab === 'timeoff' ? 'active' : ''}`} onClick={() => setTab('timeoff')}>
+                    Time Off {pendingTO > 0 && <span className="alarm-tab-count">{pendingTO}</span>}
+                </button>
             </div>
 
             {tab === 'billing' && <BillingTab />}
+
+            {tab === 'timeoff' && <TimeOffTab onResolved={() => setPendingTO(n => Math.max(0, n - 1))} />}
 
             {tab === 'users' && loading && <p style={{ color: 'var(--text-dim)' }}>Loading...</p>}
 

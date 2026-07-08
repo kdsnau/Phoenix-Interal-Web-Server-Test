@@ -15,7 +15,6 @@ import Projects   from './pages/Projects';
 import AI        from './pages/AI';
 import Feedback  from './pages/Feedback';
 import Messages  from './pages/Messages';
-import Calendar  from './pages/Calendar';
 import TeamCalendar from './pages/TeamCalendar';
 import Cameras   from './pages/Cameras';
 import TechNotes  from './pages/TechNotes';
@@ -51,7 +50,8 @@ function AppRoutes() {
             <Route path="/ai"         element={<PrivateRoute><AI /></PrivateRoute>} />
             <Route path="/feedback"   element={<PrivateRoute><Feedback /></PrivateRoute>} />
             <Route path="/messages"   element={<PrivateRoute><Messages /></PrivateRoute>} />
-            <Route path="/calendar"   element={<PrivateRoute><Calendar /></PrivateRoute>} />
+            {/* Old Google-calendar page retired — keep the path working */}
+            <Route path="/calendar"   element={<Navigate to="/team-calendar" replace />} />
             <Route path="/team-calendar" element={<PrivateRoute><TeamCalendar /></PrivateRoute>} />
             <Route path="/cameras"    element={<PrivateRoute><Cameras /></PrivateRoute>} />
             <Route path="/tech-notes" element={<PrivateRoute><TechNotes /></PrivateRoute>} />

@@ -367,7 +367,15 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
 
 /* Admin: edit a ticket's details + upload a site-map image. */
 function EditTicketModal({ ticket, technicians, onClose, onUpdated }) {
-    const toLocalInput = ts => ts ? new Date(ts).toISOString().slice(0, 16) : '';
+    /* datetime-local needs LOCAL wall-clock (YYYY-MM-DDTHH:MM). Using
+       toISOString() fed UTC into the input, so each edit re-saved the time
+       shifted by the tz offset (the "randomly changing time" bug). Offset-
+       correct it so the value round-trips unchanged. */
+    const toLocalInput = ts => {
+        if (!ts) return '';
+        const d = new Date(ts);
+        return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    };
     const [title,       setTitle]       = useState(ticket.title || '');
     const [ticketType,  setTicketType]  = useState(ticket.ticket_type || 'Service');
     const [desc,        setDesc]        = useState(ticket.description || '');

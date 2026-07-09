@@ -534,17 +534,6 @@ export default function Financials() {
         try { await api.delete(`/financials/${id}`); setRecords(prev => prev.filter(r => r.id !== id)); refreshSummary(); }
         catch (e) { console.error(e); }
     }
-    async function clearUnmonitored() {
-        if (!confirm('Delete ALL unmonitored entries (no linked client)? This cannot be undone.')) return;
-        setClearMsg('Clearing…');
-        try {
-            const { data } = await api.post('/financials/clear-unmonitored');
-            setClearMsg(`Cleared ${data.deleted} unmonitored entr${data.deleted === 1 ? 'y' : 'ies'}.`);
-            const ctx = await api.get('/financials/client-transactions').catch(() => ({ data: [] }));
-            setClientTx(ctx.data);
-            refreshSummary();
-        } catch (e) { setClearMsg(e.response?.data?.error || 'Clear failed.'); }
-    }
     async function deleteClientTx(id) {
         if (!confirm('Delete this billing entry? This cannot be undone.')) return;
         try {
@@ -552,20 +541,6 @@ export default function Financials() {
             setClientTx(prev => prev.filter(t => t.id !== id));
             refreshSummary();
         } catch (e) { setClearMsg(e.response?.data?.error || 'Delete failed.'); }
-    }
-    async function clearInvoices() {
-        let count;
-        try { ({ data: { count } } = await api.post('/financials/clear-invoices', { commit: false })); }
-        catch (e) { setClearMsg(e.response?.data?.error || 'Clear failed.'); return; }
-        if (!confirm(`Delete ALL ${count} invoice entr${count === 1 ? 'y' : 'ies'} (every source — manual, PDF, QuickBooks)? Payments are kept. This cannot be undone.`)) return;
-        setClearMsg('Clearing…');
-        try {
-            const { data } = await api.post('/financials/clear-invoices', { commit: true });
-            setClearMsg(`Cleared ${data.deleted} invoice entr${data.deleted === 1 ? 'y' : 'ies'}.`);
-            const ctx = await api.get('/financials/client-transactions').catch(() => ({ data: [] }));
-            setClientTx(ctx.data);
-            refreshSummary();
-        } catch (e) { setClearMsg(e.response?.data?.error || 'Clear failed.'); }
     }
 
     const onWorkOrder = (w) => { setWorkOrders(prev => [w, ...prev]); refreshSummary(); };
@@ -644,13 +619,7 @@ export default function Financials() {
                     <MrrTab data={mrrData} />
                 ) : (
                     <>
-                        {isAdmin && (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                                <button className="btn btn-danger" style={{ fontSize: 12 }} onClick={clearUnmonitored}>Clear all unmonitored entries</button>
-                                <button className="btn btn-danger" style={{ fontSize: 12 }} onClick={clearInvoices}>Clear all invoices</button>
-                                {clearMsg && <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{clearMsg}</span>}
-                            </div>
-                        )}
+                        {clearMsg && <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>{clearMsg}</div>}
                         <ClientTransactionsTable transactions={clientTx} canDelete={canManage} onDelete={deleteClientTx} />
                     </>
                 )}

@@ -1338,9 +1338,6 @@ export default function Alarms() {
     const [technicians, setTechnicians]     = useState([]);
     const [loading, setLoading]             = useState(true);
     const [showAddClient, setShowAddClient] = useState(false);
-    const [showRebuild, setShowRebuild]     = useState(false);
-    const [showPrune, setShowPrune]         = useState(false);
-    const [showAudit, setShowAudit]         = useState(false);
     const [expanded, setExpanded]           = useState(() => new Set());   // expanded customer roll-up groups
     const [permits, setPermits]       = useState([]);
     const [permitsLoading, setPermitsLoading] = useState(false);
@@ -1448,9 +1445,6 @@ export default function Alarms() {
                         />
                         {user.role === 'admin' && (
                             <>
-                                <button className="btn btn-ghost" onClick={() => setShowRebuild(true)}>↻ Rebuild from drive</button>
-                                <button className="btn btn-ghost" onClick={() => setShowAudit(true)}>⇪ Rebuild from audit</button>
-                                <button className="btn btn-ghost" onClick={() => setShowPrune(true)}>✕ Prune inactive</button>
                                 <button className="btn btn-primary" onClick={() => setShowAddClient(true)}>
                                     + Add Client
                                 </button>
@@ -1638,24 +1632,6 @@ export default function Alarms() {
                     <NewClientModal
                         onClose={() => setShowAddClient(false)}
                         onCreated={() => { setShowAddClient(false); fetchClients(); }}
-                    />
-                )}
-                {showRebuild && (
-                    <RebuildModal
-                        onClose={() => setShowRebuild(false)}
-                        onDone={fetchClients}
-                    />
-                )}
-                {showPrune && (
-                    <PruneModal
-                        onClose={() => setShowPrune(false)}
-                        onDone={fetchClients}
-                    />
-                )}
-                {showAudit && (
-                    <AuditModal
-                        onClose={() => setShowAudit(false)}
-                        onDone={fetchClients}
                     />
                 )}
             </div>

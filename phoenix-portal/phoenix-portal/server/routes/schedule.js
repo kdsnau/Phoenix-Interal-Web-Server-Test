@@ -150,4 +150,91 @@ router.delete('/notes/:id', authenticate, async (req, res) => {
     } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to delete note.' }); }
 });
 
+/* ── Meetings ─────────────────────────────────────────────────────────── */
+pool.query(`
+    CREATE TABLE IF NOT EXISTS meetings (
+        id           SERIAL PRIMARY KEY,
+        title        TEXT NOT NULL,
+        starts_at    TIMESTAMP NOT NULL,
+        ends_at      TIMESTAMP,
+        location     TEXT,
+        notes        TEXT,
+        attendee_ids INTEGER[] NOT NULL DEFAULT '{}',
+        created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at   TIMESTAMP DEFAULT NOW()
+    )
+`).catch(() => {});
+pool.query(`CREATE INDEX IF NOT EXISTS idx_meetings_starts ON meetings (starts_at)`).catch(() => {});
+
+const meetingAttendees = body => {
+    const raw = Array.isArray(body.attendee_ids) ? body.attendee_ids : [];
+    return [...new Set(raw.map(Number).filter(n => Number.isInteger(n) && n > 0))];
+};
+
+/* GET /api/schedule/meetings?start=&end= — meetings starting within the range. */
+router.get('/meetings', authenticate, async (req, res) => {
+    const { start, end } = req.query;
+    if (!start || !end) return res.status(400).json({ error: 'start and end are required.' });
+    try {
+        const r = await pool.query(`
+            SELECT m.id, m.title, m.starts_at, m.ends_at, m.location, m.notes, m.attendee_ids, m.created_by,
+                   u.name AS created_by_name,
+                   (SELECT array_agg(x.name ORDER BY x.name) FROM users x WHERE x.id = ANY(m.attendee_ids)) AS attendee_names
+            FROM meetings m LEFT JOIN users u ON u.id = m.created_by
+            WHERE m.starts_at >= $1::date AND m.starts_at < ($2::date + 1)
+            ORDER BY m.starts_at`,
+            [start, end]);
+        res.json(r.rows);
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to load meetings.' }); }
+});
+
+/* POST /api/schedule/meetings — any signed-in user can schedule. */
+router.post('/meetings', authenticate, async (req, res) => {
+    const title = (req.body.title || '').trim();
+    const starts_at = req.body.starts_at;
+    if (!title || !starts_at) return res.status(400).json({ error: 'title and a start time are required.' });
+    try {
+        const r = await pool.query(
+            `INSERT INTO meetings (title, starts_at, ends_at, location, notes, attendee_ids, created_by)
+             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+            [title, starts_at, req.body.ends_at || null, (req.body.location || '').trim() || null,
+             (req.body.notes || '').trim() || null, meetingAttendees(req.body), req.user.id]);
+        res.status(201).json({ id: r.rows[0].id });
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to schedule meeting.' }); }
+});
+
+/* PATCH /api/schedule/meetings/:id — organizer or admin. */
+router.patch('/meetings/:id', authenticate, async (req, res) => {
+    try {
+        const cur = await pool.query('SELECT created_by FROM meetings WHERE id = $1', [req.params.id]);
+        if (!cur.rowCount) return res.status(404).json({ error: 'Meeting not found.' });
+        if (req.user.role !== 'admin' && cur.rows[0].created_by !== req.user.id)
+            return res.status(403).json({ error: 'Only the organizer or an admin can edit this meeting.' });
+        const sets = [], params = [];
+        const add = (col, val) => { params.push(val); sets.push(`${col} = $${params.length}`); };
+        if ('title'        in req.body) add('title', (req.body.title || '').trim());
+        if ('starts_at'    in req.body) add('starts_at', req.body.starts_at || null);
+        if ('ends_at'      in req.body) add('ends_at', req.body.ends_at || null);
+        if ('location'     in req.body) add('location', (req.body.location || '').trim() || null);
+        if ('notes'        in req.body) add('notes', (req.body.notes || '').trim() || null);
+        if ('attendee_ids' in req.body) add('attendee_ids', meetingAttendees(req.body));
+        if (!sets.length) return res.json({ message: 'Nothing to update.' });
+        params.push(req.params.id);
+        await pool.query(`UPDATE meetings SET ${sets.join(', ')} WHERE id = $${params.length}`, params);
+        res.json({ success: true });
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to update meeting.' }); }
+});
+
+/* DELETE /api/schedule/meetings/:id — organizer or admin. */
+router.delete('/meetings/:id', authenticate, async (req, res) => {
+    try {
+        const cur = await pool.query('SELECT created_by FROM meetings WHERE id = $1', [req.params.id]);
+        if (!cur.rowCount) return res.status(404).json({ error: 'Meeting not found.' });
+        if (req.user.role !== 'admin' && cur.rows[0].created_by !== req.user.id)
+            return res.status(403).json({ error: 'Only the organizer or an admin can delete this meeting.' });
+        await pool.query('DELETE FROM meetings WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to delete meeting.' }); }
+});
+
 module.exports = router;

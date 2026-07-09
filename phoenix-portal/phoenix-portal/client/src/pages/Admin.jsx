@@ -29,7 +29,7 @@ function ProfileModal({ userId, onClose }) {
                 ) : error ? (
                     <div className="error-msg">{error}</div>
                 ) : (
-                    <ProfileCard data={data} />
+                    <ProfileCard data={data} canEditPto />
                 )}
                 <div className="modal-actions">
                     <button className="btn btn-primary" onClick={onClose}>Close</button>

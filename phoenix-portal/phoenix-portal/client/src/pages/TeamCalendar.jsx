@@ -44,12 +44,16 @@ export default function TeamCalendar() {
     const [notes, setNotes]     = useState([]);
     const [dayKey, setDayKey]   = useState(null);      // open day modal
     const [ticket, setTicket]   = useState(null);      // open ticket modal
+    const [meetings, setMeetings]           = useState([]);
+    const [meeting, setMeeting]             = useState(null);     // open meeting modal
+    const [newMeetingDay, setNewMeetingDay] = useState(null);    // open "schedule meeting" form
 
     const { weeks, startKey, endKey } = useMemo(() => monthGrid(cursor.year, cursor.month), [cursor]);
 
     function reloadSchedule() {
         api.get('/schedule/time-off', { params: { start: startKey, end: endKey } }).then(r => setTimeOff(r.data)).catch(() => setTimeOff([]));
         api.get('/schedule/notes',    { params: { start: startKey, end: endKey } }).then(r => setNotes(r.data)).catch(() => setNotes([]));
+        api.get('/schedule/meetings', { params: { start: startKey, end: endKey } }).then(r => setMeetings(r.data)).catch(() => setMeetings([]));
     }
     useEffect(() => {
         api.get('/tickets').then(r => setTickets(r.data.filter(t => t.event_start))).catch(() => setTickets([]));
@@ -66,6 +70,11 @@ export default function TeamCalendar() {
         for (const n of notes) (m[n.note_date] ||= []).push(n);
         return m;
     }, [notes]);
+    const meetingsByDay = useMemo(() => {
+        const m = {};
+        for (const mt of meetings) { const d = new Date(mt.starts_at); (m[keyOf(d.getFullYear(), d.getMonth(), d.getDate())] ||= []).push(mt); }
+        return m;
+    }, [meetings]);
     const offOn = key => timeOff.filter(t => key >= t.start_date && key <= t.end_date);
 
     function step(delta) {
@@ -96,6 +105,7 @@ export default function TeamCalendar() {
                         const tks  = ticketsByDay[cell.key] || [];
                         const offs = offOn(cell.key);
                         const nts  = notesByDay[cell.key] || [];
+                        const mts  = meetingsByDay[cell.key] || [];
                         const isToday = cell.key === todayKey();
                         return (
                             <div key={cell.key}
@@ -126,6 +136,14 @@ export default function TeamCalendar() {
                                         {fmtTime(t.event_start)} {t.title}
                                     </div>
                                 ))}
+                                {mts.map(mt => (
+                                    <div key={'m' + mt.id} onClick={e => { e.stopPropagation(); setMeeting(mt); }}
+                                        title={mt.title}
+                                        style={{ fontSize: 10, padding: '1px 5px', borderRadius: 3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                                            background: 'rgba(147,112,219,0.16)', borderLeft: '3px solid #b18aff', color: '#c9b3ff' }}>
+                                        👥 {fmtTime(mt.starts_at)} {mt.title}
+                                    </div>
+                                ))}
                             </div>
                         );
                     })}
@@ -141,18 +159,23 @@ export default function TeamCalendar() {
                         tickets={ticketsByDay[dayKey] || []}
                         offs={offOn(dayKey)}
                         notes={notesByDay[dayKey] || []}
+                        meetings={meetingsByDay[dayKey] || []}
                         onClose={() => setDayKey(null)}
                         onChange={reloadSchedule}
                         onOpenTicket={t => setTicket(t)}
+                        onOpenMeeting={m => setMeeting(m)}
+                        onScheduleMeeting={k => { setDayKey(null); setNewMeetingDay(k); }}
                     />
                 )}
                 {ticket && <TicketModal ticket={ticket} onClose={() => setTicket(null)} />}
+                {meeting && <MeetingModal meeting={meeting} user={user} onClose={() => setMeeting(null)} onChange={() => { setMeeting(null); reloadSchedule(); }} />}
+                {newMeetingDay && <MeetingFormModal dateKey={newMeetingDay} onClose={() => setNewMeetingDay(null)} onSaved={() => { setNewMeetingDay(null); reloadSchedule(); }} />}
             </div>
         </Layout>
     );
 }
 
-function DayModal({ dateKey, user, tickets, offs, notes, onClose, onChange, onOpenTicket }) {
+function DayModal({ dateKey, user, tickets, offs, notes, meetings, onClose, onChange, onOpenTicket, onOpenMeeting, onScheduleMeeting }) {
     const [body, setBody]   = useState('');
     const [busy, setBusy]   = useState(false);
     const mine = offs.find(o => o.user_id === user.id);
@@ -193,6 +216,22 @@ function DayModal({ dateKey, user, tickets, offs, notes, onClose, onChange, onOp
                         : <button className="btn btn-primary" disabled={busy} onClick={requestOff}>Request time off</button>}
                     {offs.filter(o => o.status === 'approved' && o.user_id !== user.id).map(o =>
                         <span key={o.id} className="tag-green">🏖 {o.user_name}</span>)}
+                </div>
+
+                {/* Meetings */}
+                <div className="alarm-label" style={{ marginBottom: 6, fontWeight: 600, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>Meetings</span>
+                    <button className="btn btn-ghost" style={{ padding: '2px 10px', fontSize: 12 }} onClick={() => onScheduleMeeting(dateKey)}>+ Schedule meeting</button>
+                </div>
+                <div style={{ marginBottom: 12 }}>
+                    {meetings.length === 0 && <div style={{ color: 'var(--text-dim)', fontSize: 13 }}>No meetings scheduled.</div>}
+                    {meetings.map(m => (
+                        <div key={m.id} onClick={() => onOpenMeeting(m)}
+                            style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '5px 8px', borderRadius: 4, cursor: 'pointer', background: 'rgba(147,112,219,0.12)', marginBottom: 4 }}>
+                            <span style={{ flex: 1, color: 'var(--text-hi)', fontSize: 13 }}>👥 {m.title}</span>
+                            <span style={{ fontSize: 11, color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>{fmtTime(m.starts_at)}</span>
+                        </div>
+                    ))}
                 </div>
 
                 {/* Tickets */}
@@ -266,6 +305,88 @@ function TicketModal({ ticket: t, onClose }) {
                     <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border,#2a2d34)', fontSize: 13, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{t.description}</div>
                 )}
                 <div className="modal-actions"><button className="btn btn-ghost" onClick={onClose}>Close</button></div>
+            </div>
+        </div>
+    );
+}
+
+function MeetingModal({ meeting: m, user, onClose, onChange }) {
+    const canManage = user.role === 'admin' || m.created_by === user.id;
+    const when = new Date(m.starts_at).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+        + (m.ends_at ? ` – ${new Date(m.ends_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : '');
+    const row = (label, val) => val ? (
+        <div style={{ display: 'flex', gap: 10, padding: '4px 0' }}>
+            <span style={{ width: 80, color: 'var(--text-dim)', fontSize: 12, flexShrink: 0 }}>{label}</span>
+            <span style={{ fontSize: 13, color: 'var(--text-hi)' }}>{val}</span>
+        </div>
+    ) : null;
+    async function del() {
+        if (!confirm('Delete this meeting?')) return;
+        try { await api.delete(`/schedule/meetings/${m.id}`); onChange(); }
+        catch (e) { alert(e.response?.data?.error || 'Failed to delete.'); }
+    }
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 460, width: '100%' }}>
+                <div className="modal-title">👥 {m.title}</div>
+                {row('When', when)}
+                {row('Location', m.location)}
+                {row('Organizer', m.created_by_name)}
+                {row('Attendees', (m.attendee_names || []).join(', ') || null)}
+                {m.notes && <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border,#2a2d34)', fontSize: 13, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{m.notes}</div>}
+                <div className="modal-actions">
+                    {canManage && <button className="btn btn-danger" onClick={del}>Delete</button>}
+                    <button className="btn btn-ghost" onClick={onClose}>Close</button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function MeetingFormModal({ dateKey, onClose, onSaved }) {
+    const [form, setForm]     = useState({ title: '', starts_at: `${dateKey}T09:00`, ends_at: '', location: '', notes: '' });
+    const [error, setError]   = useState('');
+    const [saving, setSaving] = useState(false);
+    const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+    async function submit(e) {
+        e.preventDefault(); setError(''); setSaving(true);
+        try { await api.post('/schedule/meetings', { ...form, ends_at: form.ends_at || undefined }); onSaved(); }
+        catch (err) { setError(err.response?.data?.error || 'Failed to schedule.'); }
+        finally { setSaving(false); }
+    }
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 480, width: '100%' }}>
+                <div className="modal-title">Schedule Meeting</div>
+                {error && <div className="error-msg">{error}</div>}
+                <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <div className="form-group" style={{ margin: 0 }}>
+                        <label className="form-label">Title *</label>
+                        <input value={form.title} onChange={e => set('title', e.target.value)} required autoFocus />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">Start *</label>
+                            <input type="datetime-local" value={form.starts_at} onChange={e => set('starts_at', e.target.value)} required />
+                        </div>
+                        <div className="form-group" style={{ margin: 0 }}>
+                            <label className="form-label">End</label>
+                            <input type="datetime-local" value={form.ends_at} onChange={e => set('ends_at', e.target.value)} min={form.starts_at || undefined} />
+                        </div>
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                        <label className="form-label">Location</label>
+                        <input value={form.location} onChange={e => set('location', e.target.value)} placeholder="Office, Zoom link…" />
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                        <label className="form-label">Notes / agenda</label>
+                        <textarea rows={3} value={form.notes} onChange={e => set('notes', e.target.value)} />
+                    </div>
+                    <div className="modal-actions">
+                        <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                        <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Scheduling…' : 'Schedule'}</button>
+                    </div>
+                </form>
             </div>
         </div>
     );

@@ -11,6 +11,10 @@ const normName = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 /* Free-text note the user keeps on their own profile. */
 pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_note TEXT`).catch(() => {});
 
+/* PTO allotment in days. Everyone starts at 15; admins can change it. */
+pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS pto_days NUMERIC DEFAULT 15`).catch(() => {});
+pool.query(`UPDATE users SET pto_days = 15 WHERE pto_days IS NULL`).catch(() => {});
+
 /* Build a work profile for a user: hours worked (from finished, scheduled
    tickets they're assigned to), ticket counts, assigned vehicle(s), and the
    inventory they've consumed on jobs. */
@@ -18,10 +22,10 @@ async function buildProfile(userId) {
     const id = Number(userId);
     if (!Number.isInteger(id)) return null;
 
-    const u = await pool.query('SELECT id, name, email, role, created_at, profile_note FROM users WHERE id = $1', [id]);
+    const u = await pool.query('SELECT id, name, email, role, created_at, profile_note, pto_days FROM users WHERE id = $1', [id]);
     if (u.rowCount === 0) return null;
 
-    const [stats, byType, vehicles, inventory, recent] = await Promise.all([
+    const [stats, byType, vehicles, inventory, recent, ptoUsed] = await Promise.all([
         /* Hours worked = sum of (departure − entry) over finished tickets that
            have both times set. Durations are timezone-agnostic. */
         pool.query(`
@@ -74,6 +78,14 @@ async function buildProfile(userId) {
             ORDER BY COALESCE(st.event_end, st.updated_at, st.created_at) DESC
             LIMIT 10
         `, [id]).catch(() => ({ rows: [] })),
+
+        /* Approved PTO days used this calendar year (inclusive day ranges). */
+        pool.query(`
+            SELECT COALESCE(SUM((end_date - start_date) + 1), 0)::int AS used
+            FROM time_off
+            WHERE user_id = $1 AND status = 'approved'
+              AND date_part('year', start_date) = date_part('year', CURRENT_DATE)
+        `, [id]).catch(() => ({ rows: [{ used: 0 }] })),
     ]);
 
     const s = stats.rows[0] || {};
@@ -91,8 +103,12 @@ async function buildProfile(userId) {
         if (uname) callsTaken = calls.filter(c => c.receiver && normName(c.receiver) === uname).length;
     } catch { /* ignore — Slack unavailable */ }
 
+    const ptoAllot    = Number(u.rows[0].pto_days ?? 15);
+    const ptoUsedDays = Number(ptoUsed.rows[0]?.used || 0);
+
     return {
         user: u.rows[0],
+        pto: { allotment: ptoAllot, used: ptoUsedDays, remaining: ptoAllot - ptoUsedDays },
         stats: {
             total_assigned: s.total_assigned || 0,
             completed:      s.completed      || 0,
@@ -174,6 +190,17 @@ router.get('/leaderboard', authenticate, async (req, res) => {
         console.error('Leaderboard error:', err);
         res.status(500).json({ error: 'Failed to load leaderboard.' });
     }
+});
+
+/* PATCH /api/profile/:id/pto { pto_days } — admins set a user's PTO allotment. */
+router.patch('/:id/pto', requireRole('admin'), async (req, res) => {
+    const days = Number(req.body.pto_days);
+    if (!Number.isFinite(days) || days < 0) return res.status(400).json({ error: 'pto_days must be a non-negative number.' });
+    try {
+        const r = await pool.query('UPDATE users SET pto_days = $1 WHERE id = $2 RETURNING id, pto_days', [days, req.params.id]);
+        if (!r.rowCount) return res.status(404).json({ error: 'User not found.' });
+        res.json({ id: r.rows[0].id, pto_days: Number(r.rows[0].pto_days) });
+    } catch (err) { console.error('PTO update error:', err); res.status(500).json({ error: 'Failed to update PTO.' }); }
 });
 
 /* GET /api/profile/:id — admins can pull up any user's profile. */

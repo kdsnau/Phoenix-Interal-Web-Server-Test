@@ -25,7 +25,7 @@ export default function Profile() {
             ) : error ? (
                 <div className="error-msg">{error}</div>
             ) : (
-                <ProfileCard data={data} editable />
+                <ProfileCard data={data} editable canEditPto={data?.user?.role === 'admin'} />
             )}
         </Layout>
     );

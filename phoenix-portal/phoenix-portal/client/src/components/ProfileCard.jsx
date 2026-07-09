@@ -27,6 +27,30 @@ function NoteEditor({ initial }) {
     );
 }
 
+/* Admin-only PTO allotment editor. Shows a live remaining preview as you type. */
+function PtoEditor({ userId, pto }) {
+    const [days, setDays]     = useState(String(pto.allotment));
+    const [saving, setSaving] = useState(false);
+    const [msg, setMsg]       = useState('');
+    const remaining = Math.max(0, Number(days || 0) - pto.used);
+    const save = async () => {
+        setSaving(true); setMsg('');
+        try { await api.patch(`/profile/${userId}/pto`, { pto_days: Number(days) }); setMsg('Saved.'); }
+        catch (e) { setMsg(e.response?.data?.error || 'Save failed.'); }
+        finally { setSaving(false); }
+    };
+    return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <input type="number" min="0" step="0.5" value={days} onChange={e => setDays(e.target.value)} style={{ width: 90 }} />
+            <span style={{ fontSize: 13, color: 'var(--text-dim)' }}>days/yr · {pto.used} used · {remaining} remaining</span>
+            <button className="btn btn-primary" style={{ padding: '4px 12px', fontSize: 12 }} onClick={save} disabled={saving}>
+                {saving ? 'Saving…' : 'Save'}
+            </button>
+            {msg && <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{msg}</span>}
+        </div>
+    );
+}
+
 function StatCard({ label, value, accent }) {
     return (
         <div style={{
@@ -53,7 +77,7 @@ const fmtDate  = d => d ? new Date(d).toLocaleDateString() : '—';
 
 /* Reusable read-only profile view — used by the My Profile page and the admin
    "view user" modal. Takes the payload from GET /api/profile[/:id]. */
-export default function ProfileCard({ data, editable = false }) {
+export default function ProfileCard({ data, editable = false, canEditPto = false }) {
     if (!data) return null;
     const { user, stats, placement, ticketsByType = [], vehicles = [], inventory = [], recentTickets = [] } = data;
 
@@ -84,7 +108,18 @@ export default function ProfileCard({ data, editable = false }) {
                 {placement && (
                     <StatCard label="Rank (This Month)" value={`#${placement.rank} / ${placement.total}`} accent="var(--accent)" />
                 )}
+                {data.pto && (
+                    <StatCard label="PTO Remaining" value={`${data.pto.remaining} / ${data.pto.allotment} d`}
+                        accent={data.pto.remaining <= 3 ? 'var(--red)' : 'var(--green)'} />
+                )}
             </div>
+
+            {/* PTO — everyone sees the counter above; admins set the yearly allotment here */}
+            {canEditPto && data.pto && (
+                <Section title="Paid Time Off (admin)">
+                    <PtoEditor userId={user.id} pto={data.pto} />
+                </Section>
+            )}
 
             {/* Notes — private to the user; only shown/editable on their own profile */}
             {editable && (

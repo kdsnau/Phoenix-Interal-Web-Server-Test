@@ -34,6 +34,7 @@ const snapshotRoutes   = require('./routes/snapshot');
 const timesheetRoutes  = require('./routes/timesheets');
 const licenseRoutes    = require('./routes/licenses');
 const scheduleRoutes   = require('./routes/schedule');
+const roleRoutes       = require('./routes/roles');
 const { startScheduler } = require('./services/monitoringScheduler');
 
 const app  = express();
@@ -96,6 +97,7 @@ app.use('/api/snapshot',    snapshotRoutes);
 app.use('/api/timesheets',  timesheetRoutes);
 app.use('/api/licenses',    licenseRoutes);
 app.use('/api/schedule',    scheduleRoutes);
+app.use('/api/roles',       roleRoutes);
 
 app.get('/api/health', (_, res) => res.json({ status: 'ok' }));
 

@@ -22,7 +22,11 @@ async function buildProfile(userId) {
     const id = Number(userId);
     if (!Number.isInteger(id)) return null;
 
-    const u = await pool.query('SELECT id, name, email, role, created_at, profile_note, pto_days FROM users WHERE id = $1', [id]);
+    const u = await pool.query(`
+        SELECT u.id, u.name, u.email, u.role, u.created_at, u.profile_note, u.pto_days,
+               u.job_role_id, jr.name AS job_role_name, jr.color AS job_role_color
+        FROM users u LEFT JOIN job_roles jr ON jr.id = u.job_role_id
+        WHERE u.id = $1`, [id]);
     if (u.rowCount === 0) return null;
 
     const [stats, byType, vehicles, inventory, recent, ptoUsed] = await Promise.all([

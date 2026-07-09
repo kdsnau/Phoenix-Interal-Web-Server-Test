@@ -25,9 +25,12 @@ router.get('/technicians', requireRole('technician', 'admin'), async (req, res) 
 /* GET /api/admin/users — list all users */
 router.get('/users', requireRole('admin'), async (req, res) => {
     try {
-        const result = await pool.query(
-            'SELECT id, name, email, role, assignable, created_at FROM users ORDER BY created_at DESC'
-        );
+        const result = await pool.query(`
+            SELECT u.id, u.name, u.email, u.role, u.assignable, u.created_at,
+                   u.job_role_id, jr.name AS job_role_name, jr.color AS job_role_color
+            FROM users u LEFT JOIN job_roles jr ON jr.id = u.job_role_id
+            ORDER BY u.created_at DESC
+        `);
         return res.json(result.rows);
     } catch (err) {
         console.error(err);

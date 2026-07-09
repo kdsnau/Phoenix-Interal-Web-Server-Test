@@ -92,6 +92,9 @@ export default function ProfileCard({ data, editable = false, canEditPto = false
                 </div>
                 <div style={{ textAlign: 'right', flexShrink: 0 }}>
                     <span className={`tag ${ROLE_TAG[user.role] || ''}`}>{user.role}</span>
+                    {user.job_role_name && (
+                        <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, color: '#fff', background: user.job_role_color || '#6b7280' }}>{user.job_role_name}</span>
+                    )}
                     <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>Joined {fmtDate(user.created_at)}</div>
                 </div>
             </div>

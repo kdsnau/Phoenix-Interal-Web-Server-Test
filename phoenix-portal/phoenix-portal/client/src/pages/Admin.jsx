@@ -260,6 +260,59 @@ function TimeOffTab({ onResolved }) {
     );
 }
 
+/* Manage custom colored job roles/titles ("Tech 1", "Lead", …). */
+function RolesTab({ roles, onChange }) {
+    const [name, setName]   = useState('');
+    const [color, setColor] = useState('#4a9eff');
+    const [error, setError] = useState('');
+    const [busy, setBusy]   = useState(false);
+
+    async function add(e) {
+        e.preventDefault();
+        if (!name.trim()) return;
+        setBusy(true); setError('');
+        try { await api.post('/roles', { name, color }); setName(''); onChange(); }
+        catch (err) { setError(err.response?.data?.error || 'Failed to add.'); }
+        finally { setBusy(false); }
+    }
+    const setRoleColor = (id, c) => api.patch(`/roles/${id}`, { color: c }).then(onChange).catch(() => {});
+    async function rename(id, cur) {
+        const n = prompt('Rename role:', cur);
+        if (n == null || !n.trim() || n === cur) return;
+        await api.patch(`/roles/${id}`, { name: n.trim() }).then(onChange).catch(e => alert(e.response?.data?.error || 'Failed.'));
+    }
+    async function del(id, nm) {
+        if (!confirm(`Delete role "${nm}"? Anyone assigned to it keeps their account but loses the title.`)) return;
+        await api.delete(`/roles/${id}`).then(onChange).catch(() => {});
+    }
+
+    return (
+        <div>
+            <form onSubmit={add} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16, flexWrap: 'wrap' }}>
+                <input value={name} onChange={e => setName(e.target.value)} placeholder="New role (e.g. Tech 1)" style={{ width: 220 }} />
+                <input type="color" value={color} onChange={e => setColor(e.target.value)} title="Color" style={{ width: 44, height: 32, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }} />
+                <button className="btn btn-primary" type="submit" disabled={busy}>+ Add Role</button>
+                {error && <span style={{ fontSize: 12, color: 'var(--red)' }}>{error}</span>}
+            </form>
+            {roles.length === 0 ? (
+                <div className="alarm-empty">No roles yet. Add one above (e.g. Tech 1, Tech 2, Lead).</div>
+            ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 480 }}>
+                    {roles.map(r => (
+                        <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 6 }}>
+                            <span style={{ fontSize: 12, fontWeight: 600, padding: '2px 10px', borderRadius: 10, color: '#fff', background: r.color }}>{r.name}</span>
+                            <span style={{ flex: 1 }} />
+                            <input type="color" value={r.color} onChange={e => setRoleColor(r.id, e.target.value)} title="Change color" style={{ width: 40, height: 28, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }} />
+                            <button className="btn btn-ghost" style={{ padding: '2px 10px', fontSize: 12 }} onClick={() => rename(r.id, r.name)}>Rename</button>
+                            <button className="btn btn-danger" style={{ padding: '2px 10px', fontSize: 12 }} onClick={() => del(r.id, r.name)}>Delete</button>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
 export default function Admin() {
     const [tab, setTab]           = useState('users');
     const [users, setUsers]       = useState([]);
@@ -267,8 +320,10 @@ export default function Admin() {
     const [showModal, setShowModal] = useState(false);
     const [profileId, setProfileId] = useState(null);
     const [pendingTO, setPendingTO] = useState(0);
+    const [roles, setRoles]         = useState([]);
 
-    useEffect(() => { api.get('/schedule/time-off/pending').then(r => setPendingTO(r.data.length)).catch(() => {}); }, []);
+    const loadRoles = () => api.get('/roles').then(r => setRoles(r.data)).catch(() => {});
+    useEffect(() => { api.get('/schedule/time-off/pending').then(r => setPendingTO(r.data.length)).catch(() => {}); loadRoles(); }, []);
 
     const load = async () => {
         try {
@@ -292,6 +347,16 @@ export default function Admin() {
         try {
             await api.patch(`/admin/users/${id}/assignable`, { assignable });
             setUsers(prev => prev.map(u => u.id === id ? { ...u, assignable } : u));
+        } catch (e) { alert(e.response?.data?.error || 'Failed.'); }
+    };
+
+    const changeJobRole = async (id, jobRoleId) => {
+        try {
+            await api.put('/roles/assign', { user_id: id, job_role_id: jobRoleId || null });
+            const jr = roles.find(r => String(r.id) === String(jobRoleId));
+            setUsers(prev => prev.map(u => u.id === id
+                ? { ...u, job_role_id: jr ? jr.id : null, job_role_name: jr ? jr.name : null, job_role_color: jr ? jr.color : null }
+                : u));
         } catch (e) { alert(e.response?.data?.error || 'Failed.'); }
     };
 
@@ -322,11 +387,16 @@ export default function Admin() {
                 <button className={`alarm-tab ${tab === 'timeoff' ? 'active' : ''}`} onClick={() => setTab('timeoff')}>
                     Time Off {pendingTO > 0 && <span className="alarm-tab-count">{pendingTO}</span>}
                 </button>
+                <button className={`alarm-tab ${tab === 'roles' ? 'active' : ''}`} onClick={() => setTab('roles')}>
+                    Roles <span className="alarm-tab-count">{roles.length}</span>
+                </button>
             </div>
 
             {tab === 'billing' && <BillingTab />}
 
             {tab === 'timeoff' && <TimeOffTab onResolved={() => setPendingTO(n => Math.max(0, n - 1))} />}
+
+            {tab === 'roles' && <RolesTab roles={roles} onChange={loadRoles} />}
 
             {tab === 'users' && loading && <p style={{ color: 'var(--text-dim)' }}>Loading...</p>}
 
@@ -338,6 +408,7 @@ export default function Admin() {
                                 <th>#</th>
                                 <th>Name</th>
                                 <th>Email</th>
+                                <th>Access</th>
                                 <th>Role</th>
                                 <th>Assignable</th>
                                 <th>Joined</th>
@@ -352,6 +423,18 @@ export default function Admin() {
                                     <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>{u.email}</td>
                                     <td>
                                         <span className={`tag ${ROLE_TAG[u.role]}`}>{u.role}</span>
+                                    </td>
+                                    <td>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                            <select value={u.job_role_id || ''} onChange={e => changeJobRole(u.id, e.target.value)}
+                                                style={{ width: 'auto', padding: '3px 6px', fontSize: 12 }}>
+                                                <option value="">— none —</option>
+                                                {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                                            </select>
+                                            {u.job_role_name && (
+                                                <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 8, color: '#fff', background: u.job_role_color || '#6b7280' }}>{u.job_role_name}</span>
+                                            )}
+                                        </div>
                                     </td>
                                     <td>
                                         {u.role === 'technician' ? (

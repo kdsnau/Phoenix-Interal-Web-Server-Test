@@ -47,6 +47,7 @@ export default function TeamCalendar() {
     const [meetings, setMeetings]           = useState([]);
     const [meeting, setMeeting]             = useState(null);     // open meeting modal
     const [newMeetingDay, setNewMeetingDay] = useState(null);    // open "schedule meeting" form
+    const [people, setPeople]               = useState([]);      // for meeting attendee picker + roles
 
     const { weeks, startKey, endKey } = useMemo(() => monthGrid(cursor.year, cursor.month), [cursor]);
 
@@ -57,6 +58,7 @@ export default function TeamCalendar() {
     }
     useEffect(() => {
         api.get('/tickets').then(r => setTickets(r.data.filter(t => t.event_start))).catch(() => setTickets([]));
+        api.get('/roles/people').then(r => setPeople(r.data)).catch(() => setPeople([]));
     }, []);
     useEffect(reloadSchedule, [startKey, endKey]);
 
@@ -168,8 +170,8 @@ export default function TeamCalendar() {
                     />
                 )}
                 {ticket && <TicketModal ticket={ticket} onClose={() => setTicket(null)} />}
-                {meeting && <MeetingModal meeting={meeting} user={user} onClose={() => setMeeting(null)} onChange={() => { setMeeting(null); reloadSchedule(); }} />}
-                {newMeetingDay && <MeetingFormModal dateKey={newMeetingDay} onClose={() => setNewMeetingDay(null)} onSaved={() => { setNewMeetingDay(null); reloadSchedule(); }} />}
+                {meeting && <MeetingModal meeting={meeting} user={user} people={people} onClose={() => setMeeting(null)} onChange={() => { setMeeting(null); reloadSchedule(); }} />}
+                {newMeetingDay && <MeetingFormModal dateKey={newMeetingDay} people={people} onClose={() => setNewMeetingDay(null)} onSaved={() => { setNewMeetingDay(null); reloadSchedule(); }} />}
             </div>
         </Layout>
     );
@@ -310,8 +312,10 @@ function TicketModal({ ticket: t, onClose }) {
     );
 }
 
-function MeetingModal({ meeting: m, user, onClose, onChange }) {
+function MeetingModal({ meeting: m, user, people, onClose, onChange }) {
     const canManage = user.role === 'admin' || m.created_by === user.id;
+    const byId = Object.fromEntries((people || []).map(p => [p.id, p]));
+    const attendees = (m.attendee_ids || []).map(id => byId[id]).filter(Boolean);
     const when = new Date(m.starts_at).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
         + (m.ends_at ? ` – ${new Date(m.ends_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : '');
     const row = (label, val) => val ? (
@@ -332,7 +336,19 @@ function MeetingModal({ meeting: m, user, onClose, onChange }) {
                 {row('When', when)}
                 {row('Location', m.location)}
                 {row('Organizer', m.created_by_name)}
-                {row('Attendees', (m.attendee_names || []).join(', ') || null)}
+                {attendees.length > 0 ? (
+                    <div style={{ display: 'flex', gap: 10, padding: '4px 0' }}>
+                        <span style={{ width: 80, color: 'var(--text-dim)', fontSize: 12, flexShrink: 0 }}>Attendees</span>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            {attendees.map(p => (
+                                <span key={p.id} style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', borderRadius: 10, background: 'rgba(255,255,255,0.06)', color: 'var(--text-hi)' }}>
+                                    {p.name}
+                                    {p.job_role_name && <span style={{ fontSize: 10, fontWeight: 600, padding: '0 6px', borderRadius: 8, color: '#fff', background: p.job_role_color || '#6b7280' }}>{p.job_role_name}</span>}
+                                </span>
+                            ))}
+                        </div>
+                    </div>
+                ) : row('Attendees', (m.attendee_names || []).join(', ') || null)}
                 {m.notes && <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border,#2a2d34)', fontSize: 13, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{m.notes}</div>}
                 <div className="modal-actions">
                     {canManage && <button className="btn btn-danger" onClick={del}>Delete</button>}
@@ -343,11 +359,12 @@ function MeetingModal({ meeting: m, user, onClose, onChange }) {
     );
 }
 
-function MeetingFormModal({ dateKey, onClose, onSaved }) {
-    const [form, setForm]     = useState({ title: '', starts_at: `${dateKey}T09:00`, ends_at: '', location: '', notes: '' });
+function MeetingFormModal({ dateKey, people, onClose, onSaved }) {
+    const [form, setForm]     = useState({ title: '', starts_at: `${dateKey}T09:00`, ends_at: '', location: '', notes: '', attendee_ids: [] });
     const [error, setError]   = useState('');
     const [saving, setSaving] = useState(false);
     const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+    const toggleAttendee = id => setForm(f => ({ ...f, attendee_ids: f.attendee_ids.includes(id) ? f.attendee_ids.filter(x => x !== id) : [...f.attendee_ids, id] }));
     async function submit(e) {
         e.preventDefault(); setError(''); setSaving(true);
         try { await api.post('/schedule/meetings', { ...form, ends_at: form.ends_at || undefined }); onSaved(); }
@@ -381,6 +398,19 @@ function MeetingFormModal({ dateKey, onClose, onSaved }) {
                     <div className="form-group" style={{ margin: 0 }}>
                         <label className="form-label">Notes / agenda</label>
                         <textarea rows={3} value={form.notes} onChange={e => set('notes', e.target.value)} />
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                        <label className="form-label">Attendees</label>
+                        <div style={{ maxHeight: 150, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 4, padding: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                            {(people || []).length === 0 && <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>No people found.</span>}
+                            {(people || []).map(p => (
+                                <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', padding: '2px 4px' }}>
+                                    <input type="checkbox" checked={form.attendee_ids.includes(p.id)} onChange={() => toggleAttendee(p.id)} />
+                                    <span style={{ flex: 1 }}>{p.name}</span>
+                                    {p.job_role_name && <span style={{ fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 8, color: '#fff', background: p.job_role_color || '#6b7280' }}>{p.job_role_name}</span>}
+                                </label>
+                            ))}
+                        </div>
                     </div>
                     <div className="modal-actions">
                         <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>

@@ -6,15 +6,33 @@ const router = express.Router();
 
 /* Custom, colored job titles ("Tech 1", "Lead", …) — a labeling layer separate
    from the permission role (admin/accounting/technician), reassignable per user. */
-pool.query(`
-    CREATE TABLE IF NOT EXISTS job_roles (
-        id         SERIAL PRIMARY KEY,
-        name       TEXT NOT NULL UNIQUE,
-        color      TEXT NOT NULL DEFAULT '#6b7280',
-        created_at TIMESTAMP DEFAULT NOW()
-    )
-`).catch(() => {});
-pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS job_role_id INTEGER REFERENCES job_roles(id) ON DELETE SET NULL`).catch(() => {});
+/* Run these in order: the users.job_role_id FK references job_roles, so the
+   table MUST exist first. Firing them concurrently (no await) let the ALTER
+   lose a race against the CREATE — its FK reference failed, the .catch swallowed
+   it, and the column was never added, 500-ing every query that joins job_roles.
+   We also add the column before the constraint so a constraint hiccup can never
+   leave the column itself missing. */
+(async () => {
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS job_roles (
+                id         SERIAL PRIMARY KEY,
+                name       TEXT NOT NULL UNIQUE,
+                color      TEXT NOT NULL DEFAULT '#6b7280',
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS job_role_id INTEGER`);
+        await pool.query(`
+            DO $$ BEGIN
+                ALTER TABLE users ADD CONSTRAINT users_job_role_id_fkey
+                    FOREIGN KEY (job_role_id) REFERENCES job_roles(id) ON DELETE SET NULL;
+            EXCEPTION WHEN duplicate_object THEN NULL; END $$
+        `);
+    } catch (err) {
+        console.error('job_roles migration failed:', err);
+    }
+})();
 
 const normColor = c => {
     const s = String(c || '').trim();

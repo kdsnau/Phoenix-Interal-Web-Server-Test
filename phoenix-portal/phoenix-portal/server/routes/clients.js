@@ -169,6 +169,20 @@ pool.query(`
     pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_unmon_name ON unmonitored_clients (lower(name))`)
 ).catch(() => {});
 
+/* Per-client notes board — a running discussion any staff member can post to
+   (mirrors the dashboard Notice Board, but scoped to one client). */
+pool.query(`
+    CREATE TABLE IF NOT EXISTS client_posts (
+        id          SERIAL PRIMARY KEY,
+        client_id   INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        content     TEXT NOT NULL,
+        author_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        author_name VARCHAR(100),
+        created_at  TIMESTAMP DEFAULT NOW()
+    )
+`).catch(err => console.error('client_posts table init:', err.message));
+pool.query(`CREATE INDEX IF NOT EXISTS idx_client_posts_client ON client_posts (client_id, created_at DESC)`).catch(() => {});
+
 /* POST /api/clients — admin only */
 router.post('/', requireRole('admin'), async (req, res) => {
     const { name, customer_id, vendor, services } = req.body;
@@ -946,6 +960,18 @@ router.patch('/:id', authenticate, async (req, res) => {
             if (f in req.body) add(f, req.body[f] ?? null);
         }
 
+        /* Service-type reassignment (Fire / Alarm / Access Control / Monitoring)
+           is admin-only. Sanitize to the known set; an empty array clears them. */
+        if ('services' in req.body && req.user.role === 'admin') {
+            const allowed = ['fire', 'alarm', 'access_control', 'monitoring'];
+            const clean = [...new Set(
+                (Array.isArray(req.body.services) ? req.body.services : [])
+                    .map(s => String(s).toLowerCase().trim())
+                    .filter(s => allowed.includes(s))
+            )];
+            add('services', clean);
+        }
+
         if (sets.length === 0) return res.json({ message: 'Nothing to update.' });
 
         params.push(req.params.id);
@@ -1041,6 +1067,56 @@ router.patch('/tickets/:ticketId', authenticate, async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Failed to update ticket.' });
+    }
+});
+
+/* ═══ Per-client notes board ═════════════════════════════════════════════ */
+
+/* GET /api/clients/:id/posts — anyone signed in can read the board. */
+router.get('/:id/posts', authenticate, async (req, res) => {
+    try {
+        const r = await pool.query(
+            'SELECT * FROM client_posts WHERE client_id = $1 ORDER BY created_at DESC LIMIT 200',
+            [req.params.id]
+        );
+        res.json(r.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to fetch posts.' });
+    }
+});
+
+/* POST /api/clients/:id/posts — any staff member (incl. technicians) can post. */
+router.post('/:id/posts', authenticate, async (req, res) => {
+    const content = (req.body.content || '').trim();
+    if (!content) return res.status(400).json({ error: 'content is required.' });
+    try {
+        const r = await pool.query(
+            `INSERT INTO client_posts (client_id, content, author_id, author_name)
+             VALUES ($1, $2, $3, $4) RETURNING *`,
+            [req.params.id, content, req.user.id, req.user.name]
+        );
+        res.status(201).json(r.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to create post.' });
+    }
+});
+
+/* DELETE /api/clients/:id/posts/:postId — the author or an admin can remove. */
+router.delete('/:id/posts/:postId', authenticate, async (req, res) => {
+    try {
+        const existing = await pool.query('SELECT author_id FROM client_posts WHERE id = $1 AND client_id = $2',
+            [req.params.postId, req.params.id]);
+        if (existing.rowCount === 0) return res.status(404).json({ error: 'Post not found.' });
+        if (req.user.role !== 'admin' && existing.rows[0].author_id !== req.user.id) {
+            return res.status(403).json({ error: 'You can only delete your own posts.' });
+        }
+        await pool.query('DELETE FROM client_posts WHERE id = $1', [req.params.postId]);
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to delete post.' });
     }
 });
 

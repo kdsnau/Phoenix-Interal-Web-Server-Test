@@ -207,3 +207,15 @@
 .alarm-slack-label { font-size: 10px; color: #5c6e82; text-transform: uppercase; letter-spacing: 0.06em; font-family: var(--font-mono, monospace); margin-bottom: 2px; }
 .alarm-slack-val { font-size: 13px; color: #c9d4e0; white-space: pre-wrap; }
 .alarm-slack-raw { font-size: 12px; color: #5c6e82; white-space: pre-wrap; }
+
+/* Per-client notes board (Notes tab) */
+.board-posts { display: flex; flex-direction: column; }
+.board-post { padding: 12px 2px; border-bottom: 1px solid var(--border, #2a3040); }
+.board-post:last-child { border-bottom: none; }
+.board-post-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.board-post-author { font-size: 12px; font-weight: 600; color: var(--accent, #4a9eff); }
+.board-post-time { font-size: 11px; color: var(--text-dim, #5c6e82); font-family: var(--font-mono, monospace); flex: 1; }
+.board-post-content { font-size: 13px; color: var(--text, #c9d4e0); line-height: 1.65; white-space: pre-wrap; word-break: break-word; }
+.board-delete { background: none; border: none; color: var(--text-dim, #5c6e82); font-size: 11px; cursor: pointer; padding: 2px 5px; border-radius: 3px; opacity: 0; transition: opacity 0.15s, background 0.15s; }
+.board-post:hover .board-delete { opacity: 1; }
+.board-delete:hover { background: rgba(224,82,82,0.15); color: var(--red, #e05252); }

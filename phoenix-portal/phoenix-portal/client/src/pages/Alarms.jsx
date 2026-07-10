@@ -330,45 +330,95 @@ const STATUS_CLASS = {
     return_necessary: 'tag-red',
 };
 
-const SERVICE_TABS = ['all', 'alarm', 'fire', 'access_control', 'permits', 'unmonitored'];
+const SERVICE_TABS = ['all', 'alarm', 'fire', 'access_control', 'monitoring', 'permits', 'unmonitored'];
+
+/* Canonical service types + their display labels, reused by the tag list, the
+   filter tabs, the "add client" form, and the admin service-type editor. */
+const SERVICE_TYPES = ['fire', 'alarm', 'access_control', 'monitoring'];
+const SERVICE_LABEL = {
+    fire: 'Fire', alarm: 'Alarm', access_control: 'Access Control', monitoring: 'Monitoring',
+};
+/* Tag color class per service type. */
+const svcClass = s => s === 'fire' ? 'tag-red'
+    : s === 'access_control' ? 'tag-blue'
+    : s === 'monitoring' ? 'tag-green'
+    : 'tag-yellow';
 
 /* -----------------------------------------------------------------------
-   Alarm Slack feed panel
+   Per-client notes board — a running discussion any staff member can post to
+   (mirrors the dashboard Notice Board; technicians can post here too).
    ----------------------------------------------------------------------- */
-function AlarmFeed({ clientId, clientName }) {
-    const [msgs, setMsgs] = useState([]);
+function ClientBoard({ clientId, user }) {
+    const [posts,   setPosts]   = useState([]);
+    const [content, setContent] = useState('');
     const [loading, setLoading] = useState(true);
+    const [posting, setPosting] = useState(false);
 
     useEffect(() => {
-        api.get(`/alarm-slack/client/${clientId}`)
-            .then(r => setMsgs(r.data.messages || []))
-            .catch(() => setMsgs([]))
+        setLoading(true);
+        api.get(`/clients/${clientId}/posts`)
+            .then(r => setPosts(r.data))
+            .catch(() => setPosts([]))
             .finally(() => setLoading(false));
     }, [clientId]);
 
-    if (loading) return <div className="alarm-slack-empty">Loading feed…</div>;
-    if (!msgs.length) return <div className="alarm-slack-empty">No Slack posts found for {clientName}.</div>;
+    async function submit(e) {
+        e.preventDefault();
+        if (!content.trim()) return;
+        setPosting(true);
+        try {
+            const { data } = await api.post(`/clients/${clientId}/posts`, { content });
+            setPosts(prev => [data, ...prev]);
+            setContent('');
+        } catch { /* keep the draft so nothing is lost */ }
+        finally { setPosting(false); }
+    }
+
+    async function deletePost(id) {
+        if (!confirm('Delete this note?')) return;
+        try {
+            await api.delete(`/clients/${clientId}/posts/${id}`);
+            setPosts(prev => prev.filter(p => p.id !== id));
+        } catch (e) { alert(e.response?.data?.error || 'Delete failed.'); }
+    }
 
     return (
-        <div className="alarm-slack-feed">
-            {msgs.map(m => {
-                const f = m.fields || {};
-                const date = new Date(m.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-                return (
-                    <div key={m.ts} className="alarm-slack-msg">
-                        <div className="alarm-slack-date">{date}</div>
-                        {Object.entries(f).map(([k, v]) => (
-                            <div key={k} className="alarm-slack-field">
-                                <div className="alarm-slack-label">{k}</div>
-                                <div className="alarm-slack-val">{v}</div>
+        <div className="alarm-section">
+            <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', marginBottom: 14 }}>
+                <textarea
+                    className="alarm-notes-input"
+                    value={content}
+                    onChange={e => setContent(e.target.value)}
+                    placeholder="Add a note about this client…"
+                    rows={3}
+                    style={{ width: '100%' }}
+                />
+                <button type="submit" className="btn btn-primary" disabled={posting || !content.trim()}
+                    style={{ alignSelf: 'flex-end', marginTop: 6 }}>
+                    {posting ? 'Posting…' : 'Post Note'}
+                </button>
+            </form>
+
+            {loading ? (
+                <div className="alarm-empty">Loading…</div>
+            ) : posts.length === 0 ? (
+                <div className="alarm-empty">No notes yet. Be the first to post.</div>
+            ) : (
+                <div className="board-posts">
+                    {posts.map(post => (
+                        <div key={post.id} className="board-post">
+                            <div className="board-post-meta">
+                                <span className="board-post-author">{post.author_name || 'Unknown'}</span>
+                                <span className="board-post-time">{timeAgo(post.created_at)}</span>
+                                {(user.role === 'admin' || post.author_id === user.id) && (
+                                    <button className="board-delete" onClick={() => deletePost(post.id)} title="Delete">✕</button>
+                                )}
                             </div>
-                        ))}
-                        {!Object.keys(f).length && (
-                            <div className="alarm-slack-raw">{m.text}</div>
-                        )}
-                    </div>
-                );
-            })}
+                            <div className="board-post-content">{post.content}</div>
+                        </div>
+                    ))}
+                </div>
+            )}
         </div>
     );
 }
@@ -393,18 +443,16 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
     const [contactName,   setContactName]   = useState(client.contact_name   || '');
     const [contactPhone,  setContactPhone]  = useState(client.contact_phone  || '');
     const [contactEmail,  setContactEmail]  = useState(client.contact_email  || '');
-    /* Contract */
-    const [contractType,  setContractType]  = useState(client.contract_type  || '');
-    const [contractStart, setContractStart] = useState(client.contract_start ? client.contract_start.slice(0, 10) : '');
-    const [contractEnd,   setContractEnd]   = useState(client.contract_end   ? client.contract_end.slice(0, 10)   : '');
-    const [lastInsp,      setLastInsp]      = useState(client.last_inspection ? client.last_inspection.slice(0, 10) : '');
-    const [nextInsp,      setNextInsp]      = useState(client.next_inspection ? client.next_inspection.slice(0, 10) : '');
+    /* Service types (admin-reassignable): fire / alarm / access control / monitoring */
+    const [services,    setServices]    = useState(client.services || []);
+    const [savingSvc,   setSavingSvc]   = useState(false);
+    /* Scheduled maintenance — auto-creates a ticket when due (lives on the Tickets tab) */
     const [maintEnabled,  setMaintEnabled]  = useState(client.maintenance_enabled || false);
     const [maintFreq,     setMaintFreq]     = useState(client.maintenance_frequency || 'quarterly');
     const [maintNext,     setMaintNext]     = useState(client.maintenance_next ? client.maintenance_next.slice(0, 10) : '');
     const [maintAssignee, setMaintAssignee] = useState(client.maintenance_assignee_id || '');
     const [maintRunMsg,   setMaintRunMsg]   = useState('');
-    const [savingContract, setSavingContract] = useState(false);
+    const [savingMaint,   setSavingMaint]   = useState(false);
     const [transactions, setTransactions] = useState([]);
     const [txLoading, setTxLoading]       = useState(false);
     const [txForm, setTxForm]     = useState({ description: '', amount: '', type: 'invoice', date: '' });
@@ -458,21 +506,30 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
         onRefresh();
     }
 
-    async function saveContract() {
-        setSavingContract(true);
+    async function saveMaintenance() {
+        setSavingMaint(true);
         await api.patch(`/clients/${client.id}`, {
-            contract_type:   contractType  || null,
-            contract_start:  contractStart || null,
-            contract_end:    contractEnd   || null,
-            last_inspection: lastInsp      || null,
-            next_inspection: nextInsp      || null,
             maintenance_enabled:   maintEnabled,
             maintenance_frequency: maintFreq,
             maintenance_next:      maintNext || null,
             maintenance_assignee_id: maintAssignee || null,
         });
-        setSavingContract(false);
+        setSavingMaint(false);
         onRefresh();
+    }
+
+    function toggleService(s) {
+        setServices(cur => cur.includes(s) ? cur.filter(x => x !== s) : [...cur, s]);
+    }
+
+    async function saveServices() {
+        setSavingSvc(true);
+        try {
+            await api.patch(`/clients/${client.id}`, { services });
+            onRefresh();
+        } finally {
+            setSavingSvc(false);
+        }
     }
 
     async function runMaintenanceNow() {
@@ -558,7 +615,6 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
 
     const fmtSize = b => b == null ? '' : (b >= 1e6 ? `${(b / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`);
 
-    const svc = (client.services || []);
 
     return (
         <div className="alarm-detail-overlay" onClick={onClose}>
@@ -570,14 +626,14 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                             <span>{client.customer_id}</span>
                             <span className="alarm-sep">·</span>
                             <span>{client.vendor}</span>
-                            {svc.map(s => <span key={s} className={`tag-${s === 'fire' ? 'red' : s === 'access_control' ? 'blue' : 'yellow'} alarm-svc-tag`}>{s}</span>)}
+                            {services.map(s => <span key={s} className={`${svcClass(s)} alarm-svc-tag`}>{SERVICE_LABEL[s] || s}</span>)}
                         </div>
                     </div>
                     <button className="alarm-close-btn" onClick={onClose}>✕</button>
                 </div>
 
                 <div className="alarm-tabs">
-                    {['system', 'panel', 'contract', 'tickets', 'sitemap', 'slack', ...(canBilling ? ['billing', 'transactions'] : [])].map(t => (
+                    {['system', 'panel', 'tickets', 'notes', 'sitemap', ...(canBilling ? ['billing', 'transactions'] : [])].map(t => (
                         <button key={t} className={`alarm-tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
                             {t === 'sitemap' ? 'Site Map' : t.charAt(0).toUpperCase() + t.slice(1)}
                         </button>
@@ -638,6 +694,30 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                                 </div>
                             </div>
 
+                            {/* Service Types — admin-reassignable (Fire / Alarm / Access Control / Monitoring) */}
+                            <div className="alarm-label" style={{ marginBottom: 8, fontWeight: 600 }}>Service Types</div>
+                            {user.role === 'admin' ? (
+                                <div style={{ marginBottom: 16 }}>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 10 }}>
+                                        {SERVICE_TYPES.map(s => (
+                                            <label key={s} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13 }}>
+                                                <input type="checkbox" checked={services.includes(s)} onChange={() => toggleService(s)} />
+                                                <span className={`${svcClass(s)} alarm-svc-tag`}>{SERVICE_LABEL[s]}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                    <button className="btn btn-primary" onClick={saveServices} disabled={savingSvc}>
+                                        {savingSvc ? 'Saving…' : 'Save Service Types'}
+                                    </button>
+                                </div>
+                            ) : (
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+                                    {services.length === 0
+                                        ? <span className="alarm-value">—</span>
+                                        : services.map(s => <span key={s} className={`${svcClass(s)} alarm-svc-tag`}>{SERVICE_LABEL[s] || s}</span>)}
+                                </div>
+                            )}
+
                             {/* Permit */}
                             <div className="alarm-grid" style={{ marginBottom: 12 }}>
                                 <div className="alarm-field">
@@ -663,113 +743,6 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                                     {savingNotes ? 'Saving…' : 'Save'}
                                 </button>
                             </div>
-                        </div>
-                    )}
-
-                    {/* CONTRACT TAB */}
-                    {tab === 'contract' && (
-                        <div className="alarm-section">
-                            <div className="alarm-grid" style={{ marginBottom: 16 }}>
-                                <div className="alarm-field">
-                                    <div className="alarm-label">Contract Type</div>
-                                    <select className="alarm-input" value={contractType} onChange={e => setContractType(e.target.value)}>
-                                        <option value="">— Select —</option>
-                                        <option value="monitoring">Monitoring Only</option>
-                                        <option value="service">Service Only</option>
-                                        <option value="full_service">Full Service</option>
-                                        <option value="installation">Installation</option>
-                                        <option value="time_materials">Time & Materials</option>
-                                    </select>
-                                </div>
-                                <div className="alarm-field">
-                                    <div className="alarm-label">Contract Start</div>
-                                    <input className="alarm-input" type="date" value={contractStart} onChange={e => setContractStart(e.target.value)} />
-                                </div>
-                                <div className="alarm-field">
-                                    <div className="alarm-label">Contract End</div>
-                                    <input className="alarm-input" type="date" value={contractEnd} onChange={e => setContractEnd(e.target.value)} />
-                                </div>
-                            </div>
-
-                            {/* Contract status badge */}
-                            {contractEnd && (() => {
-                                const days = Math.ceil((new Date(contractEnd) - new Date()) / 86400000);
-                                if (days < 0)   return <div style={{ marginBottom: 12 }}><span className="tag tag-red">Contract EXPIRED {Math.abs(days)}d ago</span></div>;
-                                if (days <= 60) return <div style={{ marginBottom: 12 }}><span className="tag tag-yellow">Expires in {days}d</span></div>;
-                                return <div style={{ marginBottom: 12 }}><span className="tag tag-green">Active — {days}d remaining</span></div>;
-                            })()}
-
-                            <div className="alarm-label" style={{ marginBottom: 8, fontWeight: 600 }}>Inspections</div>
-                            <div className="alarm-grid" style={{ marginBottom: 16 }}>
-                                <div className="alarm-field">
-                                    <div className="alarm-label">Last Inspection</div>
-                                    <input className="alarm-input" type="date" value={lastInsp} onChange={e => setLastInsp(e.target.value)} />
-                                </div>
-                                <div className="alarm-field">
-                                    <div className="alarm-label">Next Inspection Due</div>
-                                    <input className="alarm-input" type="date" value={nextInsp} onChange={e => setNextInsp(e.target.value)} />
-                                </div>
-                            </div>
-
-                            {nextInsp && (() => {
-                                const days = Math.ceil((new Date(nextInsp) - new Date()) / 86400000);
-                                if (days < 0)   return <div style={{ marginBottom: 12 }}><span className="tag tag-red">Inspection OVERDUE by {Math.abs(days)}d</span></div>;
-                                if (days <= 30) return <div style={{ marginBottom: 12 }}><span className="tag tag-yellow">Inspection due in {days}d</span></div>;
-                                return null;
-                            })()}
-
-                            <div className="alarm-label" style={{ marginBottom: 8, fontWeight: 600 }}>Scheduled Maintenance</div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                                <input type="checkbox" id={`maint-${client.id}`} checked={maintEnabled} onChange={e => setMaintEnabled(e.target.checked)} />
-                                <label htmlFor={`maint-${client.id}`} style={{ fontSize: 13, cursor: 'pointer' }}>
-                                    Auto-create a maintenance ticket on the calendar when due
-                                </label>
-                            </div>
-                            {maintEnabled && (
-                                <>
-                                    <div className="alarm-grid" style={{ marginBottom: 16 }}>
-                                        <div className="alarm-field">
-                                            <div className="alarm-label">Frequency</div>
-                                            <select className="alarm-input" value={maintFreq} onChange={e => setMaintFreq(e.target.value)}>
-                                                <option value="monthly">Monthly</option>
-                                                <option value="quarterly">Quarterly</option>
-                                                <option value="semiannual">Semi-Annual</option>
-                                                <option value="yearly">Yearly</option>
-                                            </select>
-                                        </div>
-                                        <div className="alarm-field">
-                                            <div className="alarm-label">Next Maintenance Due</div>
-                                            <input className="alarm-input" type="date" value={maintNext} onChange={e => setMaintNext(e.target.value)} />
-                                        </div>
-                                    </div>
-                                    <div className="alarm-field" style={{ marginBottom: 16 }}>
-                                        <div className="alarm-label">Assign maintenance ticket to</div>
-                                        <select className="alarm-input" value={maintAssignee} onChange={e => setMaintAssignee(e.target.value)}>
-                                            <option value="">Unassigned</option>
-                                            {technicians.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                                        </select>
-                                    </div>
-                                    {maintNext && (() => {
-                                        const days = Math.ceil((new Date(maintNext) - new Date()) / 86400000);
-                                        if (days < 0)   return <div style={{ marginBottom: 12 }}><span className="tag tag-red">Maintenance OVERDUE by {Math.abs(days)}d</span></div>;
-                                        if (days <= 30) return <div style={{ marginBottom: 12 }}><span className="tag tag-yellow">Maintenance due in {days}d</span></div>;
-                                        return <div style={{ marginBottom: 12 }}><span className="tag tag-green">Next visit in {days}d</span></div>;
-                                    })()}
-                                </>
-                            )}
-
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                                <button className="btn btn-primary" onClick={saveContract} disabled={savingContract}>
-                                    {savingContract ? 'Saving…' : 'Save Contract'}
-                                </button>
-                                {maintEnabled && (
-                                    <button type="button" className="btn btn-ghost" onClick={runMaintenanceNow}
-                                        title="Generate tickets now for any client whose maintenance is due">
-                                        Run maintenance check now
-                                    </button>
-                                )}
-                            </div>
-                            {maintRunMsg && <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 8 }}>{maintRunMsg}</div>}
                         </div>
                     )}
 
@@ -813,6 +786,61 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                                     </div>
                                 ))}
                             </div>
+
+                            {/* Scheduled maintenance — auto-creates a service ticket when due */}
+                            <div style={{ borderTop: '1px solid var(--border)', marginTop: 20, paddingTop: 16 }}>
+                                <div className="alarm-label" style={{ marginBottom: 8, fontWeight: 600 }}>Scheduled Maintenance</div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                                    <input type="checkbox" id={`maint-${client.id}`} checked={maintEnabled} onChange={e => setMaintEnabled(e.target.checked)} />
+                                    <label htmlFor={`maint-${client.id}`} style={{ fontSize: 13, cursor: 'pointer' }}>
+                                        Auto-create a maintenance ticket on the calendar when due
+                                    </label>
+                                </div>
+                                {maintEnabled && (
+                                    <>
+                                        <div className="alarm-grid" style={{ marginBottom: 16 }}>
+                                            <div className="alarm-field">
+                                                <div className="alarm-label">Frequency</div>
+                                                <select className="alarm-input" value={maintFreq} onChange={e => setMaintFreq(e.target.value)}>
+                                                    <option value="monthly">Monthly</option>
+                                                    <option value="quarterly">Quarterly</option>
+                                                    <option value="semiannual">Semi-Annual</option>
+                                                    <option value="yearly">Yearly</option>
+                                                </select>
+                                            </div>
+                                            <div className="alarm-field">
+                                                <div className="alarm-label">Next Maintenance Due</div>
+                                                <input className="alarm-input" type="date" value={maintNext} onChange={e => setMaintNext(e.target.value)} />
+                                            </div>
+                                        </div>
+                                        <div className="alarm-field" style={{ marginBottom: 16 }}>
+                                            <div className="alarm-label">Assign maintenance ticket to</div>
+                                            <select className="alarm-input" value={maintAssignee} onChange={e => setMaintAssignee(e.target.value)}>
+                                                <option value="">Unassigned</option>
+                                                {technicians.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                                            </select>
+                                        </div>
+                                        {maintNext && (() => {
+                                            const days = Math.ceil((new Date(maintNext) - new Date()) / 86400000);
+                                            if (days < 0)   return <div style={{ marginBottom: 12 }}><span className="tag tag-red">Maintenance OVERDUE by {Math.abs(days)}d</span></div>;
+                                            if (days <= 30) return <div style={{ marginBottom: 12 }}><span className="tag tag-yellow">Maintenance due in {days}d</span></div>;
+                                            return <div style={{ marginBottom: 12 }}><span className="tag tag-green">Next visit in {days}d</span></div>;
+                                        })()}
+                                    </>
+                                )}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                    <button className="btn btn-primary" onClick={saveMaintenance} disabled={savingMaint}>
+                                        {savingMaint ? 'Saving…' : 'Save Maintenance'}
+                                    </button>
+                                    {maintEnabled && (
+                                        <button type="button" className="btn btn-ghost" onClick={runMaintenanceNow}
+                                            title="Generate tickets now for any client whose maintenance is due">
+                                            Run maintenance check now
+                                        </button>
+                                    )}
+                                </div>
+                                {maintRunMsg && <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 8 }}>{maintRunMsg}</div>}
+                            </div>
                         </div>
                     )}
 
@@ -821,9 +849,9 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                         <PanelTab clientId={client.id} isAdmin={user.role === 'admin'} />
                     )}
 
-                    {/* SLACK TAB */}
-                    {tab === 'slack' && (
-                        <AlarmFeed clientId={client.id} clientName={client.name} />
+                    {/* NOTES TAB — per-client board any staff member can post to */}
+                    {tab === 'notes' && (
+                        <ClientBoard clientId={client.id} user={user} />
                     )}
 
                     {/* BILLING TAB */}
@@ -1056,10 +1084,10 @@ function NewClientModal({ onClose, onCreated }) {
                     <div className="form-group" style={{ margin: 0 }}>
                         <label className="form-label">Services</label>
                         <div style={{ display: 'flex', gap: 16, marginTop: 6 }}>
-                            {['alarm', 'fire', 'access_control'].map(s => (
+                            {SERVICE_TYPES.map(s => (
                                 <label key={s} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', fontWeight: 400 }}>
                                     <input type="checkbox" checked={form.services.includes(s)} onChange={() => toggleService(s)} />
-                                    {s === 'access_control' ? 'Access Control' : s.charAt(0).toUpperCase() + s.slice(1)}
+                                    {SERVICE_LABEL[s]}
                                 </label>
                             ))}
                         </div>
@@ -1309,8 +1337,6 @@ function PruneModal({ onClose, onDone }) {
 /* A customer's billing anchor + monitored panels share a customer_number.
    Group them so multi-location customers (The Pharm, PAL, GG&D…) collapse into
    one expandable roll-up card instead of a wall of near-duplicate tiles. */
-const svcClass = s => s === 'fire' ? 'tag-red' : s === 'access_control' ? 'tag-blue' : 'tag-yellow';
-
 function groupClients(list) {
     const map = new Map();
     for (const c of list) {

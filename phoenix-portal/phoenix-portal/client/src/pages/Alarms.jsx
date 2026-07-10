@@ -330,18 +330,19 @@ const STATUS_CLASS = {
     return_necessary: 'tag-red',
 };
 
-const SERVICE_TABS = ['all', 'alarm', 'fire', 'access_control', 'monitoring', 'projects', 'permits', 'unmonitored'];
+const SERVICE_TABS = ['all', 'alarm', 'fire', 'access_control', 'maintenance', 'projects', 'permits', 'unmonitored'];
 
 /* Canonical service types + their display labels, reused by the tag list, the
-   filter tabs, the "add client" form, and the admin service-type editor. */
-const SERVICE_TYPES = ['fire', 'alarm', 'access_control', 'monitoring'];
+   filter tabs, the "add client" form, and the admin service-type editor.
+   ('maintenance' is a service type; distinct from the monitoring_enabled flag.) */
+const SERVICE_TYPES = ['fire', 'alarm', 'access_control', 'maintenance'];
 const SERVICE_LABEL = {
-    fire: 'Fire', alarm: 'Alarm', access_control: 'Access Control', monitoring: 'Monitoring',
+    fire: 'Fire', alarm: 'Alarm', access_control: 'Access Control', maintenance: 'Maintenance',
 };
 /* Tag color class per service type. */
 const svcClass = s => s === 'fire' ? 'tag-red'
     : s === 'access_control' ? 'tag-blue'
-    : s === 'monitoring' ? 'tag-green'
+    : s === 'maintenance' ? 'tag-green'
     : 'tag-yellow';
 
 /* -----------------------------------------------------------------------
@@ -443,7 +444,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
     const [contactName,   setContactName]   = useState(client.contact_name   || '');
     const [contactPhone,  setContactPhone]  = useState(client.contact_phone  || '');
     const [contactEmail,  setContactEmail]  = useState(client.contact_email  || '');
-    /* Service types (admin-reassignable): fire / alarm / access control / monitoring */
+    /* Service types (admin-reassignable): fire / alarm / access control / maintenance */
     const [services,    setServices]    = useState(client.services || []);
     const [savingSvc,   setSavingSvc]   = useState(false);
     /* Manual rollup grouping (admin) */
@@ -729,7 +730,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                                 </div>
                             </div>
 
-                            {/* Service Types — admin-reassignable (Fire / Alarm / Access Control / Monitoring) */}
+                            {/* Service Types — admin-reassignable (Fire / Alarm / Access Control / Maintenance) */}
                             <div className="alarm-label" style={{ marginBottom: 8, fontWeight: 600 }}>Service Types</div>
                             {user.role === 'admin' ? (
                                 <div style={{ marginBottom: 16 }}>

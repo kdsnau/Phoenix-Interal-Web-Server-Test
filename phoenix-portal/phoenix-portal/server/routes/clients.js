@@ -187,6 +187,10 @@ pool.query(`CREATE INDEX IF NOT EXISTS idx_client_posts_client ON client_posts (
    for install-only clients we don't monitor (imported from the QB active list). */
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS category TEXT`).catch(() => {});
 
+/* The 'monitoring' service type was renamed to 'maintenance'; migrate any rows
+   that already carry it. (Unrelated to the monitoring_enabled billing flag.) */
+pool.query(`UPDATE clients SET services = array_replace(services, 'monitoring', 'maintenance') WHERE 'monitoring' = ANY(services)`).catch(() => {});
+
 /* Manual rollups — user-defined groupings that sit alongside the automatic
    customer_number rollup. A client with a rollup_id groups under that named
    rollup; clients without one keep grouping by customer_number as before.
@@ -1148,7 +1152,7 @@ router.patch('/:id', authenticate, async (req, res) => {
         /* Service-type reassignment (Fire / Alarm / Access Control / Monitoring)
            is admin-only. Sanitize to the known set; an empty array clears them. */
         if ('services' in req.body && req.user.role === 'admin') {
-            const allowed = ['fire', 'alarm', 'access_control', 'monitoring'];
+            const allowed = ['fire', 'alarm', 'access_control', 'maintenance'];
             const clean = [...new Set(
                 (Array.isArray(req.body.services) ? req.body.services : [])
                     .map(s => String(s).toLowerCase().trim())

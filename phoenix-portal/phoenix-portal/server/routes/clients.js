@@ -183,6 +183,23 @@ pool.query(`
 `).catch(err => console.error('client_posts table init:', err.message));
 pool.query(`CREATE INDEX IF NOT EXISTS idx_client_posts_client ON client_posts (client_id, created_at DESC)`).catch(() => {});
 
+/* Client category — NULL for the standard (monitored/service) clients, 'project'
+   for install-only clients we don't monitor (imported from the QB active list). */
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS category TEXT`).catch(() => {});
+
+/* Manual rollups — user-defined groupings that sit alongside the automatic
+   customer_number rollup. A client with a rollup_id groups under that named
+   rollup; clients without one keep grouping by customer_number as before. */
+pool.query(`
+    CREATE TABLE IF NOT EXISTS client_rollups (
+        id         SERIAL PRIMARY KEY,
+        name       TEXT NOT NULL UNIQUE,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+    )
+`).catch(err => console.error('client_rollups table init:', err.message));
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS rollup_id INTEGER REFERENCES client_rollups(id) ON DELETE SET NULL`).catch(() => {});
+
 /* POST /api/clients — admin only */
 router.post('/', requireRole('admin'), async (req, res) => {
     const { name, customer_id, vendor, services } = req.body;
@@ -203,23 +220,174 @@ router.post('/', requireRole('admin'), async (req, res) => {
     }
 });
 
-/* GET /api/clients?service=&vendor=&search= */
+/* GET /api/clients?service=&vendor=&search=&category=
+   category='project' returns only install-only project clients; otherwise the
+   standard views exclude them so they don't flood the monitored/service tabs. */
 router.get('/', authenticate, async (req, res) => {
-    const { service, vendor, search } = req.query;
+    const { service, vendor, search, category } = req.query;
     const conditions = [];
     const params     = [];
 
-    if (service) { params.push(service);        conditions.push(`$${params.length} = ANY(services)`); }
-    if (vendor)  { params.push(vendor);          conditions.push(`vendor = $${params.length}`); }
-    if (search)  { params.push(`%${search}%`);  conditions.push(`(name ILIKE $${params.length} OR customer_id ILIKE $${params.length})`); }
+    if (category === 'project') { conditions.push(`c.category = 'project'`); }
+    else                        { conditions.push(`c.category IS DISTINCT FROM 'project'`); }
 
-    const where = conditions.length ? ' WHERE ' + conditions.join(' AND ') : '';
+    if (service) { params.push(service);        conditions.push(`$${params.length} = ANY(c.services)`); }
+    if (vendor)  { params.push(vendor);          conditions.push(`c.vendor = $${params.length}`); }
+    if (search)  { params.push(`%${search}%`);  conditions.push(`(c.name ILIKE $${params.length} OR c.customer_id ILIKE $${params.length})`); }
+
+    const where = ' WHERE ' + conditions.join(' AND ');
     try {
-        const result = await pool.query(`SELECT * FROM clients${where} ORDER BY name`, params);
+        const result = await pool.query(
+            `SELECT c.*, r.name AS rollup_name
+             FROM clients c LEFT JOIN client_rollups r ON r.id = c.rollup_id
+             ${where} ORDER BY c.name`, params);
         res.json(result.rows);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Failed to fetch clients.' });
+    }
+});
+
+/* ═══ Manual rollups ═════════════════════════════════════════════════════ */
+
+/* GET /api/clients/rollups — list rollups with member counts. */
+router.get('/rollups', authenticate, async (_req, res) => {
+    try {
+        const r = await pool.query(`
+            SELECT r.id, r.name, COUNT(c.id)::int AS member_count
+            FROM client_rollups r LEFT JOIN clients c ON c.rollup_id = r.id
+            GROUP BY r.id, r.name ORDER BY r.name`);
+        res.json(r.rows);
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to load rollups.' }); }
+});
+
+/* POST /api/clients/rollups { name } — admin creates a named rollup. */
+router.post('/rollups', requireRole('admin'), async (req, res) => {
+    const name = (req.body.name || '').trim();
+    if (!name) return res.status(400).json({ error: 'Name is required.' });
+    try {
+        const r = await pool.query(
+            'INSERT INTO client_rollups (name, created_by) VALUES ($1, $2) RETURNING id, name',
+            [name, req.user.id]);
+        res.status(201).json(r.rows[0]);
+    } catch (err) {
+        if (err.code === '23505') return res.status(409).json({ error: 'A rollup with that name already exists.' });
+        console.error(err); res.status(500).json({ error: 'Failed to create rollup.' });
+    }
+});
+
+/* PUT /api/clients/:id/rollup { rollup_id } — admin assigns/clears a client's
+   manual rollup (null clears it, falling the client back to auto-grouping). */
+router.put('/:id/rollup', requireRole('admin'), async (req, res) => {
+    const rollupId = req.body.rollup_id == null || req.body.rollup_id === '' ? null : Number(req.body.rollup_id);
+    try {
+        const r = await pool.query('UPDATE clients SET rollup_id = $1 WHERE id = $2 RETURNING id, rollup_id',
+            [rollupId, req.params.id]);
+        if (!r.rowCount) return res.status(404).json({ error: 'Client not found.' });
+        res.json(r.rows[0]);
+    } catch (err) {
+        if (err.code === '23503') return res.status(400).json({ error: 'That rollup does not exist.' });
+        console.error(err); res.status(500).json({ error: 'Failed to assign rollup.' });
+    }
+});
+
+/* ═══ Project-client import (QuickBooks active customer list) ═════════════ */
+
+/* First non-empty of the given cells. */
+const firstOf = (...vals) => { for (const v of vals) { const s = String(v || '').trim(); if (s) return s; } return ''; };
+
+/* POST /api/clients/import-projects — admin uploads the QB active-customer CSV.
+   Collapses to top-level businesses and inserts the install-only ones we DON'T
+   already have as clients (deduped by Account No. → customer_number, then name)
+   with category='project'. Existing/monitored customers are skipped. */
+router.post('/import-projects', requireRole('admin'), upload.single('file'), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded.' });
+    try {
+        /* QB exports are usually Windows-1252 CSV; decode as latin1 so accented
+           names survive. XLSX handles .xlsx too. */
+        const fname = (req.file.originalname || '').toLowerCase();
+        const wb = (fname.endsWith('.csv') || (req.file.mimetype || '').includes('csv'))
+            ? XLSX.read(req.file.buffer.toString('latin1'), { type: 'string' })
+            : XLSX.read(req.file.buffer, { type: 'buffer' });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows  = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: '' });
+        if (!rows.length) return res.status(400).json({ error: 'The file has no rows.' });
+
+        /* Map columns by header name so column order doesn't matter. */
+        const header = rows[0].map(h => String(h || '').trim().toLowerCase());
+        const ci = {};
+        header.forEach((h, i) => { if (h && !(h in ci)) ci[h] = i; });
+        const cell = (row, name) => { const i = ci[name.toLowerCase()]; return i == null ? '' : String(row[i] ?? '').trim(); };
+        if (ci['customer'] == null) return res.status(400).json({ error: 'No "Customer" column found — is this the QB customer list?' });
+
+        /* Existing clients, to skip anything we already track. */
+        const ex = await pool.query('SELECT customer_id, customer_number, name FROM clients');
+        const existNums  = new Set(ex.rows.map(r => numKey(r.customer_number)).filter(Boolean));
+        const existNames = new Set(ex.rows.map(r => normName(r.name)).filter(Boolean));
+        const usedIds    = new Set(ex.rows.map(r => r.customer_id));
+
+        let created = 0, skippedExisting = 0, skippedJunk = 0;
+        const createdNames = [];
+        const seenNames = new Set();
+
+        for (const row of rows.slice(1)) {
+            const rawCustomer = cell(row, 'customer');
+            if (!rawCustomer) continue;
+            if (subAccount(rawCustomer)) continue;                 // sub-job, not a top-level business
+            if (isDeadCustomer(rawCustomer)) { skippedJunk++; continue; }
+
+            const name = firstOf(cell(row, 'company'), topLevelCustomer(rawCustomer));
+            if (!name || isJunkCustomer(name)) { skippedJunk++; continue; }
+
+            const nkey = normName(name);
+            if (seenNames.has(nkey)) continue;                     // dupe top-level row in the file
+            seenNames.add(nkey);
+
+            const acct   = cell(row, 'account no.');
+            const custNo = numKey(acct) || null;
+
+            /* Skip anything we already have — those are monitored/existing clients. */
+            if ((custNo && existNums.has(custNo)) || existNames.has(nkey)) { skippedExisting++; continue; }
+
+            /* Unique customer_id in a PRJ- namespace so it can't clobber existing ids. */
+            let base = 'PRJ-' + (custNo || nkey.slice(0, 40) || 'x');
+            base = base.slice(0, 48);
+            let cid = base, n = 2;
+            while (usedIds.has(cid)) cid = `${base}-${n++}`.slice(0, 50);
+            usedIds.add(cid);
+
+            const contactName  = firstOf(cell(row, 'primary contact'),
+                                         `${cell(row, 'first name')} ${cell(row, 'last name')}`.trim());
+            const contactPhone = cell(row, 'main phone');
+            const contactEmail = firstOf(cell(row, 'main email')).split(/[;,]/)[0].trim();
+            const address = [cell(row, 'ship to 2'), cell(row, 'ship to 3'), cell(row, 'ship to 4')]
+                                .filter(Boolean).join(', ')
+                          || [cell(row, 'bill to 2'), cell(row, 'bill to 3'), cell(row, 'bill to 4')]
+                                .filter(Boolean).join(', ');
+
+            try {
+                await pool.query(
+                    `INSERT INTO clients
+                        (customer_id, name, category, services, monitoring_enabled, customer_number,
+                         site_address, contact_name, contact_phone, contact_email)
+                     VALUES ($1,$2,'project','{}',FALSE,$3,$4,$5,$6,$7)`,
+                    [cid, name.slice(0, 200), custNo, address || null,
+                     contactName || null, contactPhone || null, contactEmail || null]);
+                created++;
+                /* Don't add custNo to existNums here: a few distinct businesses
+                   share a QB Account No., and seenNames already blocks true
+                   same-name dupes — so this keeps both of those businesses. */
+                if (createdNames.length < 25) createdNames.push(name);
+            } catch (e) {
+                if (e.code === '23505') { skippedExisting++; }      // raced a unique constraint
+                else { console.error('project import row failed:', e.message); }
+            }
+        }
+
+        res.json({ created, skipped_existing: skippedExisting, skipped_junk: skippedJunk, sample: createdNames });
+    } catch (err) {
+        console.error('Project import error:', err);
+        res.status(500).json({ error: 'Failed to import project clients.' });
     }
 });
 

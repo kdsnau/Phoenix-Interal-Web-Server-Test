@@ -330,7 +330,7 @@ const STATUS_CLASS = {
     return_necessary: 'tag-red',
 };
 
-const SERVICE_TABS = ['all', 'alarm', 'fire', 'access_control', 'monitoring', 'permits', 'unmonitored'];
+const SERVICE_TABS = ['all', 'alarm', 'fire', 'access_control', 'monitoring', 'projects', 'permits', 'unmonitored'];
 
 /* Canonical service types + their display labels, reused by the tag list, the
    filter tabs, the "add client" form, and the admin service-type editor. */
@@ -426,7 +426,7 @@ function ClientBoard({ clientId, user }) {
 /* -----------------------------------------------------------------------
    Client detail panel
    ----------------------------------------------------------------------- */
-function ClientDetail({ client, onClose, onRefresh, technicians }) {
+function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], reloadRollups }) {
     const { user } = useAuth();
     const canBilling = user.role === 'admin' || user.role === 'accounting';
 
@@ -446,6 +446,11 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
     /* Service types (admin-reassignable): fire / alarm / access control / monitoring */
     const [services,    setServices]    = useState(client.services || []);
     const [savingSvc,   setSavingSvc]   = useState(false);
+    /* Manual rollup grouping (admin) */
+    const [rollupId,       setRollupId]       = useState(client.rollup_id || '');
+    const [savingRollup,   setSavingRollup]   = useState(false);
+    const [newRollup,      setNewRollup]      = useState('');
+    const [creatingRollup, setCreatingRollup] = useState(false);
     /* Scheduled maintenance — auto-creates a ticket when due (lives on the Tickets tab) */
     const [maintEnabled,  setMaintEnabled]  = useState(client.maintenance_enabled || false);
     const [maintFreq,     setMaintFreq]     = useState(client.maintenance_frequency || 'quarterly');
@@ -529,6 +534,36 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
             onRefresh();
         } finally {
             setSavingSvc(false);
+        }
+    }
+
+    async function assignRollup(id) {
+        setRollupId(id);
+        setSavingRollup(true);
+        try {
+            await api.put(`/clients/${client.id}/rollup`, { rollup_id: id === '' ? null : Number(id) });
+            onRefresh();
+            reloadRollups && reloadRollups();
+        } catch (e) {
+            alert(e.response?.data?.error || 'Failed to update rollup.');
+        } finally {
+            setSavingRollup(false);
+        }
+    }
+
+    async function createAndAssignRollup() {
+        const name = newRollup.trim();
+        if (!name) return;
+        setCreatingRollup(true);
+        try {
+            const { data } = await api.post('/clients/rollups', { name });
+            setNewRollup('');
+            reloadRollups && reloadRollups();
+            await assignRollup(String(data.id));
+        } catch (e) {
+            alert(e.response?.data?.error || 'Failed to create rollup.');
+        } finally {
+            setCreatingRollup(false);
         }
     }
 
@@ -716,6 +751,30 @@ function ClientDetail({ client, onClose, onRefresh, technicians }) {
                                         ? <span className="alarm-value">—</span>
                                         : services.map(s => <span key={s} className={`${svcClass(s)} alarm-svc-tag`}>{SERVICE_LABEL[s] || s}</span>)}
                                 </div>
+                            )}
+
+                            {/* Rollup — manual grouping (admin); overrides the automatic customer-number grouping */}
+                            {user.role === 'admin' && (
+                                <>
+                                    <div className="alarm-label" style={{ marginBottom: 8, fontWeight: 600 }}>Rollup</div>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 8 }}>
+                                        <select className="alarm-input" style={{ maxWidth: 280 }} value={rollupId}
+                                            onChange={e => assignRollup(e.target.value)} disabled={savingRollup}>
+                                            <option value="">— None (auto-group by customer #) —</option>
+                                            {rollups.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                                        </select>
+                                        {savingRollup && <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>Saving…</span>}
+                                    </div>
+                                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16 }}>
+                                        <input className="alarm-input" style={{ maxWidth: 220 }} placeholder="New rollup name…"
+                                            value={newRollup} onChange={e => setNewRollup(e.target.value)}
+                                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); createAndAssignRollup(); } }} />
+                                        <button type="button" className="btn btn-ghost" onClick={createAndAssignRollup}
+                                            disabled={creatingRollup || !newRollup.trim()}>
+                                            {creatingRollup ? 'Creating…' : '＋ Create & assign'}
+                                        </button>
+                                    </div>
+                                </>
                             )}
 
                             {/* Permit */}
@@ -1340,16 +1399,21 @@ function PruneModal({ onClose, onDone }) {
 function groupClients(list) {
     const map = new Map();
     for (const c of list) {
-        const key = (c.customer_number && String(c.customer_number).trim()) || c.customer_id || `id:${c.id}`;
+        /* A manual rollup wins over the automatic customer_number grouping. */
+        const key = c.rollup_id
+            ? `rollup:${c.rollup_id}`
+            : (c.customer_number && String(c.customer_number).trim()) || c.customer_id || `id:${c.id}`;
         let g = map.get(key);
-        if (!g) { g = { key, name: '', rows: [], services: new Set() }; map.set(key, g); }
+        if (!g) { g = { key, name: '', rows: [], services: new Set(), rollup: null }; map.set(key, g); }
         g.rows.push(c);
+        if (c.rollup_id) g.rollup = c.rollup_name || 'Rollup';
         (c.services || []).forEach(s => g.services.add(s));
     }
     for (const g of map.values()) {
         g.rows.sort((a, b) => (a.services || []).length - (b.services || []).length);   // umbrella (no labels) first
         const umb = g.rows.find(r => !(r.services || []).length) || g.rows[0];
-        g.name = String(umb.name || '').replace(/\s*:\s*Billing\s*$/i, '').trim() || umb.name;
+        /* Named manual rollups show their own name; auto groups use the umbrella client's. */
+        g.name = g.rollup || (String(umb.name || '').replace(/\s*:\s*Billing\s*$/i, '').trim() || umb.name);
         g.services = [...g.services];
     }
     return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
@@ -1372,11 +1436,17 @@ export default function Alarms() {
     const [unmonLoading, setUnmonLoading] = useState(false);
     const [importMsg,    setImportMsg]    = useState('');
     const [importing,    setImporting]    = useState(false);
+    const [rollups,      setRollups]      = useState([]);
+    const [projImportMsg, setProjImportMsg] = useState('');
+    const [projImporting, setProjImporting] = useState(false);
+
+    const loadRollups = () => api.get('/clients/rollups').then(r => setRollups(r.data)).catch(() => {});
 
     function fetchClients() {
         setLoading(true);
         const params = {};
-        if (serviceTab !== 'all') params.service = serviceTab;
+        if (serviceTab === 'projects')    params.category = 'project';
+        else if (serviceTab !== 'all')    params.service  = serviceTab;
         if (search) params.search = search;
         api.get('/clients', { params })
             .then(r => setClients(r.data))
@@ -1385,6 +1455,7 @@ export default function Alarms() {
 
     useEffect(() => {
         api.get('/admin/technicians').then(r => setTechnicians(r.data)).catch(() => {});
+        loadRollups();
     }, []);
 
     useEffect(() => {
@@ -1457,6 +1528,29 @@ export default function Alarms() {
         setUnmon(prev => prev.filter(u => u.id !== id));
     }
 
+    /* Import install-only "project" clients from the QuickBooks active-customer
+       CSV. Existing/monitored customers (matched by Account No. or name) are
+       skipped server-side. */
+    async function importProjects(e) {
+        const file = (e.target.files || [])[0];
+        if (!file) return;
+        setProjImporting(true); setProjImportMsg('');
+        const fd = new FormData();
+        fd.append('file', file);
+        try {
+            const { data } = await api.post('/clients/import-projects', fd, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            });
+            setProjImportMsg(`Imported ${data.created} project client(s) · ${data.skipped_existing} already tracked · ${data.skipped_junk} skipped.`);
+            fetchClients();
+        } catch (err) {
+            setProjImportMsg(err.response?.data?.error || 'Import failed.');
+        } finally {
+            setProjImporting(false);
+            e.target.value = '';
+        }
+    }
+
     return (
         <Layout>
             <div className="alarm-page">
@@ -1487,7 +1581,7 @@ export default function Alarms() {
                             onClick={() => setServiceTab(t)}
                         >
                             {t === 'all' ? 'All' : t === 'access_control' ? 'Access Control' : t === 'permits' ? 'Permits' : t.charAt(0).toUpperCase() + t.slice(1)}
-                            {t !== 'permits' && t !== 'unmonitored' && (
+                            {t !== 'permits' && t !== 'unmonitored' && t !== 'projects' && (
                                 <span className="alarm-tab-count">
                                     {t === 'all' ? clients.length : clients.filter(c => (c.services || []).includes(t)).length}
                                 </span>
@@ -1583,6 +1677,22 @@ export default function Alarms() {
                     </div>
                 )}
 
+                {/* Project-clients import (install-only, non-monitored) */}
+                {serviceTab === 'projects' && (
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
+                        <div style={{ fontSize: 12, color: 'var(--text-dim)', flex: 1, minWidth: 200 }}>
+                            Install-only clients we don’t monitor. {user.role === 'admin' && 'Import the QuickBooks active-customer list — already-tracked customers are skipped.'}
+                        </div>
+                        {user.role === 'admin' && (
+                            <label className="btn btn-primary" style={{ cursor: projImporting ? 'default' : 'pointer', opacity: projImporting ? 0.7 : 1 }}>
+                                {projImporting ? 'Importing…' : 'Import Project Clients (CSV)'}
+                                <input type="file" accept=".csv,.xlsx" hidden disabled={projImporting} onChange={importProjects} />
+                            </label>
+                        )}
+                        {projImportMsg && <span style={{ fontSize: 12, color: 'var(--text-dim)', width: '100%' }}>{projImportMsg}</span>}
+                    </div>
+                )}
+
                 {serviceTab !== 'permits' && serviceTab !== 'unmonitored' && loading ? (
                     <div className="alarm-empty">Loading…</div>
                 ) : serviceTab !== 'permits' && serviceTab !== 'unmonitored' && (
@@ -1620,8 +1730,8 @@ export default function Alarms() {
                                         <div style={{ flex: 1, minWidth: 0 }}>
                                             <div className="alarm-client-name">{g.name}</div>
                                             <div className="alarm-client-meta">
-                                                <span className="tag-dim">{g.key}</span>
-                                                <span className="tag-blue">{g.rows.length} panels</span>
+                                                {g.rollup ? <span className="tag-blue">Rollup</span> : <span className="tag-dim">{g.key}</span>}
+                                                <span className="tag-blue">{g.rows.length} {g.rollup ? 'clients' : 'panels'}</span>
                                                 {g.services.map(s => <span key={s} className={svcClass(s)}>{s}</span>)}
                                                 {monCnt > 0 && <span className="tag-green">{monCnt} monitored</span>}
                                             </div>
@@ -1652,6 +1762,8 @@ export default function Alarms() {
                         onClose={() => setSelected(null)}
                         onRefresh={refreshSelected}
                         technicians={technicians}
+                        rollups={rollups}
+                        reloadRollups={loadRollups}
                     />
                 )}
                 {showAddClient && (

@@ -189,16 +189,33 @@ pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS category TEXT`).catch((
 
 /* Manual rollups — user-defined groupings that sit alongside the automatic
    customer_number rollup. A client with a rollup_id groups under that named
-   rollup; clients without one keep grouping by customer_number as before. */
-pool.query(`
-    CREATE TABLE IF NOT EXISTS client_rollups (
-        id         SERIAL PRIMARY KEY,
-        name       TEXT NOT NULL UNIQUE,
-        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-        created_at TIMESTAMP DEFAULT NOW()
-    )
-`).catch(err => console.error('client_rollups table init:', err.message));
-pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS rollup_id INTEGER REFERENCES client_rollups(id) ON DELETE SET NULL`).catch(() => {});
+   rollup; clients without one keep grouping by customer_number as before.
+   Run IN ORDER: the clients.rollup_id FK references client_rollups, so the table
+   MUST exist first. Firing them concurrently let the ALTER lose the race, its FK
+   reference failed, .catch swallowed it, and rollup_id was never added — which
+   500'd GET /clients (it LEFT JOINs on rollup_id), so the whole list came back
+   empty. Column-before-constraint so a constraint hiccup can't drop the column. */
+(async () => {
+    try {
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS client_rollups (
+                id         SERIAL PRIMARY KEY,
+                name       TEXT NOT NULL UNIQUE,
+                created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS rollup_id INTEGER`);
+        await pool.query(`
+            DO $$ BEGIN
+                ALTER TABLE clients ADD CONSTRAINT clients_rollup_id_fkey
+                    FOREIGN KEY (rollup_id) REFERENCES client_rollups(id) ON DELETE SET NULL;
+            EXCEPTION WHEN duplicate_object THEN NULL; END $$
+        `);
+    } catch (err) {
+        console.error('client_rollups migration failed:', err);
+    }
+})();
 
 /* POST /api/clients — admin only */
 router.post('/', requireRole('admin'), async (req, res) => {

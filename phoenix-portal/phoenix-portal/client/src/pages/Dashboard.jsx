@@ -5,6 +5,8 @@ import api from '../api/client';
 import Layout from '../components/Layout';
 import PageHelp from '../components/PageHelp';
 import Leaderboard from '../components/Leaderboard';
+import RoleBadge from '../components/RoleBadge';
+import useRoles from '../hooks/useRoles';
 import './Dashboard.css';
 
 const SEV = {
@@ -84,6 +86,7 @@ function PostBoard({ user, onClose }) {
     const [posts,   setPosts]   = useState([]);
     const [content, setContent] = useState('');
     const [posting, setPosting] = useState(false);
+    const { roleFor }           = useRoles();
 
     useEffect(() => {
         api.get('/posts').then(r => setPosts(r.data)).catch(() => {});
@@ -147,6 +150,7 @@ function PostBoard({ user, onClose }) {
                         <div key={post.id} className="board-post">
                             <div className="board-post-meta">
                                 <span className="board-post-author">{post.author_name || 'Admin'}</span>
+                                <RoleBadge role={roleFor(post.author_id)} />
                                 <span className="board-post-time">{timeAgo(post.created_at)}</span>
                                 {user.role === 'admin' && (
                                     <button className="board-delete" onClick={() => deletePost(post.id)} title="Delete">✕</button>

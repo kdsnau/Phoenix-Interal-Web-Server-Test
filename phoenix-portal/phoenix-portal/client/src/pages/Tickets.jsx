@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import PageHelp from '../components/PageHelp';
+import RoleBadge from '../components/RoleBadge';
+import useRoles from '../hooks/useRoles';
 import { useAuth } from '../context/AuthContext';
 
 const STATUS_TAG = {
@@ -668,6 +670,7 @@ function TicketItemsModal({ ticket, onClose }) {
 
 export default function Tickets() {
     const { user } = useAuth();
+    const { roleForName } = useRoles();
     const [tickets,     setTickets]     = useState([]);
     const [technicians, setTechnicians] = useState([]);
     const [loading,     setLoading]     = useState(true);
@@ -824,10 +827,17 @@ export default function Tickets() {
                                                 value={t.assignee_ids || []}
                                                 onChange={ids => updateAssignees(t.id, ids)}
                                             />
-                                        ) : (
-                                            <span style={{ color: (t.assignee_names || []).length ? 'var(--text-dim)' : 'var(--border-hi)' }}>
-                                                {(t.assignee_names || []).join(', ') || 'Unassigned'}
+                                        ) : (t.assignee_names || []).length ? (
+                                            <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', color: 'var(--text-dim)' }}>
+                                                {t.assignee_names.map((nm, i) => (
+                                                    <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                                        {nm}
+                                                        <RoleBadge role={roleForName(nm)} />
+                                                    </span>
+                                                ))}
                                             </span>
+                                        ) : (
+                                            <span style={{ color: 'var(--border-hi)' }}>Unassigned</span>
                                         )}
                                     </td>
 

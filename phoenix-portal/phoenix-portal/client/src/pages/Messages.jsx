@@ -3,6 +3,8 @@ import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import PageHelp from '../components/PageHelp';
+import RoleBadge from '../components/RoleBadge';
+import useRoles from '../hooks/useRoles';
 import './Messages.css';
 
 const ROLE_COLOR = { admin: 'tag-red', accounting: 'tag-blue', technician: 'tag-green' };
@@ -30,6 +32,7 @@ function formatTime(ts) {
 
 export default function Messages() {
     const { user }                    = useAuth();
+    const { roleFor }                 = useRoles();
     const [allUsers,   setAllUsers]   = useState([]);
     const [inbox,      setInbox]      = useState([]);
     const [thread,     setThread]     = useState([]);
@@ -153,7 +156,10 @@ export default function Messages() {
                                         <Avatar name={u.name} />
                                         <div className="msg-user-info">
                                             <div className="msg-row-name">{u.name}</div>
-                                            <span className={`tag ${ROLE_COLOR[u.role]}`} style={{ fontSize: 10 }}>{u.role}</span>
+                                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                                <span className={`tag ${ROLE_COLOR[u.role]}`} style={{ fontSize: 10 }}>{u.role}</span>
+                                                <RoleBadge role={roleFor(u.id)} />
+                                            </span>
                                         </div>
                                     </button>
                                 ))}
@@ -185,7 +191,10 @@ export default function Messages() {
                                         </div>
                                         <div className="msg-conv-body">
                                             <div className="msg-conv-top">
-                                                <span className="msg-row-name">{c.other_name}</span>
+                                                <span className="msg-row-name" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                                    {c.other_name}
+                                                    <RoleBadge role={roleFor(c.other_id)} />
+                                                </span>
                                                 <span className="msg-conv-time">{formatTime(c.last_at)}</span>
                                             </div>
                                             <div className="msg-conv-preview">{c.last_body}</div>
@@ -215,7 +224,10 @@ export default function Messages() {
                                 <Avatar name={active.name} size={36} />
                                 <div>
                                     <div className="msg-thread-name">{active.name}</div>
-                                    <span className={`tag ${ROLE_COLOR[active.role]}`} style={{ fontSize: 10 }}>{active.role}</span>
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                                        <span className={`tag ${ROLE_COLOR[active.role]}`} style={{ fontSize: 10 }}>{active.role}</span>
+                                        <RoleBadge role={roleFor(active.id)} />
+                                    </span>
                                 </div>
                             </div>
 

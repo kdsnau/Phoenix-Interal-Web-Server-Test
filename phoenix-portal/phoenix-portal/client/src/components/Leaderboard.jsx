@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
+import useRoles from '../hooks/useRoles';
+import RoleBadge from './RoleBadge';
 
 const MEDAL = { 1: '🥇', 2: '🥈', 3: '🥉' };
 
@@ -8,6 +10,7 @@ export default function Leaderboard({ currentUserId }) {
     const [period, setPeriod]   = useState('month');
     const [entries, setEntries] = useState([]);
     const [loading, setLoading] = useState(true);
+    const { roleFor }           = useRoles();
 
     useEffect(() => {
         let alive = true;
@@ -52,7 +55,11 @@ export default function Leaderboard({ currentUserId }) {
                                     <tr key={e.user_id} style={me ? { background: 'var(--bg-3)' } : undefined}>
                                         <td style={{ fontFamily: 'var(--font-mono)' }}>{MEDAL[e.rank] || e.rank}</td>
                                         <td style={{ color: 'var(--text-hi)', fontWeight: me ? 600 : 400 }}>
-                                            {e.name}{me && <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}> · you</span>}
+                                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                                                {e.name}
+                                                <RoleBadge role={roleFor(e.user_id)} />
+                                            </span>
+                                            {me && <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}> · you</span>}
                                         </td>
                                         <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>{e.hours.toFixed(1)} h</td>
                                         <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-dim)' }}>{e.completed_tickets}</td>

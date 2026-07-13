@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo } from 'react';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import Layout from '../components/Layout';
+import RoleBadge from '../components/RoleBadge';
+import useRoles from '../hooks/useRoles';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -180,6 +182,7 @@ export default function TeamCalendar() {
 function DayModal({ dateKey, user, tickets, offs, notes, meetings, onClose, onChange, onOpenTicket, onOpenMeeting, onScheduleMeeting }) {
     const [body, setBody]   = useState('');
     const [busy, setBusy]   = useState(false);
+    const { roleFor }       = useRoles();
     const mine = offs.find(o => o.user_id === user.id);
 
     async function requestOff() {
@@ -217,7 +220,9 @@ function DayModal({ dateKey, user, tickets, offs, notes, meetings, onClose, onCh
                           </>
                         : <button className="btn btn-primary" disabled={busy} onClick={requestOff}>Request time off</button>}
                     {offs.filter(o => o.status === 'approved' && o.user_id !== user.id).map(o =>
-                        <span key={o.id} className="tag-green">🏖 {o.user_name}</span>)}
+                        <span key={o.id} className="tag-green" style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                            🏖 {o.user_name}<RoleBadge role={roleFor(o.user_id)} />
+                        </span>)}
                 </div>
 
                 {/* Meetings */}

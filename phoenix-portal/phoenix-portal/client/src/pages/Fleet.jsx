@@ -808,6 +808,8 @@ export default function Fleet() {
     const [importing, setImporting]   = useState(false);
     const [importMsg, setImportMsg]   = useState('');
 
+    const refreshVehicles = () => api.get('/fleet').then(r => setVehicles(r.data)).catch(() => {});
+
     useEffect(() => {
         api.get('/fleet')
             .then(r => setVehicles(r.data))
@@ -853,7 +855,7 @@ export default function Fleet() {
                 </div>
             )}
             {selectedId && (
-                <VehicleDetail vehicleId={selectedId} onClose={() => setSelectedId(null)} />
+                <VehicleDetail vehicleId={selectedId} onClose={() => { setSelectedId(null); refreshVehicles(); }} />
             )}
             {showAddVehicle && (
                 <NewVehicleModal

@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import RoleBadge from '../components/RoleBadge';
+import useRoles from '../hooks/useRoles';
 import { useAuth } from '../context/AuthContext';
 
 export default function Calls() {
     const { user } = useAuth();
+    const { roleForName } = useRoles();
     const [data, setData]       = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError]     = useState('');
@@ -89,10 +92,13 @@ export default function Calls() {
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 24 }}>
                             {byPerson.map(p => (
                                 <span key={p.name} style={{
+                                    display: 'inline-flex', alignItems: 'center', gap: 6,
                                     fontSize: 13, border: '1px solid var(--border)', borderRadius: 4,
                                     padding: '6px 12px', background: 'var(--bg-2)', color: 'var(--text-hi)',
                                 }}>
-                                    {p.name} <span style={{ color: 'var(--accent)', fontFamily: 'var(--font-mono)' }}>· {p.count}</span>
+                                    {p.name}
+                                    <RoleBadge role={roleForName(p.name)} />
+                                    <span style={{ color: 'var(--accent)', fontFamily: 'var(--font-mono)' }}>· {p.count}</span>
                                 </span>
                             ))}
                         </div>
@@ -115,7 +121,11 @@ export default function Calls() {
                                         <td style={{ fontSize: 12 }}>
                                             <span className="tag tag-blue">{c.category}</span>
                                         </td>
-                                        <td style={{ color: 'var(--text-hi)' }}>{c.receiver || '—'}</td>
+                                        <td style={{ color: 'var(--text-hi)' }}>
+                                            {c.receiver
+                                                ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>{c.receiver}<RoleBadge role={roleForName(c.receiver)} /></span>
+                                                : '—'}
+                                        </td>
                                         <td style={{ whiteSpace: 'pre-wrap', fontSize: 13 }}>{c.text}</td>
                                     </tr>
                                 ))}

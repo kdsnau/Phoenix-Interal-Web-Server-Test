@@ -37,6 +37,20 @@ pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS insurance_file VARCHAR
 /* Drivers are real user accounts now (driver text kept for legacy display). */
 pool.query(`ALTER TABLE vehicles ADD COLUMN IF NOT EXISTS driver_id INTEGER REFERENCES users(id) ON DELETE SET NULL`).catch(() => {});
 
+/* Weekly vehicle reports written by the assigned driver. References vehicles +
+   users (both pre-existing), so a single CREATE is safe — no FK-order race. */
+pool.query(`
+    CREATE TABLE IF NOT EXISTS vehicle_reports (
+        id         SERIAL PRIMARY KEY,
+        vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+        user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        mileage    INTEGER,
+        content    TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+    )
+`).catch(err => console.error('vehicle_reports table init:', err.message));
+pool.query(`CREATE INDEX IF NOT EXISTS idx_vehicle_reports ON vehicle_reports (vehicle_id, created_at DESC)`).catch(() => {});
+
 /* GET /api/fleet/drivers — users that can be assigned to a vehicle (defined
    before /:id so it isn't captured as a vehicle id). */
 router.get('/drivers', async (req, res) => {
@@ -46,6 +60,63 @@ router.get('/drivers', async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Failed to load drivers.' });
+    }
+});
+
+/* ── Driver's own vehicle (dashboard report widget) ──────────────────────
+   Defined before /:id so "my-vehicle" isn't parsed as a vehicle id. */
+
+/* GET /api/fleet/my-vehicle — the vehicle assigned to the signed-in user, with
+   its open issues, recent issues, and their weekly-report history. */
+router.get('/my-vehicle', async (req, res) => {
+    try {
+        const v = await pool.query(
+            `SELECT v.id, v.name, v.vehicle_id, v.make, v.model, v.year, v.mileage,
+                    (SELECT COUNT(*) FROM vehicle_notes WHERE vehicle_id = v.id AND resolved = FALSE) AS open_issues
+             FROM vehicles v WHERE v.driver_id = $1 ORDER BY v.id ASC LIMIT 1`,
+            [req.user.id]
+        );
+        if (v.rowCount === 0) return res.json({ vehicle: null });
+        const veh = v.rows[0];
+        const [notes, reports] = await Promise.all([
+            pool.query('SELECT * FROM vehicle_notes WHERE vehicle_id = $1 ORDER BY created_at DESC LIMIT 20', [veh.id]),
+            pool.query('SELECT id, mileage, content, created_at FROM vehicle_reports WHERE vehicle_id = $1 ORDER BY created_at DESC LIMIT 10', [veh.id]),
+        ]);
+        res.json({
+            vehicle: veh,
+            notes: notes.rows,
+            reports: reports.rows,
+            last_report_at: reports.rows[0]?.created_at || null,
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to load your vehicle.' });
+    }
+});
+
+/* POST /api/fleet/my-vehicle/report { content, mileage? } — the assigned driver
+   files their weekly vehicle report. */
+router.post('/my-vehicle/report', async (req, res) => {
+    const content = (req.body.content || '').trim();
+    if (!content) return res.status(400).json({ error: 'A report is required.' });
+    try {
+        const v = await pool.query('SELECT id FROM vehicles WHERE driver_id = $1 ORDER BY id ASC LIMIT 1', [req.user.id]);
+        if (v.rowCount === 0) return res.status(400).json({ error: 'No vehicle is assigned to you.' });
+        const vid = v.rows[0].id;
+        const mileageNum = req.body.mileage != null && req.body.mileage !== '' ? Number(req.body.mileage) : null;
+        const mileage = Number.isFinite(mileageNum) ? mileageNum : null;
+        const r = await pool.query(
+            'INSERT INTO vehicle_reports (vehicle_id, user_id, mileage, content) VALUES ($1, $2, $3, $4) RETURNING *',
+            [vid, req.user.id, mileage, content]
+        );
+        /* Keep the odometer current if they reported a higher mileage. */
+        if (mileage != null && mileage > 0) {
+            await pool.query('UPDATE vehicles SET mileage = GREATEST(COALESCE(mileage, 0), $1) WHERE id = $2', [mileage, vid]).catch(() => {});
+        }
+        res.status(201).json(r.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Failed to submit report.' });
     }
 });
 
@@ -151,7 +222,12 @@ router.patch('/:id', async (req, res) => {
              SET mileage      = COALESCE($1, mileage),
                  registration  = COALESCE($2, registration),
                  tags_renewal  = COALESCE($3::date, tags_renewal),
-                 driver_id     = CASE WHEN $4::boolean THEN $5::int ELSE driver_id END
+                 driver_id     = CASE WHEN $4::boolean THEN $5::int ELSE driver_id END,
+                 /* Assigning a real driver via the dropdown is authoritative: drop
+                    the legacy manually-typed name so it can't shadow the new driver
+                    through the "driver_name || driver" display fallback. (Only when
+                    a real user is assigned — a bare mileage save won't wipe a name.) */
+                 driver        = CASE WHEN $4::boolean AND $5::int IS NOT NULL THEN NULL ELSE driver END
              WHERE id = $6
              RETURNING *`,
             [mileage ?? null, registration ?? null, tags_renewal ?? null, setDriver, driverId, req.params.id]

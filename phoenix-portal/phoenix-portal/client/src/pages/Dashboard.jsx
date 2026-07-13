@@ -244,6 +244,116 @@ function SummaryNotes({ summary, posts, user, onOpenBoard }) {
 }
 
 /* -----------------------------------------------------------------------
+   My Vehicle — the assigned driver's report + issue widget. Renders nothing
+   for anyone who isn't a vehicle's driver.
+   ----------------------------------------------------------------------- */
+function DriverVehicleSection() {
+    const [data,    setData]    = useState(undefined);   // undefined=loading, null=none
+    const [report,  setReport]  = useState('');
+    const [mileage, setMileage] = useState('');
+    const [issueCat, setIssueCat] = useState('repair');
+    const [issue,   setIssue]   = useState('');
+    const [busy,    setBusy]     = useState('');
+    const [msg,     setMsg]      = useState('');
+
+    const load = () => api.get('/fleet/my-vehicle').then(r => setData(r.data)).catch(() => setData(null));
+    useEffect(() => { load(); }, []);
+
+    if (!data || !data.vehicle) return null;
+    const v          = data.vehicle;
+    const last       = data.last_report_at ? new Date(data.last_report_at) : null;
+    const days       = last ? Math.floor((Date.now() - last.getTime()) / 86400000) : null;
+    const due        = days === null || days >= 7;
+    const openIssues = (data.notes || []).filter(n => !n.resolved);
+
+    const submitReport = async (e) => {
+        e.preventDefault();
+        if (!report.trim()) return;
+        setBusy('report'); setMsg('');
+        try {
+            await api.post('/fleet/my-vehicle/report', { content: report.trim(), mileage: mileage || null });
+            setReport(''); setMileage(''); setMsg('Report submitted — thanks!');
+            await load();
+        } catch (err) { setMsg(err.response?.data?.error || 'Failed to submit.'); }
+        finally { setBusy(''); }
+    };
+
+    const submitIssue = async (e) => {
+        e.preventDefault();
+        if (!issue.trim()) return;
+        setBusy('issue'); setMsg('');
+        try {
+            await api.post(`/fleet/${v.id}/notes`, { category: issueCat, content: issue.trim() });
+            setIssue(''); setMsg('Issue logged.');
+            await load();
+        } catch (err) { setMsg(err.response?.data?.error || 'Failed to log issue.'); }
+        finally { setBusy(''); }
+    };
+
+    return (
+        <div className="dash-alerts" style={{ marginBottom: 24 }}>
+            <div className="dash-section-label" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span>🚐 My Vehicle — {v.name}</span>
+                {due && <span className="tag tag-yellow" style={{ fontSize: 11 }}>Weekly report due</span>}
+            </div>
+            <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 8, padding: 16 }}>
+                <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 13, color: 'var(--text-dim)', marginBottom: 14 }}>
+                    <span>{[v.year, v.make, v.model].filter(Boolean).join(' ')}</span>
+                    <span>· {Number(v.mileage).toLocaleString()} mi</span>
+                    <span>· {openIssues.length} open issue{openIssues.length !== 1 ? 's' : ''}</span>
+                    <span>· {last ? `last report ${days}d ago` : 'no report yet'}</span>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 16 }}>
+                    {/* Weekly report */}
+                    <form onSubmit={submitReport} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-hi)' }}>Weekly Report</div>
+                        <input type="number" placeholder="Current mileage (optional)" value={mileage}
+                            onChange={e => setMileage(e.target.value)} min="0" />
+                        <textarea rows={3} placeholder="Condition, fuel, anything to note…" value={report}
+                            onChange={e => setReport(e.target.value)} style={{ resize: 'vertical' }} />
+                        <button className="btn btn-primary" disabled={busy === 'report' || !report.trim()} style={{ alignSelf: 'flex-start' }}>
+                            {busy === 'report' ? 'Submitting…' : 'Submit Report'}
+                        </button>
+                    </form>
+
+                    {/* Log an issue */}
+                    <form onSubmit={submitIssue} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-hi)' }}>Log an Issue</div>
+                        <select value={issueCat} onChange={e => setIssueCat(e.target.value)}>
+                            <option value="repair">Repair</option>
+                            <option value="service">Service</option>
+                            <option value="misc">Misc</option>
+                        </select>
+                        <textarea rows={3} placeholder="Describe the problem…" value={issue}
+                            onChange={e => setIssue(e.target.value)} style={{ resize: 'vertical' }} />
+                        <button className="btn btn-ghost" disabled={busy === 'issue' || !issue.trim()} style={{ alignSelf: 'flex-start' }}>
+                            {busy === 'issue' ? 'Logging…' : 'Log Issue'}
+                        </button>
+                    </form>
+                </div>
+
+                {msg && <div style={{ fontSize: 12, color: 'var(--green)', marginTop: 10 }}>{msg}</div>}
+
+                {openIssues.length > 0 && (
+                    <div style={{ marginTop: 14 }}>
+                        <div style={{ fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.5, color: 'var(--text-dim)', marginBottom: 6 }}>Open Issues</div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {openIssues.slice(0, 5).map(n => (
+                                <div key={n.id} style={{ fontSize: 13, color: 'var(--text)', display: 'flex', gap: 8, alignItems: 'center' }}>
+                                    <span className={`tag ${n.category === 'repair' ? 'tag-yellow' : n.category === 'service' ? 'tag-blue' : 'tag-dim'}`}>{n.category}</span>
+                                    <span>{n.content}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+/* -----------------------------------------------------------------------
    Main Dashboard
    ----------------------------------------------------------------------- */
 export default function Dashboard() {
@@ -313,6 +423,9 @@ export default function Dashboard() {
                 <>
                     {/* Summary notes — at-a-glance cards for the signed-in user */}
                     <SummaryNotes summary={summary} posts={posts} user={user} onOpenBoard={openBoard} />
+
+                    {/* My Vehicle — shows only for the assigned driver */}
+                    <DriverVehicleSection />
 
                     {/* Reminders — role-aware to-do list */}
                     {reminders && <RemindersSection data={reminders} />}

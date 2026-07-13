@@ -18,6 +18,31 @@ router.get('/', authenticate, async (req, res) => {
     const out = [];
 
     try {
+        /* ── Driver: weekly vehicle report due (any user assigned to a vehicle) ── */
+        {
+            const r = await pool.query(
+                `SELECT v.id, v.name,
+                        (SELECT MAX(created_at) FROM vehicle_reports
+                         WHERE vehicle_id = v.id AND user_id = $1) AS last_report
+                 FROM vehicles v WHERE v.driver_id = $1 ORDER BY v.id ASC LIMIT 1`,
+                [uid]
+            ).catch(() => ({ rows: [] }));
+            if (r.rows.length) {
+                const v    = r.rows[0];
+                const last = v.last_report ? new Date(v.last_report) : null;
+                const days = last ? Math.floor((Date.now() - last.getTime()) / 86400000) : null;
+                if (days === null || days >= 7) {
+                    out.push({
+                        severity: (days === null || days >= 10) ? 'overdue' : 'soon',
+                        category: 'Vehicle report',
+                        title:    v.name,
+                        detail:   last ? `Weekly report last filed ${days}d ago` : 'No weekly report filed yet',
+                        date:     null, link: '/',
+                    });
+                }
+            }
+        }
+
         /* ── Tickets past their departure time, not completed ── */
         if (isAdmin || isTech) {
             const params = [];

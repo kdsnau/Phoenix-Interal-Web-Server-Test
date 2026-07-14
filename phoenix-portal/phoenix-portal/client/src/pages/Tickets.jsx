@@ -717,14 +717,15 @@ export default function Tickets() {
     };
 
     const [deletingAll, setDeletingAll] = useState(false);
-    const deleteAllTickets = async () => {
-        if (tickets.length === 0) return;
-        if (!confirm(`Delete ALL ${tickets.length} tickets?\n\nThis permanently removes every ticket — including manually-created ones, not just calendar-imported ones — and cannot be undone.`)) return;
+    const autoCount = tickets.filter(t => t.source === 'calendar').length;
+    const deleteAutoTickets = async () => {
+        if (autoCount === 0) return;
+        if (!confirm(`Delete ${autoCount} auto-generated (calendar) ticket(s)?\n\nThis removes only tickets the server generated from the calendar — it does NOT touch your Google Calendar, and cannot be undone.`)) return;
         setDeletingAll(true);
         try {
             const { data } = await api.delete('/tickets');
-            setTickets([]);
-            alert(`Deleted ${data.deleted} ticket(s).`);
+            setTickets(prev => prev.filter(t => t.source !== 'calendar'));
+            alert(`Deleted ${data.deleted} auto-generated ticket(s).`);
         } catch (e) {
             alert(e.response?.data?.error || 'Failed to delete tickets.');
         } finally {
@@ -738,8 +739,9 @@ export default function Tickets() {
                 <h1 className="page-title">Tickets <span>{tickets.length} records</span><PageHelp id="tickets" /></h1>
                 {user.role === 'admin' && (
                     <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                        <button className="btn btn-danger" onClick={deleteAllTickets} disabled={deletingAll || tickets.length === 0}>
-                            {deletingAll ? 'Deleting…' : 'Delete all tickets'}
+                        <button className="btn btn-danger" onClick={deleteAutoTickets} disabled={deletingAll || autoCount === 0}
+                            title="Removes tickets auto-generated from the calendar. Does not touch Google Calendar.">
+                            {deletingAll ? 'Deleting…' : `Delete auto-generated tickets${autoCount ? ` (${autoCount})` : ''}`}
                         </button>
                         <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ New Ticket</button>
                     </div>

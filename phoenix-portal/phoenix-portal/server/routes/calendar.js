@@ -288,40 +288,90 @@ async function fetchIcsEvents(url) {
     return parseIcs(text);
 }
 
-/* Calendar entries that are reference/info items, not real appointments — never
-   import these as tickets (matched case-insensitively, apostrophe-normalized). */
-const IGNORED_EVENT_TITLES = new Set([
-    "technician's notes",
-    "employee contact info",
-    "calendar events",
-]);
-const normEventTitle    = t => String(t || '').toLowerCase().trim().replace(/[‘’′`]/g, "'");
-const isIgnoredEventTitle = t => IGNORED_EVENT_TITLES.has(normEventTitle(t));
+/* ── Calendar-event → ticket parsing ───────────────────────────────────────
+   Job events use the format:  <!|*>[TAG] Name / Name | Client [| City]
+   e.g.  *[P2 R6875-1] Sal / Anthony | Verrado Heritage Swim Park
+   Only events flagged with a leading ! or * are real jobs — that cleanly skips
+   the [OFF] / notes / info reference entries. From a job event we take:
+     • assignees   ← the name(s) before the first "|" (matched to users)
+     • R##### id    ← from the [TAG]
+     • ticket name  ← "Client — R#####"  (client alone when there's no R id)   */
+function parseCalendarTitle(summary) {
+    const raw = String(summary || '').trim();
+    if (!/^[!*]/.test(raw)) return null;                       /* not a job event */
+    let s = raw.replace(/^[!*\s]+/, '');
+    let tag = '';
+    const tm = s.match(/^\[([^\]]*)\]\s*/);
+    if (tm) { tag = tm[1]; s = s.slice(tm[0].length); }
+    const rMatch = tag.match(/R\d{3,6}(?:-\d+)?/i) || s.match(/\bR\d{3,6}(?:-\d+)?\b/i);
+    const rId    = rMatch ? rMatch[0].toUpperCase() : null;
+    const parts  = s.split('|').map(p => p.trim()).filter(Boolean);
+    const names  = (parts[0] || '').split('/').map(n => n.trim()).filter(Boolean);
+    const client = parts.slice(1).join(' - ') || null;
+    const title  = (client && rId) ? `${client} — ${rId}` : (client || rId || s.trim() || raw);
+    return { rId, names, client, title };
+}
 
-/* Upsert normalized events as calendar-sourced tickets, deduped by event UID
-   (google_event_id). Shared by the manual sync endpoint and the scheduled poll. */
+/* Names in the calendar that don't map to a person. */
+const NON_PERSON_NAMES = new Set(['tech', 'techs', 'technician', 'technicians', 'crew', 'team', 'tbd', 'open']);
+
+/* first-name / full-name → user id index, for matching event names to users. */
+async function loadUserNameIndex() {
+    const r = await pool.query('SELECT id, name FROM users').catch(() => ({ rows: [] }));
+    const idx = new Map();
+    for (const u of r.rows) {
+        const full = String(u.name || '').trim().toLowerCase();
+        if (!full) continue;
+        if (!idx.has(full)) idx.set(full, u.id);
+        const first = full.split(/\s+/)[0];
+        if (first && !idx.has(first)) idx.set(first, u.id);
+    }
+    return idx;
+}
+function resolveAssignees(names, idx) {
+    const ids = [];
+    for (const n of names) {
+        const key = String(n || '').toLowerCase().trim();
+        if (!key || NON_PERSON_NAMES.has(key)) continue;
+        const id = idx.get(key) || idx.get(key.split(/\s+/)[0]);
+        if (id && !ids.includes(id)) ids.push(id);
+    }
+    return ids;
+}
+
+/* Upsert calendar events as tickets, deduped by event UID (google_event_id).
+   Assignees are set from the event's names on first import and back-filled on
+   update only when the ticket has none (so manual reassignments are kept).
+   Shared by the manual sync endpoint and the scheduled poll. */
 async function upsertEventsAsTickets(events, createdBy) {
+    const nameIdx = await loadUserNameIndex();
     let created = 0, updated = 0;
     for (const ev of events) {
-        if (!ev.uid || !ev.title || isIgnoredEventTitle(ev.title)) continue;
+        if (!ev.uid || !ev.title) continue;
+        const parsed = parseCalendarTitle(ev.title);
+        if (!parsed) continue;                                 /* skip [OFF]/notes/info entries */
+        const assignees = resolveAssignees(parsed.names, nameIdx);
         const existing = await pool.query(
             `SELECT id FROM service_tickets WHERE google_event_id = $1`, [ev.uid]
         ).catch(() => ({ rows: [] }));
         if (existing.rows.length > 0) {
-            /* Refresh title / description / timing — never touch status. */
+            /* Refresh title / description / timing; back-fill assignees only when
+               the ticket has none — never touch status or a manual reassignment. */
             await pool.query(
-                `UPDATE service_tickets
-                 SET title = $1, description = $2, event_start = $3, event_end = $4, event_location = $5
+                `UPDATE service_tickets SET
+                     title = $1, description = $2, event_start = $3, event_end = $4, event_location = $5,
+                     assignee_ids = CASE WHEN COALESCE(array_length(assignee_ids, 1), 0) = 0 THEN $7::int[] ELSE assignee_ids END,
+                     assigned_to  = CASE WHEN assigned_to IS NULL THEN $8 ELSE assigned_to END
                  WHERE google_event_id = $6`,
-                [ev.title, ev.desc, ev.start, ev.end, ev.location, ev.uid]
+                [parsed.title, ev.desc, ev.start, ev.end, ev.location, ev.uid, assignees, assignees[0] || null]
             );
             updated++;
         } else {
             await pool.query(
                 `INSERT INTO service_tickets
-                 (title, description, created_by, source, google_event_id, event_start, event_end, event_location, status)
-                 VALUES ($1, $2, $3, 'calendar', $4, $5, $6, $7, 'open')`,
-                [ev.title, ev.desc, createdBy, ev.uid, ev.start, ev.end, ev.location]
+                 (title, description, created_by, assigned_to, assignee_ids, source, google_event_id, event_start, event_end, event_location, status)
+                 VALUES ($1, $2, $3, $4, $5, 'calendar', $6, $7, $8, $9, 'open')`,
+                [parsed.title, ev.desc, createdBy, assignees[0] || null, assignees, ev.uid, ev.start, ev.end, ev.location]
             );
             created++;
         }

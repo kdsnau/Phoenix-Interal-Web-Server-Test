@@ -355,6 +355,19 @@ router.patch('/:id', requireRole('technician', 'admin'), async (req, res) => {
     }
 });
 
+/* ── DELETE /api/tickets — wipe ALL tickets (admin only, destructive) ────
+   Cascades to ticket_items. Deliberately does NOT push deletes to Google
+   Calendar — this clears the portal's ticket list, not the source calendar. */
+router.delete('/', requireRole('admin'), async (req, res) => {
+    try {
+        const result = await pool.query('DELETE FROM service_tickets');
+        return res.json({ deleted: result.rowCount });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'Server error.' });
+    }
+});
+
 /* ── DELETE /api/tickets/:id ─────────────────────────────────────────── */
 router.delete('/:id', requireRole('admin'), async (req, res) => {
     try {

@@ -716,12 +716,33 @@ export default function Tickets() {
         } catch (e) { console.error(e); }
     };
 
+    const [deletingAll, setDeletingAll] = useState(false);
+    const deleteAllTickets = async () => {
+        if (tickets.length === 0) return;
+        if (!confirm(`Delete ALL ${tickets.length} tickets?\n\nThis permanently removes every ticket — including manually-created ones, not just calendar-imported ones — and cannot be undone.`)) return;
+        setDeletingAll(true);
+        try {
+            const { data } = await api.delete('/tickets');
+            setTickets([]);
+            alert(`Deleted ${data.deleted} ticket(s).`);
+        } catch (e) {
+            alert(e.response?.data?.error || 'Failed to delete tickets.');
+        } finally {
+            setDeletingAll(false);
+        }
+    };
+
     return (
         <Layout>
             <div className="page-header">
                 <h1 className="page-title">Tickets <span>{tickets.length} records</span><PageHelp id="tickets" /></h1>
                 {user.role === 'admin' && (
-                    <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ New Ticket</button>
+                    <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                        <button className="btn btn-danger" onClick={deleteAllTickets} disabled={deletingAll || tickets.length === 0}>
+                            {deletingAll ? 'Deleting…' : 'Delete all tickets'}
+                        </button>
+                        <button className="btn btn-primary" onClick={() => setShowModal(true)}>+ New Ticket</button>
+                    </div>
                 )}
             </div>
 

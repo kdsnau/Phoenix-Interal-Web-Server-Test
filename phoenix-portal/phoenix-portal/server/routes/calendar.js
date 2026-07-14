@@ -288,12 +288,22 @@ async function fetchIcsEvents(url) {
     return parseIcs(text);
 }
 
+/* Calendar entries that are reference/info items, not real appointments — never
+   import these as tickets (matched case-insensitively, apostrophe-normalized). */
+const IGNORED_EVENT_TITLES = new Set([
+    "technician's notes",
+    "employee contact info",
+    "calendar events",
+]);
+const normEventTitle    = t => String(t || '').toLowerCase().trim().replace(/[‘’′`]/g, "'");
+const isIgnoredEventTitle = t => IGNORED_EVENT_TITLES.has(normEventTitle(t));
+
 /* Upsert normalized events as calendar-sourced tickets, deduped by event UID
    (google_event_id). Shared by the manual sync endpoint and the scheduled poll. */
 async function upsertEventsAsTickets(events, createdBy) {
     let created = 0, updated = 0;
     for (const ev of events) {
-        if (!ev.uid || !ev.title) continue;
+        if (!ev.uid || !ev.title || isIgnoredEventTitle(ev.title)) continue;
         const existing = await pool.query(
             `SELECT id FROM service_tickets WHERE google_event_id = $1`, [ev.uid]
         ).catch(() => ({ rows: [] }));

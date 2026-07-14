@@ -106,53 +106,176 @@ function icsToDate(raw, tzid, isDate) {
     return new Date(Date.UTC(Y, Mo, D, H, Mi, S) - tzOffsetMin(tzid) * 60000);
 }
 
-/* Parse an iCal document → normalized event records within an upcoming window. */
+/* ── Recurrence (RRULE) expansion ─────────────────────────────────────────
+   Phoenix is a fixed UTC-7 (no DST), so whole-day/week shifts are exact in
+   milliseconds; months/years use calendar arithmetic on the Phoenix wall clock. */
+const DAY_IDX = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
+const DAY_MS  = 86400000;
+const phxLocal = ms => new Date(ms + PHX_OFFSET_MIN * 60000);   /* Date whose UTC fields read as Phoenix wall clock */
+const phxDow   = d  => phxLocal(d.getTime()).getUTCDay();
+function phxParts(d) {
+    const p = phxLocal(d.getTime());
+    return { Y: p.getUTCFullYear(), Mo: p.getUTCMonth(), D: p.getUTCDate(), H: p.getUTCHours(), Mi: p.getUTCMinutes(), S: p.getUTCSeconds() };
+}
+/* Phoenix wall-clock parts → absolute Date; null if the day rolled over (e.g. Feb 30). */
+function phxDate(Y, Mo, D, H, Mi, S) {
+    const utc  = Date.UTC(Y, Mo, D, H, Mi, S) - PHX_OFFSET_MIN * 60000;
+    const back = phxLocal(utc);
+    if (back.getUTCDate() !== D || back.getUTCMonth() !== ((Mo % 12) + 12) % 12) return null;
+    return new Date(utc);
+}
+function parseRrule(s) {
+    const o = {};
+    for (const part of String(s).split(';')) { const [k, v] = part.split('='); if (k && v) o[k.toUpperCase()] = v; }
+    return o;
+}
+
+/* Expand a recurring event's start within [from,to] (ms). exSet = Set of
+   getTime() to exclude (EXDATE + overridden occurrences). → array of Date starts.
+   Supports FREQ DAILY/WEEKLY/MONTHLY/YEARLY, INTERVAL, COUNT, UNTIL, weekly BYDAY. */
+function expandRrule(start, rruleStr, tzid, from, to, exSet) {
+    const r = parseRrule(rruleStr);
+    const freq = (r.FREQ || '').toUpperCase();
+    if (!freq) return [];
+    const interval = Math.max(1, parseInt(r.INTERVAL) || 1);
+    const count    = r.COUNT ? parseInt(r.COUNT) : null;
+    const until    = r.UNTIL ? icsToDate(r.UNTIL, /Z$/.test(r.UNTIL) ? 'UTC' : tzid, false) : null;
+    const untilMs  = until ? until.getTime() : null;
+    const byday    = r.BYDAY ? r.BYDAY.split(',').map(x => DAY_IDX[x.slice(-2).toUpperCase()]).filter(n => n != null) : null;
+    const CAP = 5000;
+    const out = [];
+    let produced = 0;
+
+    /* Count an occurrence toward COUNT and keep it if inside the window.
+       Returns 'stop' once the series is exhausted (COUNT/UNTIL). */
+    const consider = (t) => {
+        if (untilMs != null && t > untilMs) return 'stop';
+        if (t >= start.getTime()) {
+            produced++;
+            if (!exSet.has(t) && t >= from && t <= to) out.push(new Date(t));
+            if (count != null && produced >= count) return 'stop';
+        }
+        return 'go';
+    };
+
+    if (freq === 'WEEKLY') {
+        const days = (byday && byday.length) ? [...new Set(byday)].sort((a, b) => a - b) : [phxDow(start)];
+        const sundayMs = start.getTime() - phxDow(start) * DAY_MS;   /* Sunday of the start's week */
+        for (let w = 0; w < CAP; w++) {
+            const block = sundayMs + w * interval * 7 * DAY_MS;
+            if (block > to + 7 * DAY_MS) break;
+            let stop = false;
+            for (const dow of days) { if (consider(block + dow * DAY_MS) === 'stop') { stop = true; break; } }
+            if (stop) break;
+        }
+    } else if (freq === 'DAILY') {
+        for (let i = 0; i < CAP; i++) {
+            const t = start.getTime() + i * interval * DAY_MS;
+            if (t > to && (untilMs == null || t > untilMs)) break;
+            if (consider(t) === 'stop') break;
+        }
+    } else if (freq === 'MONTHLY' || freq === 'YEARLY') {
+        const p = phxParts(start);
+        for (let i = 0; i < CAP; i++) {
+            let Y = p.Y, Mo = p.Mo;
+            if (freq === 'MONTHLY') { const tot = p.Mo + i * interval; Y = p.Y + Math.floor(tot / 12); Mo = ((tot % 12) + 12) % 12; }
+            else                    { Y = p.Y + i * interval; }
+            const occ = phxDate(Y, Mo, p.D, p.H, p.Mi, p.S);
+            if (occ) {
+                const t = occ.getTime();
+                if (t > to && (untilMs == null || t > untilMs)) break;
+                if (consider(t) === 'stop') break;
+            }
+        }
+    }
+    return out;
+}
+
+/* Parse an iCal document → normalized event records within an upcoming window.
+   Recurring events (RRULE) expand to one record per occurrence; RECURRENCE-ID
+   overrides replace the matching occurrence; EXDATE and STATUS:CANCELLED drop. */
 function parseIcs(text) {
     const unfolded = text.replace(/\r\n[ \t]/g, '').replace(/\n[ \t]/g, '');  /* line unfolding */
     const lines = unfolded.split(/\r\n|\n|\r/);
-    const out = [];
-    const now = Date.now();
-    const from = now - 86400000;            /* include yesterday */
-    const to   = now + 86400000 * 120;      /* ~4 months out */
-    let cur = null;
+    const now  = Date.now();
+    const from = now - DAY_MS;             /* include yesterday */
+    const to   = now + DAY_MS * 120;       /* ~4 months out */
 
+    /* Pass 1: collect raw VEVENTs. */
+    const raw = [];
+    let cur = null;
     for (const line of lines) {
-        if (line === 'BEGIN:VEVENT') { cur = {}; continue; }
-        if (line === 'END:VEVENT') {
-            if (cur && cur.SUMMARY && cur.startRaw) {
-                const start = icsToDate(cur.startRaw, cur.startTzid, cur.startIsDate);
-                const end   = cur.endRaw ? icsToDate(cur.endRaw, cur.endTzid, cur.endIsDate) : null;
-                if (start && start.getTime() >= from && start.getTime() <= to) {
-                    const loc = cur.LOCATION ? unescapeIcs(cur.LOCATION) : null;
-                    const descParts = [];
-                    if (cur.DESCRIPTION) descParts.push(unescapeIcs(cur.DESCRIPTION));
-                    if (loc) descParts.push(`📍 ${loc}`);
-                    out.push({
-                        uid:      cur.UID || `${cur.SUMMARY}-${cur.startRaw}`,
-                        title:    unescapeIcs(cur.SUMMARY),
-                        desc:     descParts.join('\n') || null,
-                        start, end, location: loc,
-                    });
-                }
-            }
-            cur = null; continue;
-        }
+        if (line === 'BEGIN:VEVENT') { cur = { EXDATE: [] }; continue; }
+        if (line === 'END:VEVENT')   { if (cur) raw.push(cur); cur = null; continue; }
         if (!cur) continue;
-        const idx = line.indexOf(':');
-        if (idx === -1) continue;
-        const left = line.slice(0, idx);
-        const val  = line.slice(idx + 1);
+        const idx = line.indexOf(':'); if (idx === -1) continue;
+        const left = line.slice(0, idx), val = line.slice(idx + 1);
         const semi = left.indexOf(';');
         const name = semi === -1 ? left : left.slice(0, semi);
         const params = semi === -1 ? '' : left.slice(semi + 1);
         const tzid = (params.match(/TZID=([^;]+)/) || [])[1] || null;
         const isDate = /VALUE=DATE/.test(params);
-        if      (name === 'UID')         cur.UID = val;
-        else if (name === 'SUMMARY')     cur.SUMMARY = val;
-        else if (name === 'DESCRIPTION') cur.DESCRIPTION = val;
-        else if (name === 'LOCATION')    cur.LOCATION = val;
-        else if (name === 'DTSTART')     { cur.startRaw = val; cur.startTzid = tzid; cur.startIsDate = isDate; }
-        else if (name === 'DTEND')       { cur.endRaw = val;   cur.endTzid = tzid;   cur.endIsDate = isDate; }
+        if      (name === 'UID')           cur.UID = val;
+        else if (name === 'SUMMARY')       cur.SUMMARY = val;
+        else if (name === 'DESCRIPTION')   cur.DESCRIPTION = val;
+        else if (name === 'LOCATION')      cur.LOCATION = val;
+        else if (name === 'STATUS')        cur.STATUS = val;
+        else if (name === 'RRULE')         cur.RRULE = val;
+        else if (name === 'DTSTART')       { cur.startRaw = val; cur.startTzid = tzid; cur.startIsDate = isDate; }
+        else if (name === 'DTEND')         { cur.endRaw = val;   cur.endTzid = tzid;   cur.endIsDate = isDate; }
+        else if (name === 'RECURRENCE-ID') { cur.recurRaw = val; cur.recurTzid = tzid; cur.recurIsDate = isDate; }
+        else if (name === 'EXDATE')        { for (const p of val.split(',')) cur.EXDATE.push({ raw: p, tzid, isDate }); }
+    }
+
+    /* Overridden occurrence times per UID, so the master series skips them. */
+    const overrideTimes = new Map();
+    for (const e of raw) {
+        if (e.recurRaw && e.UID) {
+            const d = icsToDate(e.recurRaw, e.recurTzid, e.recurIsDate);
+            if (d) { if (!overrideTimes.has(e.UID)) overrideTimes.set(e.UID, new Set()); overrideTimes.get(e.UID).add(d.getTime()); }
+        }
+    }
+
+    const out = [];
+    const describe = (ev, loc) => {
+        const parts = [];
+        if (ev.DESCRIPTION) parts.push(unescapeIcs(ev.DESCRIPTION));
+        if (loc) parts.push(`📍 ${loc}`);
+        return parts.join('\n') || null;
+    };
+    const emit = (uid, title, start, end, loc, desc) => {
+        if (!start || start.getTime() < from || start.getTime() > to) return;
+        out.push({ uid, title, desc: desc || null, start, end, location: loc });
+    };
+
+    /* Pass 2: expand. */
+    for (const ev of raw) {
+        if (!ev.SUMMARY || !ev.startRaw) continue;
+        if (String(ev.STATUS).toUpperCase() === 'CANCELLED') continue;
+        const start = icsToDate(ev.startRaw, ev.startTzid, ev.startIsDate);
+        if (!start) continue;
+        const end   = ev.endRaw ? icsToDate(ev.endRaw, ev.endTzid, ev.endIsDate) : null;
+        const durMs = end ? end.getTime() - start.getTime() : null;
+        const loc   = ev.LOCATION ? unescapeIcs(ev.LOCATION) : null;
+        const title = unescapeIcs(ev.SUMMARY);
+        const desc  = describe(ev, loc);
+        const baseUid = ev.UID || `${ev.SUMMARY}-${ev.startRaw}`;
+
+        if (ev.recurRaw) {
+            /* Override for a single occurrence — key it to that occurrence so it
+               updates the same ticket the master would have created. */
+            const rid = icsToDate(ev.recurRaw, ev.recurTzid, ev.recurIsDate);
+            emit(rid ? `${baseUid}::${rid.getTime()}` : baseUid, title, start, end, loc, desc);
+        } else if (ev.RRULE) {
+            const exSet = new Set();
+            for (const ex of ev.EXDATE) { const d = icsToDate(ex.raw, ex.tzid, ex.isDate); if (d) exSet.add(d.getTime()); }
+            for (const t of (overrideTimes.get(baseUid) || [])) exSet.add(t);
+            for (const os of expandRrule(start, ev.RRULE, ev.startTzid, from, to, exSet)) {
+                emit(`${baseUid}::${os.getTime()}`, title, os, durMs != null ? new Date(os.getTime() + durMs) : null, loc, desc);
+            }
+        } else {
+            emit(baseUid, title, start, end, loc, desc);
+        }
     }
     return out;
 }
@@ -163,6 +286,47 @@ async function fetchIcsEvents(url) {
     const text = await r.text();
     if (!/BEGIN:VCALENDAR/.test(text)) throw new Error('That URL did not return an iCal feed.');
     return parseIcs(text);
+}
+
+/* Upsert normalized events as calendar-sourced tickets, deduped by event UID
+   (google_event_id). Shared by the manual sync endpoint and the scheduled poll. */
+async function upsertEventsAsTickets(events, createdBy) {
+    let created = 0, updated = 0;
+    for (const ev of events) {
+        if (!ev.uid || !ev.title) continue;
+        const existing = await pool.query(
+            `SELECT id FROM service_tickets WHERE google_event_id = $1`, [ev.uid]
+        ).catch(() => ({ rows: [] }));
+        if (existing.rows.length > 0) {
+            /* Refresh title / description / timing — never touch status. */
+            await pool.query(
+                `UPDATE service_tickets
+                 SET title = $1, description = $2, event_start = $3, event_end = $4, event_location = $5
+                 WHERE google_event_id = $6`,
+                [ev.title, ev.desc, ev.start, ev.end, ev.location, ev.uid]
+            );
+            updated++;
+        } else {
+            await pool.query(
+                `INSERT INTO service_tickets
+                 (title, description, created_by, source, google_event_id, event_start, event_end, event_location, status)
+                 VALUES ($1, $2, $3, 'calendar', $4, $5, $6, $7, 'open')`,
+                [ev.title, ev.desc, createdBy, ev.uid, ev.start, ev.end, ev.location]
+            );
+            created++;
+        }
+    }
+    return { created, updated };
+}
+
+/* Pull the configured iCal (.ics) feed and upsert its events as tickets.
+   Used by the scheduled poll (createdBy null → system) and the manual endpoint. */
+async function syncOfficialToTickets(createdBy = null) {
+    const icsUrl = await getSetting('official_ics_url');
+    if (!icsUrl) return { skipped: true, created: 0, updated: 0, total: 0 };
+    const events = await fetchIcsEvents(icsUrl);
+    const { created, updated } = await upsertEventsAsTickets(events, createdBy);
+    return { created, updated, total: events.length };
 }
 
 function buildDescription(e) {
@@ -264,33 +428,7 @@ router.post('/sync', requireRole('admin', 'technician'), async (req, res) => {
             }));
     }
 
-    let created = 0, updated = 0;
-    for (const ev of events) {
-        if (!ev.uid || !ev.title) continue;
-        const existing = await pool.query(
-            `SELECT id FROM service_tickets WHERE google_event_id = $1`, [ev.uid]
-        ).catch(() => ({ rows: [] }));
-
-        if (existing.rows.length > 0) {
-            /* Update title / description / timing — never touch status */
-            await pool.query(
-                `UPDATE service_tickets
-                 SET title = $1, description = $2, event_start = $3, event_end = $4, event_location = $5
-                 WHERE google_event_id = $6`,
-                [ev.title, ev.desc, ev.start, ev.end, ev.location, ev.uid]
-            );
-            updated++;
-        } else {
-            await pool.query(
-                `INSERT INTO service_tickets
-                 (title, description, created_by, source, google_event_id, event_start, event_end, event_location, status)
-                 VALUES ($1, $2, $3, 'calendar', $4, $5, $6, $7, 'open')`,
-                [ev.title, ev.desc, req.user.id, ev.uid, ev.start, ev.end, ev.location]
-            );
-            created++;
-        }
-    }
-
+    const { created, updated } = await upsertEventsAsTickets(events, req.user.id);
     res.json({ created, updated, total: events.length, source });
 });
 
@@ -423,3 +561,4 @@ h2{color:#4ade80}code{background:#1a1a1a;padding:2px 6px;border-radius:4px}</sty
 });
 
 module.exports = router;
+module.exports.syncOfficialToTickets = syncOfficialToTickets;   /* reused by the scheduled poll */

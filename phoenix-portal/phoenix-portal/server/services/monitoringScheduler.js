@@ -2,6 +2,20 @@ const cron             = require('node-cron');
 const pool             = require('../db/pool');
 const { sendTemplated } = require('../config/mailer');
 const { gcalCreate }   = require('../config/gcal');
+const { syncOfficialToTickets } = require('../routes/calendar');
+
+/* Poll the configured iCal (.ics) feed and upsert events as tickets. No-ops
+   when no feed URL is set. Runs as "system" (created_by null). */
+async function runCalendarSync() {
+    try {
+        const r = await syncOfficialToTickets(null);
+        if (!r.skipped && (r.created || r.updated)) {
+            console.log(`Calendar sync: ${r.created} new, ${r.updated} updated ticket(s) from iCal.`);
+        }
+    } catch (err) {
+        console.error('Calendar sync failed:', err.message);
+    }
+}
 
 async function runMonitoringCheck() {
     try {
@@ -317,7 +331,8 @@ function startScheduler() {
     cron.schedule('*/15 * * * *', runAppointmentReminders);
     cron.schedule('0 8 * * 1',    runFleetIssuesDigest);   /* Mondays 8 AM */
     cron.schedule('0 8 * * 1',    runDeadbeatDigest);      /* Mondays 8 AM */
-    console.log('Schedulers started — daily 8 AM jobs, weekly fleet + deadbeat digests (Mon), appointment reminders every 15 min');
+    cron.schedule('*/30 * * * *', runCalendarSync);        /* iCal → tickets, every 30 min */
+    console.log('Schedulers started — daily 8 AM jobs, weekly fleet + deadbeat digests (Mon), appointment reminders every 15 min, calendar sync every 30 min');
 }
 
 module.exports = { startScheduler, runMaintenanceCheck };

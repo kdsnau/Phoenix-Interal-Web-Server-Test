@@ -102,6 +102,59 @@ function NewUserModal({ onClose, onCreated }) {
 /* -----------------------------------------------------------------------
    Bulk Billing Tab
    ----------------------------------------------------------------------- */
+/* Google Calendar → tickets via the secret iCal feed. Set the URL + sync on
+   demand; a scheduled job also polls it every 30 min. */
+function CalendarTab() {
+    const [url, setUrl]         = useState('');
+    const [loaded, setLoaded]   = useState(false);
+    const [saving, setSaving]   = useState(false);
+    const [syncing, setSyncing] = useState(false);
+    const [msg, setMsg]         = useState('');
+    const [result, setResult]   = useState(null);
+
+    useEffect(() => {
+        api.get('/calendar/ics-url').then(r => setUrl(r.data.url || '')).catch(() => {}).finally(() => setLoaded(true));
+    }, []);
+
+    const saveUrl = async () => {
+        setSaving(true); setMsg('');
+        try { await api.put('/calendar/ics-url', { url: url.trim() }); setMsg('Saved.'); }
+        catch (e) { setMsg(e.response?.data?.error || 'Save failed.'); }
+        finally { setSaving(false); setTimeout(() => setMsg(''), 3000); }
+    };
+
+    const syncNow = async () => {
+        setSyncing(true); setResult(null); setMsg('');
+        try { const { data } = await api.post('/calendar/sync', { source: 'official' }); setResult(data); }
+        catch (e) { setMsg(e.response?.data?.error || 'Sync failed.'); }
+        finally { setSyncing(false); }
+    };
+
+    return (
+        <div style={{ maxWidth: 720 }}>
+            <div className="dash-section-label" style={{ marginBottom: 10 }}>Google Calendar → Tickets (iCal)</div>
+            <p style={{ fontSize: 13, color: 'var(--text-dim)', lineHeight: 1.6, marginBottom: 14 }}>
+                Paste the calendar’s <strong>secret iCal (.ics) address</strong> — in Google Calendar: Settings → pick the calendar → “Integrate calendar” → “Secret address in iCal format”. Events become tickets (deduped by event ID); recurring events expand to one ticket per occurrence. It also syncs automatically every 30 minutes. Note: Google’s feed can lag up to a few hours, so brand-new events aren’t instant.
+            </p>
+            <label className="form-label">Secret iCal URL</label>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                <input value={url} onChange={e => setUrl(e.target.value)} placeholder="https://calendar.google.com/calendar/ical/…/basic.ics"
+                    style={{ flex: 1, minWidth: 280, fontFamily: 'var(--font-mono)', fontSize: 12 }} />
+                <button className="btn btn-primary" onClick={saveUrl} disabled={saving || !loaded}>{saving ? 'Saving…' : 'Save URL'}</button>
+            </div>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button className="btn btn-ghost" onClick={syncNow} disabled={syncing || !url.trim()}>
+                    {syncing ? 'Syncing…' : 'Sync now'}
+                </button>
+                {msg && <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{msg}</span>}
+                {result && <span style={{ fontSize: 12, color: 'var(--green)' }}>
+                    {result.created} new · {result.updated} updated · {result.total} events read
+                </span>}
+            </div>
+        </div>
+    );
+}
+
 function BillingTab() {
     const [clients, setClients]   = useState([]);
     const [dirty, setDirty]       = useState({});   /* id → new value */
@@ -390,6 +443,9 @@ export default function Admin() {
                 <button className={`alarm-tab ${tab === 'roles' ? 'active' : ''}`} onClick={() => setTab('roles')}>
                     Roles <span className="alarm-tab-count">{roles.length}</span>
                 </button>
+                <button className={`alarm-tab ${tab === 'calendar' ? 'active' : ''}`} onClick={() => setTab('calendar')}>
+                    Calendar
+                </button>
             </div>
 
             {tab === 'billing' && <BillingTab />}
@@ -397,6 +453,8 @@ export default function Admin() {
             {tab === 'timeoff' && <TimeOffTab onResolved={() => setPendingTO(n => Math.max(0, n - 1))} />}
 
             {tab === 'roles' && <RolesTab roles={roles} onChange={loadRoles} />}
+
+            {tab === 'calendar' && <CalendarTab />}
 
             {tab === 'users' && loading && <p style={{ color: 'var(--text-dim)' }}>Loading...</p>}
 

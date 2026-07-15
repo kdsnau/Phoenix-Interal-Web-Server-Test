@@ -306,7 +306,9 @@ function parseCalendarTitle(summary) {
     const rMatch = tag.match(/R\d{3,6}(?:-\d+)?/i) || s.match(/\bR\d{3,6}(?:-\d+)?\b/i);
     const rId    = rMatch ? rMatch[0].toUpperCase() : null;
     const parts  = s.split('|').map(p => p.trim()).filter(Boolean);
-    const names  = (parts[0] || '').split('/').map(n => n.trim()).filter(Boolean);
+    /* Names before the first "|" — usually "Sal / Anthony", but also tolerate
+       &, +, commas, and "and" so every listed tech is assigned. */
+    const names  = (parts[0] || '').split(/\s*(?:\/|&|\+|,|\band\b)\s*/i).map(n => n.trim()).filter(Boolean);
     const client = parts.slice(1).join(' - ') || null;
     const title  = (client && rId) ? `${client} — ${rId}` : (client || rId || s.trim() || raw);
     return { rId, names, client, title };

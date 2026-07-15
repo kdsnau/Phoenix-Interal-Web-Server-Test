@@ -331,39 +331,51 @@ async function loadUserNameIndex() {
     return idx;
 }
 function resolveAssignees(names, idx) {
-    const ids = [];
+    const ids = [], unmatched = [];
     for (const n of names) {
         const key = String(n || '').toLowerCase().trim();
         if (!key || NON_PERSON_NAMES.has(key)) continue;
-        const id = idx.get(key) || idx.get(key.split(/\s+/)[0]);
-        if (id && !ids.includes(id)) ids.push(id);
+        let id = idx.get(key) || idx.get(key.split(/\s+/)[0]);
+        /* Forgiving fallback: a user whose first/full name is a prefix of the
+           calendar name or vice-versa (min 3 chars) — catches Sal↔Salvador etc. */
+        if (!id && key.length >= 3) {
+            for (const [k, v] of idx) {
+                if (k.length >= 3 && (k.startsWith(key) || key.startsWith(k))) { id = v; break; }
+            }
+        }
+        if (id) { if (!ids.includes(id)) ids.push(id); }
+        else unmatched.push(n);
     }
-    return ids;
+    return { ids, unmatched };
 }
 
 /* Upsert calendar events as tickets, deduped by event UID (google_event_id).
-   Assignees are set from the event's names on first import and back-filled on
-   update only when the ticket has none (so manual reassignments are kept).
-   Shared by the manual sync endpoint and the scheduled poll. */
+   The calendar is authoritative for assignees: whenever an event resolves to at
+   least one user, those become the ticket's assignees (on insert AND re-sync),
+   so a two-name event never lands with just one. When no name resolves, existing
+   assignees are left untouched. Returns the set of names that matched no user. */
 async function upsertEventsAsTickets(events, createdBy) {
     const nameIdx = await loadUserNameIndex();
     let created = 0, updated = 0;
+    const unmatchedSet = new Set();
     for (const ev of events) {
         if (!ev.uid || !ev.title) continue;
         const parsed = parseCalendarTitle(ev.title);
         if (!parsed) continue;                                 /* skip [OFF]/notes/info entries */
-        const assignees = resolveAssignees(parsed.names, nameIdx);
+        const { ids: assignees, unmatched } = resolveAssignees(parsed.names, nameIdx);
+        unmatched.forEach(n => unmatchedSet.add(n));
         const existing = await pool.query(
             `SELECT id FROM service_tickets WHERE google_event_id = $1`, [ev.uid]
         ).catch(() => ({ rows: [] }));
         if (existing.rows.length > 0) {
-            /* Refresh title / description / timing; back-fill assignees only when
-               the ticket has none — never touch status or a manual reassignment. */
+            /* Refresh title / description / timing; re-apply the calendar's
+               assignees whenever it resolved at least one (else leave as-is).
+               Status is never touched. */
             await pool.query(
                 `UPDATE service_tickets SET
                      title = $1, description = $2, event_start = $3, event_end = $4, event_location = $5,
-                     assignee_ids = CASE WHEN COALESCE(array_length(assignee_ids, 1), 0) = 0 THEN $7::int[] ELSE assignee_ids END,
-                     assigned_to  = CASE WHEN assigned_to IS NULL THEN $8 ELSE assigned_to END
+                     assignee_ids = CASE WHEN COALESCE(array_length($7::int[], 1), 0) > 0 THEN $7::int[] ELSE assignee_ids END,
+                     assigned_to  = CASE WHEN COALESCE(array_length($7::int[], 1), 0) > 0 THEN $8 ELSE assigned_to END
                  WHERE google_event_id = $6`,
                 [parsed.title, ev.desc, ev.start, ev.end, ev.location, ev.uid, assignees, assignees[0] || null]
             );
@@ -378,17 +390,17 @@ async function upsertEventsAsTickets(events, createdBy) {
             created++;
         }
     }
-    return { created, updated };
+    return { created, updated, unmatched: [...unmatchedSet] };
 }
 
 /* Pull the configured iCal (.ics) feed and upsert its events as tickets.
    Used by the scheduled poll (createdBy null → system) and the manual endpoint. */
 async function syncOfficialToTickets(createdBy = null) {
     const icsUrl = await getSetting('official_ics_url');
-    if (!icsUrl) return { skipped: true, created: 0, updated: 0, total: 0 };
+    if (!icsUrl) return { skipped: true, created: 0, updated: 0, total: 0, unmatched: [] };
     const events = await fetchIcsEvents(icsUrl);
-    const { created, updated } = await upsertEventsAsTickets(events, createdBy);
-    return { created, updated, total: events.length };
+    const { created, updated, unmatched } = await upsertEventsAsTickets(events, createdBy);
+    return { created, updated, total: events.length, unmatched };
 }
 
 function buildDescription(e) {
@@ -490,8 +502,8 @@ router.post('/sync', requireRole('admin', 'technician'), async (req, res) => {
             }));
     }
 
-    const { created, updated } = await upsertEventsAsTickets(events, req.user.id);
-    res.json({ created, updated, total: events.length, source });
+    const { created, updated, unmatched } = await upsertEventsAsTickets(events, req.user.id);
+    res.json({ created, updated, total: events.length, source, unmatched });
 });
 
 /* ── GET /api/calendar/auth-status — is the Google write/token connection live? */

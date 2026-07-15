@@ -151,6 +151,12 @@ function CalendarTab() {
                     {result.created} new · {result.updated} updated · {result.total} events read
                 </span>}
             </div>
+            {result && result.unmatched && result.unmatched.length > 0 && (
+                <div style={{ fontSize: 12, color: 'var(--yellow)', marginTop: 10 }}>
+                    ⚠ Calendar names not matched to a user (left unassigned): {result.unmatched.join(', ')}.
+                    Rename the person’s portal account to start with that name, or ask to add an alias.
+                </div>
+            )}
         </div>
     );
 }

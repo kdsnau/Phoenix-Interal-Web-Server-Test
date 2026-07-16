@@ -197,11 +197,14 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
         api.get('/clients').then(r => setClients(r.data)).catch(() => {});
     }, []);
 
-    /* Pick a client → autofill the title, point of contact, and link the ticket. */
+    /* Pick a client → autofill the title, location, point of contact, and link
+       the ticket. These come from the client's Site & Contact fields, so they
+       only fill in if that section has been filled in on the client. */
     const pickClient = (c) => {
         setClientId(c.id);
         setClientName(c.name);
         setTitle(c.name);
+        setLocation(c.site_address || '');
         setPocName(c.contact_name || '');
         setPocPhone(c.contact_phone || '');
     };
@@ -461,7 +464,7 @@ function EditTicketModal({ ticket, technicians, onClose, onUpdated }) {
                                     onClick={() => { setClientId(''); setClientName(''); }}>✕ unlink</button>
                             </div>
                         ) : (
-                            <ClientPicker clients={clients} onPick={c => { setClientId(c.id); setClientName(c.name); setPocName(c.contact_name || ''); setPocPhone(c.contact_phone || ''); }} />
+                            <ClientPicker clients={clients} onPick={c => { setClientId(c.id); setClientName(c.name); setLocation(c.site_address || ''); setPocName(c.contact_name || ''); setPocPhone(c.contact_phone || ''); }} />
                         )}
                     </div>
                     <div className="form-group">

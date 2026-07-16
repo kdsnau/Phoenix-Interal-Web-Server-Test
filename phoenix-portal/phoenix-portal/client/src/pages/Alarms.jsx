@@ -3,7 +3,9 @@ import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import Layout from '../components/Layout';
 import PageHelp from '../components/PageHelp';
+import { CameraCard } from './Cameras';
 import './Alarms.css';
+import './Cameras.css';
 
 /* -----------------------------------------------------------------------
    Helpers
@@ -429,6 +431,76 @@ function ClientBoard({ clientId, user }) {
 }
 
 /* -----------------------------------------------------------------------
+   Cameras for one client. NVR servers carry the link (nvr_servers.client_id),
+   so a client's cameras are every device on every server pointed at them.
+   Cards are the Cameras page's own CameraCard, so snapshots and the live view
+   behave identically (an <img src> can't send the JWT — CameraCard fetches the
+   snapshot as an authed blob).
+   ----------------------------------------------------------------------- */
+function ClientCamerasTab({ clientId }) {
+    const [servers, setServers] = useState([]);   // [{ server, devices, error }]
+    const [loading, setLoading] = useState(true);
+    const [error,   setError]   = useState('');
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            setLoading(true);
+            setError('');
+            try {
+                const { data } = await api.get('/nvr/servers');
+                const mine = (Array.isArray(data) ? data : []).filter(s => s.client_id === clientId);
+                const withDevices = await Promise.all(mine.map(async (server) => {
+                    try {
+                        const r = await api.get(`/nvr/servers/${server.id}/devices`);
+                        const devices = Array.isArray(r.data) ? r.data : (r.data?.data || []);
+                        return { server, devices, error: '' };
+                    } catch (err) {
+                        return { server, devices: [], error: err.response?.data?.error || 'Could not load cameras.' };
+                    }
+                }));
+                if (!cancelled) setServers(withDevices);
+            } catch (err) {
+                if (!cancelled) setError(err.response?.data?.error || 'Could not load NVR servers.');
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [clientId]);
+
+    if (loading) return <div className="alarm-empty">Loading cameras…</div>;
+    if (error)   return <div style={{ color: 'var(--red)', fontSize: 13 }}>{error}</div>;
+    if (servers.length === 0) {
+        return (
+            <div className="alarm-empty">
+                No NVR server is linked to this client. Link one on the Cameras page
+                by setting its Client field.
+            </div>
+        );
+    }
+
+    return (
+        <div className="alarm-section">
+            {servers.map(({ server, devices, error: devErr }) => (
+                <div key={server.id} style={{ marginBottom: 20 }}>
+                    <div className="alarm-label" style={{ marginBottom: 8, fontWeight: 600 }}>
+                        {server.name}
+                    </div>
+                    {devErr && <div style={{ color: 'var(--red)', fontSize: 13 }}>{devErr}</div>}
+                    {!devErr && devices.length === 0 && <div className="alarm-empty">No cameras found.</div>}
+                    {devices.length > 0 && (
+                        <div className="cam-grid">
+                            {devices.map(cam => <CameraCard key={cam.id} camera={cam} serverId={server.id} />)}
+                        </div>
+                    )}
+                </div>
+            ))}
+        </div>
+    );
+}
+
+/* -----------------------------------------------------------------------
    Locations in a rollup — tick several clients into the selected rollup at
    once, instead of opening each client and setting its dropdown. A client
    still belongs to at most one rollup (clients.rollup_id), so ticking a row
@@ -534,6 +606,8 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
     const [savingName,  setSavingName]  = useState(false);
 
     /* Site & contact */
+    const [savingContact, setSavingContact] = useState(false);
+    const [contactMsg,    setContactMsg]    = useState('');
     const [siteAddress,   setSiteAddress]   = useState(client.site_address   || '');
     const [contactName,   setContactName]   = useState(client.contact_name   || '');
     const [contactPhone,  setContactPhone]  = useState(client.contact_phone  || '');
@@ -610,22 +684,52 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
         }
     }
 
+    async function saveContact() {
+        setSavingContact(true);
+        setContactMsg('');
+        try {
+            await api.patch(`/clients/${client.id}`, {
+                site_address:   siteAddress   || null,
+                contact_name:   contactName   || null,
+                contact_phone:  contactPhone  || null,
+                contact_email:  contactEmail  || null,
+            });
+            setContactMsg('Saved.');
+            onRefresh();
+            setTimeout(() => setContactMsg(''), 2000);
+        } catch (e) {
+            setContactMsg(e.response?.data?.error || 'Failed to save.');
+        } finally {
+            setSavingContact(false);
+        }
+    }
+
     async function saveNotes() {
         setSavingNotes(true);
-        await api.patch(`/clients/${client.id}`, {
-            notes,
-            billing_amount: billing   || null,
-            billing_frequency: billingFreq || 'monthly',
-            /* permit_number / permit_expires are intentionally not sent: the
-               fields were removed from the UI but the columns are kept, so
-               omitting them from the PATCH leaves existing values untouched. */
-            site_address:   siteAddress   || null,
-            contact_name:   contactName   || null,
-            contact_phone:  contactPhone  || null,
-            contact_email:  contactEmail  || null,
-        });
-        setSavingNotes(false);
-        onRefresh();
+        try {
+            await api.patch(`/clients/${client.id}`, {
+                notes,
+                billing_amount: billing   || null,
+                billing_frequency: billingFreq || 'monthly',
+                /* permit_number / permit_expires are intentionally not sent: the
+                   fields were removed from the UI but the columns are kept, so
+                   omitting them from the PATCH leaves existing values untouched. */
+                /* Site & contact are still sent so that someone who edits them and
+                   reaches for this button doesn't lose the change; they also have
+                   their own Save now. */
+                site_address:   siteAddress   || null,
+                contact_name:   contactName   || null,
+                contact_phone:  contactPhone  || null,
+                contact_email:  contactEmail  || null,
+            });
+            onRefresh();
+        } catch (e) {
+            /* Previously unguarded: a failed PATCH left the button stuck on
+               "Saving…" and dropped the edit without telling anyone. */
+            alert(e.response?.data?.error || 'Failed to save.');
+        } finally {
+            setSavingNotes(false);
+        }
     }
 
     async function saveMaintenance() {
@@ -804,7 +908,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                 </div>
 
                 <div className="alarm-tabs">
-                    {['system', 'panel', 'tickets', 'notes', 'sitemap', ...(canBilling ? ['billing', 'transactions'] : [])].map(t => (
+                    {['system', 'panel', 'tickets', 'cameras', 'notes', 'sitemap', ...(canBilling ? ['billing', 'transactions'] : [])].map(t => (
                         <button key={t} className={`alarm-tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
                             {t === 'sitemap' ? 'Site Map' : t.charAt(0).toUpperCase() + t.slice(1)}
                         </button>
@@ -834,6 +938,15 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                                     <div className="alarm-label">Contact Email</div>
                                     <input className="alarm-input" value={contactEmail} onChange={e => setContactEmail(e.target.value)} placeholder="owner@example.com" />
                                 </div>
+                            </div>
+                            {/* These fields used to have no save control of their own — the only
+                               one was the "Save" under Notes at the bottom of the tab, which
+                               also PATCHed them. Edits made here were routinely lost. */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+                                <button className="btn btn-primary" onClick={saveContact} disabled={savingContact}>
+                                    {savingContact ? 'Saving…' : 'Save Site & Contact'}
+                                </button>
+                                {contactMsg && <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{contactMsg}</span>}
                             </div>
 
                             {/* System type / vendor / serial # / connection / carrier were removed
@@ -1038,6 +1151,11 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                     {/* PANEL TAB */}
                     {tab === 'panel' && (
                         <PanelTab clientId={client.id} isAdmin={user.role === 'admin'} />
+                    )}
+
+                    {/* CAMERAS TAB — devices from any NVR server linked to this client */}
+                    {tab === 'cameras' && (
+                        <ClientCamerasTab clientId={client.id} />
                     )}
 
                     {/* NOTES TAB — per-client board any staff member can post to */}

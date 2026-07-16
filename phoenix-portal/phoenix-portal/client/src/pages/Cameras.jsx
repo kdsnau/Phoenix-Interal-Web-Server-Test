@@ -319,7 +319,9 @@ function LiveModal({ camera, serverId, onClose }) {
 }
 
 /* ── Camera card ──────────────────────────────────────────────────────── */
-function CameraCard({ camera, serverId }) {
+/* Exported so the client detail's Cameras tab shows exactly the same card —
+   same snapshot handling and same live view — rather than a second copy. */
+export function CameraCard({ camera, serverId }) {
     const [imgError, setImgError] = useState(false);
     const [snapUrl,  setSnapUrl]  = useState(null);
     const [open,     setOpen]     = useState(false);

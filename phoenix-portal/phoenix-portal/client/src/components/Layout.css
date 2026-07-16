@@ -23,15 +23,12 @@
     border-bottom: 1px solid var(--border);
 }
 
+/* The flame emblem, cut from the company logo. Sized to match the stacked
+   brand-name + brand-sub beside it; width follows from the intrinsic aspect. */
 .brand-mark {
-    font-family: var(--font-mono);
-    font-size: 13px;
-    font-weight: 600;
-    background: var(--accent);
-    color: #fff;
-    padding: 6px 8px;
-    border-radius: var(--radius);
-    letter-spacing: 0.08em;
+    display: block;
+    height: 32px;
+    width: auto;
     flex-shrink: 0;
 }
 
@@ -459,14 +456,10 @@
     }
 
     .mobile-brand-mark {
-        font-family: var(--font-mono);
-        font-size: 12px;
-        font-weight: 700;
-        background: var(--accent);
-        color: #fff;
-        padding: 4px 7px;
-        border-radius: var(--radius);
-        letter-spacing: 0.06em;
+        display: block;
+        height: 24px;
+        width: auto;
+        flex-shrink: 0;
     }
 
     .mobile-brand-name {

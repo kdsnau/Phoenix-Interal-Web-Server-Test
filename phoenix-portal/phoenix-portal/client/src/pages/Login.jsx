@@ -31,7 +31,7 @@ export default function Login() {
         <div className="login-page">
             <div className="login-left">
                 <div className="login-brand">
-                    <span className="login-mark">PST</span>
+                    <img className="login-mark" src="/logo-mark.png" alt="" width="95" height="128" />
                     <div>
                         <div className="login-brand-name">Phoenix Security</div>
                         <div className="login-brand-sub">&amp; Technology</div>

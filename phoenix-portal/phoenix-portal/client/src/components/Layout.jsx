@@ -116,7 +116,7 @@ export default function Layout({ children }) {
             {/* ── Sidebar ─────────────────────────────────────────── */}
             <aside className={`sidebar ${open ? 'sidebar--open' : ''}`}>
                 <div className="sidebar-brand">
-                    <span className="brand-mark">PST</span>
+                    <img className="brand-mark" src="/logo-mark.png" alt="" width="95" height="128" />
                     <div>
                         <div className="brand-name">Phoenix</div>
                         <div className="brand-sub">Security &amp; Technology</div>
@@ -168,7 +168,7 @@ export default function Layout({ children }) {
                     <button className="hamburger" onClick={() => setOpen(true)} aria-label="Open menu">
                         <span /><span /><span />
                     </button>
-                    <span className="mobile-brand-mark">PST</span>
+                    <img className="mobile-brand-mark" src="/logo-mark.png" alt="" width="95" height="128" />
                     <span className="mobile-brand-name">Phoenix SecTech</span>
                 </div>
 

@@ -34,14 +34,10 @@
 }
 
 .login-mark {
-    font-family: var(--font-mono);
-    font-size: 16px;
-    font-weight: 600;
-    background: var(--accent);
-    color: #fff;
-    padding: 10px 12px;
-    border-radius: var(--radius);
-    letter-spacing: 0.08em;
+    display: block;
+    height: 52px;
+    width: auto;
+    flex-shrink: 0;
 }
 
 .login-brand-name {

@@ -1,4 +1,6 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+/* The IBM Plex webfonts are requested from index.html with a preconnect, not
+   @import-ed here — an @import can't start downloading until this stylesheet
+   has itself been fetched and parsed, which serialises two round trips. */
 
 :root {
   --bg:         #0d0f11;

@@ -110,8 +110,33 @@ app.get('/api/health', (_, res) => res.json({ status: 'ok' }));
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 const DIST = path.join(__dirname, '../client/dist');
-app.use(express.static(DIST));
-app.use((_, res) => res.sendFile(path.join(DIST, 'index.html')));
+
+/* Vite content-hashes everything under /assets, so a given URL's contents can
+   never change — cache it hard and skip the revalidation round trip, which is
+   what makes the first paint slow on a phone.
+
+   fallthrough:false is the important part: without it a request for an asset
+   that no longer exists (a phone holding a stale index.html after a deploy)
+   falls through to the catch-all below and gets index.html — i.e. HTML with a
+   200 in reply to a .js request, which fails the module MIME check and leaves
+   a white screen. A real 404 makes that a hard reload instead. */
+app.use('/assets', express.static(path.join(DIST, 'assets'), {
+    immutable: true,
+    maxAge: '1y',
+    fallthrough: false,
+}));
+
+/* index.html, sw.js, the manifest and icons must revalidate, so a deploy is
+   picked up on the next load. no-cache means "ask first", not "don't store" —
+   unchanged files still come back as a cheap 304. */
+app.use(express.static(DIST, {
+    setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache'),
+}));
+
+app.use((_, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
+    res.sendFile(path.join(DIST, 'index.html'));
+});
 
 app.listen(PORT, () => {
     console.log(`Phoenix SecTech API running on port ${PORT}`);

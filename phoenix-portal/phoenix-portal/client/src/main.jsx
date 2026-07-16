@@ -8,3 +8,13 @@ createRoot(document.getElementById('root')).render(
         <App />
     </StrictMode>
 );
+
+/* Production only — a service worker in front of the Vite dev server would
+   serve stale modules and break HMR. */
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(err => {
+            console.error('Service worker registration failed:', err);
+        });
+    });
+}

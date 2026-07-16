@@ -330,19 +330,23 @@ const STATUS_CLASS = {
     return_necessary: 'tag-red',
 };
 
-const SERVICE_TABS = ['all', 'alarm', 'fire', 'access_control', 'maintenance', 'projects', 'permits', 'unmonitored'];
+const SERVICE_TABS = ['all', 'alarm', 'fire', 'access_control', 'maintenance', 'tnm', 'cctv', 'projects', 'unmonitored'];
 
 /* Canonical service types + their display labels, reused by the tag list, the
    filter tabs, the "add client" form, and the admin service-type editor.
-   ('maintenance' is a service type; distinct from the monitoring_enabled flag.) */
-const SERVICE_TYPES = ['fire', 'alarm', 'access_control', 'maintenance'];
+   ('maintenance' is a service type; distinct from the monitoring_enabled flag.)
+   Must stay in step with the `allowed` list in server/routes/clients.js. */
+const SERVICE_TYPES = ['fire', 'alarm', 'access_control', 'maintenance', 'tnm', 'cctv'];
 const SERVICE_LABEL = {
     fire: 'Fire', alarm: 'Alarm', access_control: 'Access Control', maintenance: 'Maintenance',
+    tnm: 'TNM', cctv: 'CCTV',
 };
 /* Tag color class per service type. */
 const svcClass = s => s === 'fire' ? 'tag-red'
     : s === 'access_control' ? 'tag-blue'
     : s === 'maintenance' ? 'tag-green'
+    : s === 'tnm' ? 'tag-purple'
+    : s === 'cctv' ? 'tag-cyan'
     : 'tag-yellow';
 
 /* -----------------------------------------------------------------------
@@ -425,19 +429,109 @@ function ClientBoard({ clientId, user }) {
 }
 
 /* -----------------------------------------------------------------------
+   Locations in a rollup — tick several clients into the selected rollup at
+   once, instead of opening each client and setting its dropdown. A client
+   still belongs to at most one rollup (clients.rollup_id), so ticking a row
+   that already sits in another rollup moves it.
+   ----------------------------------------------------------------------- */
+function RollupLocations({ rollupId, currentClientId, onChanged }) {
+    const [all,     setAll]     = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [search,  setSearch]  = useState('');
+    const [busy,    setBusy]    = useState(null);   // id being written
+
+    const load = () => {
+        setLoading(true);
+        api.get('/clients')
+            .then(r => setAll(r.data))
+            .catch(() => setAll([]))
+            .finally(() => setLoading(false));
+    };
+    useEffect(load, []);
+
+    async function toggle(c) {
+        const inRollup = c.rollup_id === rollupId;
+        setBusy(c.id);
+        try {
+            await api.put(`/clients/${c.id}/rollup`, { rollup_id: inRollup ? null : rollupId });
+            setAll(list => list.map(x => x.id === c.id ? { ...x, rollup_id: inRollup ? null : rollupId } : x));
+            onChanged?.();
+        } catch (e) {
+            alert(e.response?.data?.error || 'Failed to update rollup.');
+        } finally {
+            setBusy(null);
+        }
+    }
+
+    const q = search.trim().toLowerCase();
+    const rows = all
+        .filter(c => c.id !== currentClientId)
+        .filter(c => !q || String(c.name || '').toLowerCase().includes(q)
+                        || String(c.customer_id || '').toLowerCase().includes(q))
+        /* Members first, so what's already in the rollup is visible without hunting. */
+        .sort((a, b) => (Number(b.rollup_id === rollupId) - Number(a.rollup_id === rollupId))
+                        || String(a.name || '').localeCompare(String(b.name || '')));
+
+    const memberCount = all.filter(c => c.rollup_id === rollupId).length;
+
+    return (
+        <div style={{ marginBottom: 16 }}>
+            <div className="alarm-label" style={{ marginBottom: 6 }}>
+                Locations in this rollup ({memberCount})
+            </div>
+            <input
+                className="alarm-input"
+                style={{ maxWidth: 280, marginBottom: 8 }}
+                placeholder="Search locations…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+            />
+            {loading ? (
+                <div className="alarm-empty">Loading…</div>
+            ) : (
+                <div className="alarm-rollup-list">
+                    {rows.length === 0 && <div className="alarm-empty">No other clients match.</div>}
+                    {rows.map(c => {
+                        const inRollup = c.rollup_id === rollupId;
+                        const elsewhere = !inRollup && c.rollup_id != null;
+                        return (
+                            <label key={c.id} className="alarm-rollup-row">
+                                <input
+                                    type="checkbox"
+                                    checked={inRollup}
+                                    disabled={busy === c.id}
+                                    onChange={() => toggle(c)}
+                                />
+                                <span className="alarm-rollup-name">{c.name}</span>
+                                <span className="tag-dim">{c.customer_id}</span>
+                                {elsewhere && <span className="tag-yellow">in {c.rollup_name || 'another rollup'}</span>}
+                            </label>
+                        );
+                    })}
+                </div>
+            )}
+        </div>
+    );
+}
+
+/* -----------------------------------------------------------------------
    Client detail panel
    ----------------------------------------------------------------------- */
 function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], reloadRollups }) {
     const { user } = useAuth();
     const canBilling = user.role === 'admin' || user.role === 'accounting';
+    const isAdmin    = user.role === 'admin';
 
     const [tab, setTab]           = useState('system');
     const [notes, setNotes]         = useState(client.notes || '');
     const [billing, setBilling]     = useState(client.billing_amount || '');
     const [billingFreq, setBillingFreq] = useState(client.billing_frequency || 'monthly');
-    const [permitNum, setPermitNum] = useState(client.permit_number || '');
-    const [permitExp, setPermitExp] = useState(client.permit_expires ? client.permit_expires.slice(0, 10) : '');
     const [savingNotes, setSavingNotes] = useState(false);
+
+    /* Inline rename (admin only) */
+    const [editingName, setEditingName] = useState(false);
+    const [nameVal,     setNameVal]     = useState(client.name);
+    const [savingName,  setSavingName]  = useState(false);
 
     /* Site & contact */
     const [siteAddress,   setSiteAddress]   = useState(client.site_address   || '');
@@ -495,14 +589,36 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
         }
     }, [tab, client.id, client.name, user.role]);
 
+    async function saveName() {
+        const next = nameVal.trim();
+        if (!next || next === client.name) {   /* nothing to do — revert and close */
+            setNameVal(client.name);
+            setEditingName(false);
+            return;
+        }
+        setSavingName(true);
+        try {
+            await api.patch(`/clients/${client.id}`, { name: next });
+            setEditingName(false);
+            onRefresh();
+        } catch (e) {
+            alert(e.response?.data?.error || 'Failed to rename client.');
+            setNameVal(client.name);
+            setEditingName(false);
+        } finally {
+            setSavingName(false);
+        }
+    }
+
     async function saveNotes() {
         setSavingNotes(true);
         await api.patch(`/clients/${client.id}`, {
             notes,
             billing_amount: billing   || null,
             billing_frequency: billingFreq || 'monthly',
-            permit_number:  permitNum || null,
-            permit_expires: permitExp || null,
+            /* permit_number / permit_expires are intentionally not sent: the
+               fields were removed from the UI but the columns are kept, so
+               omitting them from the PATCH leaves existing values untouched. */
             site_address:   siteAddress   || null,
             contact_name:   contactName   || null,
             contact_phone:  contactPhone  || null,
@@ -656,12 +772,31 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
         <div className="alarm-detail-overlay" onClick={onClose}>
             <div className="alarm-detail" onClick={e => e.stopPropagation()}>
                 <div className="alarm-detail-header">
-                    <div>
-                        <div className="alarm-detail-name">{client.name}</div>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                        {editingName ? (
+                            <input
+                                className="alarm-input alarm-detail-name-input"
+                                value={nameVal}
+                                autoFocus
+                                disabled={savingName}
+                                onChange={e => setNameVal(e.target.value)}
+                                onBlur={saveName}
+                                onKeyDown={e => {
+                                    if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+                                    if (e.key === 'Escape') { setNameVal(client.name); setEditingName(false); }
+                                }}
+                            />
+                        ) : (
+                            <div
+                                className={`alarm-detail-name${isAdmin ? ' alarm-detail-name--editable' : ''}`}
+                                onClick={() => { if (isAdmin) { setNameVal(client.name); setEditingName(true); } }}
+                                title={isAdmin ? 'Click to rename' : undefined}
+                            >
+                                {client.name}
+                            </div>
+                        )}
                         <div className="alarm-detail-meta">
                             <span>{client.customer_id}</span>
-                            <span className="alarm-sep">·</span>
-                            <span>{client.vendor}</span>
                             {services.map(s => <span key={s} className={`${svcClass(s)} alarm-svc-tag`}>{SERVICE_LABEL[s] || s}</span>)}
                         </div>
                     </div>
@@ -701,14 +836,10 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                                 </div>
                             </div>
 
-                            {/* System details */}
-                            <div className="alarm-label" style={{ marginBottom: 8, fontWeight: 600 }}>System Details</div>
+                            {/* System type / vendor / serial # / connection / carrier were removed
+                               from the UI; their columns are kept and still populated by the
+                               importers, so the values are recoverable from the DB. */}
                             <div className="alarm-grid" style={{ marginBottom: 12 }}>
-                                <div className="alarm-field"><div className="alarm-label">System Type</div><div className="alarm-value">{client.system_type || '—'}</div></div>
-                                <div className="alarm-field"><div className="alarm-label">Vendor</div><div className="alarm-value">{client.vendor}</div></div>
-                                <div className="alarm-field"><div className="alarm-label">Serial #</div><div className="alarm-value">{client.serial_number || '—'}</div></div>
-                                <div className="alarm-field"><div className="alarm-label">Connection</div><div className="alarm-value">{client.connection_type || '—'}</div></div>
-                                <div className="alarm-field"><div className="alarm-label">Carrier</div><div className="alarm-value">{client.carrier || '—'}</div></div>
                                 <div className="alarm-field">
                                     <div className="alarm-label">Monitoring</div>
                                     <div className="alarm-value">
@@ -775,20 +906,20 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                                             {creatingRollup ? 'Creating…' : '＋ Create & assign'}
                                         </button>
                                     </div>
+                                    {rollupId ? (
+                                        <RollupLocations
+                                            key={rollupId}
+                                            rollupId={Number(rollupId)}
+                                            currentClientId={client.id}
+                                            onChanged={onRefresh}
+                                        />
+                                    ) : (
+                                        <div className="alarm-label" style={{ marginBottom: 16 }}>
+                                            Assign this client to a rollup to tick other locations into it.
+                                        </div>
+                                    )}
                                 </>
                             )}
-
-                            {/* Permit */}
-                            <div className="alarm-grid" style={{ marginBottom: 12 }}>
-                                <div className="alarm-field">
-                                    <div className="alarm-label">Permit #</div>
-                                    <input className="alarm-input" value={permitNum} onChange={e => setPermitNum(e.target.value)} placeholder="e.g. P-12345" />
-                                </div>
-                                <div className="alarm-field">
-                                    <div className="alarm-label">Permit Expires</div>
-                                    <input className="alarm-input" type="date" value={permitExp} onChange={e => setPermitExp(e.target.value)} />
-                                </div>
-                            </div>
 
                             <div className="alarm-notes-section">
                                 <div className="alarm-label">Notes</div>
@@ -819,7 +950,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                                 />
                                 <input
                                     className="alarm-input"
-                                    placeholder="Description (optional)"
+                                    placeholder="Scope of work (optional)"
                                     value={newTicket.description}
                                     onChange={e => setNewTicket(t => ({ ...t, description: e.target.value }))}
                                 />
@@ -1089,8 +1220,10 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
    Add client modal
    ----------------------------------------------------------------------- */
 function NewClientModal({ onClose, onCreated }) {
+    /* No vendor field: it was removed from the form, and the server defaults the
+       column to 'generic' when it isn't sent. */
     const [form, setForm] = useState({
-        name: '', customer_id: '', vendor: 'generic', services: [],
+        name: '', customer_id: '', services: [], site_address: '', contact_name: '',
     });
     const [error,   setError]   = useState('');
     const [saving,  setSaving]  = useState(false);
@@ -1138,12 +1271,16 @@ function NewClientModal({ onClose, onCreated }) {
                         </div>
                     </div>
                     <div className="form-group" style={{ margin: 0 }}>
-                        <label className="form-label">Vendor / Panel Manufacturer</label>
-                        <input value={form.vendor} onChange={e => set('vendor', e.target.value)} placeholder="generic, DSC, Honeywell, Bosch…" />
+                        <label className="form-label">Site Address</label>
+                        <input value={form.site_address} onChange={e => set('site_address', e.target.value)} placeholder="123 Main St, Phoenix AZ 85001" />
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                        <label className="form-label">Contact Name</label>
+                        <input value={form.contact_name} onChange={e => set('contact_name', e.target.value)} placeholder="e.g. Jane Doe" />
                     </div>
                     <div className="form-group" style={{ margin: 0 }}>
                         <label className="form-label">Services</label>
-                        <div style={{ display: 'flex', gap: 16, marginTop: 6 }}>
+                        <div style={{ display: 'flex', gap: 12, marginTop: 6, flexWrap: 'wrap' }}>
                             {SERVICE_TYPES.map(s => (
                                 <label key={s} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', fontWeight: 400 }}>
                                     <input type="checkbox" checked={form.services.includes(s)} onChange={() => toggleService(s)} />
@@ -1430,8 +1567,6 @@ export default function Alarms() {
     const [loading, setLoading]             = useState(true);
     const [showAddClient, setShowAddClient] = useState(false);
     const [expanded, setExpanded]           = useState(() => new Set());   // expanded customer roll-up groups
-    const [permits, setPermits]       = useState([]);
-    const [permitsLoading, setPermitsLoading] = useState(false);
 
     const [unmon,        setUnmon]        = useState([]);
     const [unmonLoading, setUnmonLoading] = useState(false);
@@ -1460,17 +1595,8 @@ export default function Alarms() {
     }, []);
 
     useEffect(() => {
-        if (serviceTab === 'permits') {
-            setPermitsLoading(true);
-            api.get('/clients/permits')
-                .then(r => setPermits(r.data))
-                .catch(() => setPermits([]))
-                .finally(() => setPermitsLoading(false));
-        } else if (serviceTab === 'unmonitored') {
-            loadUnmonitored();
-        } else {
-            fetchClients();
-        }
+        if (serviceTab === 'unmonitored') loadUnmonitored();
+        else                              fetchClients();
     }, [serviceTab, search]);
 
     async function openClient(c) {
@@ -1581,8 +1707,8 @@ export default function Alarms() {
                             className={`alarm-tab ${serviceTab === t ? 'active' : ''}`}
                             onClick={() => setServiceTab(t)}
                         >
-                            {t === 'all' ? 'All' : t === 'access_control' ? 'Access Control' : t === 'permits' ? 'Permits' : t.charAt(0).toUpperCase() + t.slice(1)}
-                            {t !== 'permits' && t !== 'unmonitored' && t !== 'projects' && (
+                            {t === 'all' ? 'All' : SERVICE_LABEL[t] || t.charAt(0).toUpperCase() + t.slice(1)}
+                            {t !== 'unmonitored' && t !== 'projects' && (
                                 <span className="alarm-tab-count">
                                     {t === 'all' ? clients.length : clients.filter(c => (c.services || []).includes(t)).length}
                                 </span>
@@ -1590,53 +1716,6 @@ export default function Alarms() {
                         </button>
                     ))}
                 </div>
-
-                {/* Permit report view */}
-                {serviceTab === 'permits' && (
-                    <div className="permit-report">
-                        {permitsLoading ? (
-                            <div className="alarm-empty">Loading…</div>
-                        ) : (
-                            <div className="table-card">
-                                <table className="data-table permit-table">
-                                    <thead>
-                                        <tr>
-                                            <th>Client</th>
-                                            <th>ID</th>
-                                            <th>Permit #</th>
-                                            <th>Expiry</th>
-                                            <th>Status</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {permits.length === 0 && (
-                                            <tr><td colSpan={5} className="alarm-empty">No permit data on file.</td></tr>
-                                        )}
-                                        {permits.map(c => {
-                                            const days = c.days_until != null ? Number(c.days_until) : null;
-                                            let statusTag = null;
-                                            if (days === null) statusTag = <span className="tag tag-dim">No expiry set</span>;
-                                            else if (days < 0)   statusTag = <span className="tag tag-red">EXPIRED {Math.abs(days)}d ago</span>;
-                                            else if (days <= 60) statusTag = <span className="tag tag-yellow">Expires in {days}d</span>;
-                                            else                 statusTag = <span className="tag tag-green">Valid ({days}d)</span>;
-                                            return (
-                                                <tr key={c.id} style={{ cursor: 'pointer' }} onClick={() => openClient(c)}>
-                                                    <td style={{ fontWeight: 500, color: 'var(--text-hi)' }}>{c.name}</td>
-                                                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>{c.customer_id}</td>
-                                                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{c.permit_number || <span className="permit-none">—</span>}</td>
-                                                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-                                                        {c.permit_expires ? new Date(c.permit_expires).toLocaleDateString() : <span className="permit-none">—</span>}
-                                                    </td>
-                                                    <td>{statusTag}</td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
-                    </div>
-                )}
 
                 {/* Unmonitored clients (from QuickBooks) */}
                 {serviceTab === 'unmonitored' && (
@@ -1694,9 +1773,9 @@ export default function Alarms() {
                     </div>
                 )}
 
-                {serviceTab !== 'permits' && serviceTab !== 'unmonitored' && loading ? (
+                {serviceTab !== 'unmonitored' && loading ? (
                     <div className="alarm-empty">Loading…</div>
-                ) : serviceTab !== 'permits' && serviceTab !== 'unmonitored' && (
+                ) : serviceTab !== 'unmonitored' && (
                     <div className="alarm-client-grid">
                         {clients.length === 0 && <div className="alarm-empty">No clients found.</div>}
                         {groupClients(clients).map(g => {
@@ -1709,14 +1788,9 @@ export default function Alarms() {
                                         <div className="alarm-client-meta">
                                             <span className="tag-dim">{c.customer_id}</span>
                                             {(c.services || []).map(s => (
-                                                <span key={s} className={svcClass(s)}>{s}</span>
+                                                <span key={s} className={svcClass(s)}>{SERVICE_LABEL[s] || s}</span>
                                             ))}
                                             {c.monitoring_enabled && <span className="tag-green">monitored</span>}
-                                            {c.permit_expires && (() => {
-                                                const days = Math.ceil((new Date(c.permit_expires) - new Date()) / 86400000);
-                                                if (days > 60) return null;
-                                                return <span className={`tag ${days < 0 ? 'tag-red' : 'tag-yellow'}`}>Permit {days < 0 ? 'EXPIRED' : `exp. ${days}d`}</span>;
-                                            })()}
                                         </div>
                                     </div>
                                 );
@@ -1733,7 +1807,7 @@ export default function Alarms() {
                                             <div className="alarm-client-meta">
                                                 {g.rollup ? <span className="tag-blue">Rollup</span> : <span className="tag-dim">{g.key}</span>}
                                                 <span className="tag-blue">{g.rows.length} {g.rollup ? 'clients' : 'panels'}</span>
-                                                {g.services.map(s => <span key={s} className={svcClass(s)}>{s}</span>)}
+                                                {g.services.map(s => <span key={s} className={svcClass(s)}>{SERVICE_LABEL[s] || s}</span>)}
                                                 {monCnt > 0 && <span className="tag-green">{monCnt} monitored</span>}
                                             </div>
                                         </div>

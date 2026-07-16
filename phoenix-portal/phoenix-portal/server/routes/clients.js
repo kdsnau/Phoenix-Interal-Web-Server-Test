@@ -15,6 +15,16 @@ const {
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
+/* Canonical client service types. Must stay in step with SERVICE_TYPES in
+   client/src/pages/Alarms.jsx. ('maintenance' is a service type, distinct from
+   the monitoring_enabled flag.) */
+const SERVICE_TYPES = ['fire', 'alarm', 'access_control', 'maintenance', 'tnm', 'cctv'];
+const cleanServices = (v) => [...new Set(
+    (Array.isArray(v) ? v : [])
+        .map(s => String(s).toLowerCase().trim())
+        .filter(s => SERVICE_TYPES.includes(s))
+)];
+
 /* ── Site maps ─────────────────────────────────────────────────────────────
    Two possible sources, admin-switchable (app_settings 'sitemap_source'):
      • 'slack' (default) — files posted in a Slack channel
@@ -223,14 +233,21 @@ pool.query(`UPDATE clients SET services = array_replace(services, 'monitoring', 
 
 /* POST /api/clients — admin only */
 router.post('/', requireRole('admin'), async (req, res) => {
-    const { name, customer_id, vendor, services } = req.body;
+    const { name, customer_id, vendor, services, site_address, contact_name } = req.body;
     if (!name || !customer_id)
         return res.status(400).json({ error: 'name and customer_id are required.' });
     try {
         const result = await pool.query(
-            `INSERT INTO clients (name, customer_id, vendor, services)
-             VALUES ($1, $2, $3, $4) RETURNING *`,
-            [name.trim(), customer_id.trim(), vendor || 'generic', services || []]
+            `INSERT INTO clients (name, customer_id, vendor, services, site_address, contact_name)
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+            [
+                name.trim(), customer_id.trim(),
+                /* The form no longer collects a vendor; keep the column populated. */
+                vendor || 'generic',
+                cleanServices(services),
+                site_address?.trim() || null,
+                contact_name?.trim() || null,
+            ]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
@@ -1149,16 +1166,19 @@ router.patch('/:id', authenticate, async (req, res) => {
             if (f in req.body) add(f, req.body[f] ?? null);
         }
 
-        /* Service-type reassignment (Fire / Alarm / Access Control / Monitoring)
-           is admin-only. Sanitize to the known set; an empty array clears them. */
+        /* Service-type reassignment is admin-only. Sanitize to the known set; an
+           empty array clears them. */
         if ('services' in req.body && req.user.role === 'admin') {
-            const allowed = ['fire', 'alarm', 'access_control', 'maintenance'];
-            const clean = [...new Set(
-                (Array.isArray(req.body.services) ? req.body.services : [])
-                    .map(s => String(s).toLowerCase().trim())
-                    .filter(s => allowed.includes(s))
-            )];
-            add('services', clean);
+            add('services', cleanServices(req.body.services));
+        }
+
+        /* Renaming is admin-only. The name is how a client is identified all over
+           the portal, so refuse to blank it. NB: the QuickBooks/invoice-folder
+           importers also write this column and will overwrite a manual rename. */
+        if ('name' in req.body && req.user.role === 'admin') {
+            const nm = String(req.body.name ?? '').trim();
+            if (!nm) return res.status(400).json({ error: 'Client name cannot be empty.' });
+            add('name', nm);
         }
 
         if (sets.length === 0) return res.json({ message: 'Nothing to update.' });

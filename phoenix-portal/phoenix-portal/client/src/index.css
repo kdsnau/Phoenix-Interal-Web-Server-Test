@@ -17,6 +17,8 @@
   --yellow:     #d9a832;
   --red:        #d94040;
   --blue:       #3a8fd4;
+  --purple:     #8b5cf6;
+  --cyan:       #2bb8c4;
   --font-mono:  'IBM Plex Mono', monospace;
   --font-sans:  'IBM Plex Sans', sans-serif;
   --radius:     3px;
@@ -78,4 +80,6 @@ input:focus, select:focus, textarea:focus {
 .tag-yellow { background: rgba(217,168,50,0.15); color: var(--yellow); }
 .tag-red    { background: rgba(217,64,64,0.15);  color: var(--red); }
 .tag-blue   { background: rgba(58,143,212,0.15); color: var(--blue); }
+.tag-purple { background: rgba(139,92,246,0.15); color: var(--purple); }
+.tag-cyan   { background: rgba(43,184,196,0.15); color: var(--cyan); }
 .tag-dim    { background: var(--bg-3); color: var(--text-dim); }

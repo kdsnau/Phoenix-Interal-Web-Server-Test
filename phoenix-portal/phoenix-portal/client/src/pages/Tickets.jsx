@@ -271,7 +271,7 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
                         </select>
                     </div>
                     <div className="form-group">
-                        <label className="form-label">Description</label>
+                        <label className="form-label">Scope of Work</label>
                         <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={2} style={{ resize: 'vertical' }} />
                     </div>
                     <div className="form-group">
@@ -485,7 +485,7 @@ function EditTicketModal({ ticket, technicians, onClose, onUpdated }) {
                         </select>
                     </div>
                     <div className="form-group">
-                        <label className="form-label">Description</label>
+                        <label className="form-label">Scope of Work</label>
                         <textarea value={desc} onChange={e => setDesc(e.target.value)} rows={2} style={{ resize: 'vertical' }} />
                     </div>
                     <div className="form-group">

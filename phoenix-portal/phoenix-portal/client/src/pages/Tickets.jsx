@@ -216,23 +216,25 @@ export function NewTicketModal({ onClose, onCreated, technicians, initialClient 
         setClientName('');
     };
 
-    const submit = async (e) => {
-        e.preventDefault();
+    const payload = (extra = {}) => ({
+        title,
+        ticket_type:    ticketType,
+        description:    desc        || undefined,
+        assignee_ids:   assigneeIds,
+        event_start:    eventStart  || undefined,
+        event_end:      eventEnd    || undefined,
+        event_location: location    || undefined,
+        client_id:      clientId    || undefined,
+        poc_name:       pocName     || undefined,
+        poc_phone:      pocPhone    || undefined,
+        ...extra,
+    });
+
+    const create = async ({ draft }) => {
         setError('');
         setLoading(true);
         try {
-            const { data } = await api.post('/tickets', {
-                title,
-                ticket_type:    ticketType,
-                description:    desc        || undefined,
-                assignee_ids:   assigneeIds,
-                event_start:    eventStart  || undefined,
-                event_end:      eventEnd    || undefined,
-                event_location: location    || undefined,
-                client_id:      clientId    || undefined,
-                poc_name:       pocName     || undefined,
-                poc_phone:      pocPhone    || undefined,
-            });
+            const { data } = await api.post('/tickets', payload(draft ? { is_draft: true } : {}));
             for (const it of pendingItems) {
                 await api.post(`/tickets/${data.id}/items`,
                     { inventory_item_id: it.id, quantity: it.quantity, used: it.used }).catch(() => {});
@@ -240,11 +242,13 @@ export function NewTicketModal({ onClose, onCreated, technicians, initialClient 
             onCreated(data);
             onClose();
         } catch (err) {
-            setError(err.response?.data?.error || 'Failed to create ticket.');
+            setError(err.response?.data?.error || `Failed to ${draft ? 'save draft' : 'create ticket'}.`);
         } finally {
             setLoading(false);
         }
     };
+
+    const submit = (e) => { e.preventDefault(); create({ draft: false }); };
 
     return (
         <div className="modal-overlay" onClick={onClose}>
@@ -361,11 +365,18 @@ export function NewTicketModal({ onClose, onCreated, technicians, initialClient 
                         />
                     </div>
 
-                    <div className="modal-actions">
+                    <div className="modal-actions" style={{ justifyContent: 'space-between' }}>
                         <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-                        <button type="submit" className="btn btn-primary" disabled={loading}>
-                            {loading ? 'Creating…' : 'Create Ticket'}
-                        </button>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                            {/* Save an unfinished ticket to come back to. No title needed. */}
+                            <button type="button" className="btn btn-ghost" disabled={loading}
+                                onClick={() => create({ draft: true })} title="Save as a draft to finish later">
+                                {loading ? '…' : 'Save draft'}
+                            </button>
+                            <button type="submit" className="btn btn-primary" disabled={loading}>
+                                {loading ? 'Creating…' : 'Create Ticket'}
+                            </button>
+                        </div>
                     </div>
                 </form>
             </div>
@@ -409,26 +420,49 @@ export function EditTicketModal({ ticket, technicians, onClose, onUpdated }) {
         }).catch(() => {});
     }, []);
 
+    const isDraft = ticket.status === 'draft';
+
+    const patchBody = (extra = {}) => ({
+        title,
+        ticket_type:   ticketType,
+        description:    desc,
+        assignee_ids:  assigneeIds,
+        event_start:   eventStart || undefined,
+        event_end:     eventEnd   || undefined,
+        event_location: location,
+        client_id:     clientId || undefined,
+        poc_name:      pocName,
+        poc_phone:     pocPhone,
+        ...extra,
+    });
+
+    /* Save without changing status. For a draft this keeps it a draft (COALESCE
+       leaves status as 'draft'); for a normal ticket it just saves the edits. */
     const save = async (e) => {
-        e.preventDefault();
+        e?.preventDefault();
         setSaving(true); setError('');
         try {
-            const { data } = await api.patch(`/tickets/${ticket.id}`, {
-                title,
-                ticket_type:   ticketType,
-                description:    desc,
-                assignee_ids:  assigneeIds,
-                event_start:   eventStart || undefined,
-                event_end:     eventEnd   || undefined,
-                event_location: location,
-                client_id:     clientId || undefined,
-                poc_name:      pocName,
-                poc_phone:     pocPhone,
-            });
+            const { data } = await api.patch(`/tickets/${ticket.id}`, patchBody());
             onUpdated(data);
             onClose();
         } catch (err) {
             setError(err.response?.data?.error || 'Failed to save ticket.');
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    /* Promote a draft to a real ticket. Requires a title; a scheduled draft
+       becomes a calendar entry server-side (source flips when event_start set). */
+    const finalize = async () => {
+        if (!title.trim()) { setError('A title is required to create the ticket.'); return; }
+        setSaving(true); setError('');
+        try {
+            const { data } = await api.patch(`/tickets/${ticket.id}`, patchBody({ status: 'open' }));
+            onUpdated(data);
+            onClose();
+        } catch (err) {
+            setError(err.response?.data?.error || 'Failed to create ticket.');
         } finally {
             setSaving(false);
         }
@@ -455,7 +489,7 @@ export function EditTicketModal({ ticket, technicians, onClose, onUpdated }) {
     return (
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
-                <div className="modal-title">Edit Ticket #{ticket.id}</div>
+                <div className="modal-title">{isDraft ? `Draft #${ticket.id}` : `Edit Ticket #${ticket.id}`}</div>
                 {error && <div className="error-msg">{error}</div>}
                 <form onSubmit={save}>
                     <div className="form-group">
@@ -471,8 +505,9 @@ export function EditTicketModal({ ticket, technicians, onClose, onUpdated }) {
                         )}
                     </div>
                     <div className="form-group">
-                        <label className="form-label">Title *</label>
-                        <input value={title} onChange={e => setTitle(e.target.value)} required />
+                        <label className="form-label">Title{isDraft ? '' : ' *'}</label>
+                        {/* Not required while it's a draft — a draft can be saved unfinished. */}
+                        <input value={title} onChange={e => setTitle(e.target.value)} required={!isDraft} />
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                         <div className="form-group" style={{ margin: 0 }}>
@@ -542,9 +577,26 @@ export function EditTicketModal({ ticket, technicians, onClose, onUpdated }) {
                         )}
                     </div>
 
-                    <div className="modal-actions">
+                    <div className="modal-actions" style={{ justifyContent: 'space-between' }}>
                         <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-                        <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save Changes'}</button>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                            {/* For a draft, Save is type=button so the (optional) empty title
+                               doesn't trip HTML5 validation; a normal edit submits the form. */}
+                            {isDraft ? (
+                                <button type="button" className="btn btn-ghost" disabled={saving} onClick={() => save()}>
+                                    {saving ? 'Saving…' : 'Save draft'}
+                                </button>
+                            ) : (
+                                <button type="submit" className="btn btn-primary" disabled={saving}>
+                                    {saving ? 'Saving…' : 'Save Changes'}
+                                </button>
+                            )}
+                            {isDraft && (
+                                <button type="button" className="btn btn-primary" disabled={saving} onClick={finalize}>
+                                    {saving ? '…' : 'Create Ticket'}
+                                </button>
+                            )}
+                        </div>
                     </div>
                 </form>
             </div>
@@ -684,7 +736,11 @@ export default function Tickets() {
     const [itemsTicket, setItemsTicket] = useState(null);
     const [editTicket,  setEditTicket]  = useState(null);
     const [statusFilter, setStatusFilter] = useState('all');
+    const [drafts,      setDrafts]      = useState([]);
     const [searchParams, setSearchParams] = useSearchParams();
+
+    const loadDrafts = () => api.get('/tickets', { params: { drafts: 1 } })
+        .then(r => setDrafts(r.data)).catch(() => setDrafts([]));
 
     const load = async () => {
         try {
@@ -694,6 +750,7 @@ export default function Tickets() {
             ]);
             setTickets(t.data);
             setTechnicians(tech.data);
+            loadDrafts();
         } finally {
             setLoading(false);
         }
@@ -771,14 +828,18 @@ export default function Tickets() {
             {!loading && (() => {
                 const STATUS_TABS = [
                     ['all', 'All'], ['open', 'Open'], ['in_progress', 'In Progress'],
-                    ['resolved', 'Resolved'], ['closed', 'Closed'],
+                    ['resolved', 'Resolved'], ['closed', 'Closed'], ['drafts', 'Drafts'],
                 ];
-                const shown = statusFilter === 'all' ? tickets : tickets.filter(t => t.status === statusFilter);
+                const shown = statusFilter === 'drafts' ? drafts
+                    : statusFilter === 'all' ? tickets
+                    : tickets.filter(t => t.status === statusFilter);
                 return (
                 <>
                 <div className="alarm-service-tabs" style={{ marginBottom: 16 }}>
                     {STATUS_TABS.map(([s, label]) => {
-                        const count = s === 'all' ? tickets.length : tickets.filter(t => t.status === s).length;
+                        const count = s === 'drafts' ? drafts.length
+                            : s === 'all' ? tickets.length
+                            : tickets.filter(t => t.status === s).length;
                         return (
                             <button key={s} className={`alarm-tab ${statusFilter === s ? 'active' : ''}`} onClick={() => setStatusFilter(s)}>
                                 {label} <span className="alarm-tab-count">{count}</span>
@@ -811,7 +872,7 @@ export default function Tickets() {
                                     <td>
                                         <div style={{ fontWeight: 500, color: 'var(--text-hi)', display: 'flex', alignItems: 'center', gap: 6 }}>
                                             {t.event_start && <span title="Scheduled event">📅</span>}
-                                            {t.title}
+                                            {t.title || <span style={{ color: 'var(--text-dim)', fontStyle: 'italic' }}>(untitled draft)</span>}
                                         </div>
                                         {t.ticket_type && (
                                             <div style={{ marginTop: 3 }}>
@@ -888,31 +949,44 @@ export default function Tickets() {
 
                                     <td>
                                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                            <select
-                                                value={t.status}
-                                                onChange={e => updateStatus(t.id, e.target.value)}
-                                                style={{ width: 'auto', padding: '4px 8px', fontSize: 12 }}
-                                            >
-                                                <option value="open">Open</option>
-                                                <option value="in_progress">In Progress</option>
-                                                <option value="resolved">Resolved</option>
-                                                <option value="closed">Closed</option>
-                                            </select>
-                                            <button
-                                                className="btn btn-ghost"
-                                                style={{ padding: '4px 10px', fontSize: 12 }}
-                                                onClick={() => setItemsTicket(t)}
-                                            >
-                                                Items
-                                            </button>
-                                            {user.role === 'admin' && (
+                                            {t.status === 'draft' ? (
+                                                /* Drafts can't take a status yet — resume to finish. */
                                                 <button
-                                                    className="btn btn-ghost"
+                                                    className="btn btn-primary"
                                                     style={{ padding: '4px 10px', fontSize: 12 }}
                                                     onClick={() => setEditTicket(t)}
                                                 >
-                                                    Edit
+                                                    Resume draft
                                                 </button>
+                                            ) : (
+                                                <>
+                                                    <select
+                                                        value={t.status}
+                                                        onChange={e => updateStatus(t.id, e.target.value)}
+                                                        style={{ width: 'auto', padding: '4px 8px', fontSize: 12 }}
+                                                    >
+                                                        <option value="open">Open</option>
+                                                        <option value="in_progress">In Progress</option>
+                                                        <option value="resolved">Resolved</option>
+                                                        <option value="closed">Closed</option>
+                                                    </select>
+                                                    <button
+                                                        className="btn btn-ghost"
+                                                        style={{ padding: '4px 10px', fontSize: 12 }}
+                                                        onClick={() => setItemsTicket(t)}
+                                                    >
+                                                        Items
+                                                    </button>
+                                                    {user.role === 'admin' && (
+                                                        <button
+                                                            className="btn btn-ghost"
+                                                            style={{ padding: '4px 10px', fontSize: 12 }}
+                                                            onClick={() => setEditTicket(t)}
+                                                        >
+                                                            Edit
+                                                        </button>
+                                                    )}
+                                                </>
                                             )}
                                             {user.role === 'admin' && (
                                                 <button
@@ -937,7 +1011,7 @@ export default function Tickets() {
             {showModal && (
                 <NewTicketModal
                     onClose={() => setShowModal(false)}
-                    onCreated={t => setTickets(prev => [t, ...prev])}
+                    onCreated={t => { if (t.status === 'draft') loadDrafts(); else setTickets(prev => [t, ...prev]); }}
                     technicians={technicians}
                 />
             )}
@@ -954,7 +1028,14 @@ export default function Tickets() {
                     ticket={editTicket}
                     technicians={technicians}
                     onClose={() => setEditTicket(null)}
-                    onUpdated={u => setTickets(prev => prev.map(t => t.id === u.id ? { ...t, ...u } : t))}
+                    onUpdated={u => {
+                        /* A finalized draft leaves the drafts list and joins the
+                           main list; a normal edit updates in place. */
+                        setTickets(prev => prev.some(t => t.id === u.id)
+                            ? prev.map(t => t.id === u.id ? { ...t, ...u } : t)
+                            : (u.status !== 'draft' ? [u, ...prev] : prev));
+                        loadDrafts();
+                    }}
                 />
             )}
         </Layout>

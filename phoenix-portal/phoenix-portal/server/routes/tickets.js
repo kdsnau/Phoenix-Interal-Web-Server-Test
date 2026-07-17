@@ -91,12 +91,24 @@ router.get('/', requireRole('technician', 'admin'), async (req, res) => {
                                     FROM users x WHERE x.id = ANY(t.assignee_ids)), '{}') AS assignee_names
                    FROM service_tickets t
                    LEFT JOIN users u ON t.created_by = u.id`;
+
+        /* Drafts are work-in-progress and private to their creator. ?drafts=1
+           returns only the caller's drafts; the normal list excludes all drafts
+           (so they stay off the ticket table, the calendar and client tabs). */
+        if (req.query.drafts === '1' || req.query.drafts === 'true') {
+            const result = await pool.query(
+                q + ` WHERE t.status = 'draft' AND t.created_by = $1 ORDER BY t.created_at DESC`,
+                [req.user.id]
+            );
+            return res.json(result.rows);
+        }
+
         let result;
         if (req.user.role === 'admin') {
-            result = await pool.query(q + ` ORDER BY t.created_at DESC`);
+            result = await pool.query(q + ` WHERE t.status IS DISTINCT FROM 'draft' ORDER BY t.created_at DESC`);
         } else {
             result = await pool.query(
-                q + ` WHERE t.created_by = $1 OR $1 = ANY(t.assignee_ids) ORDER BY t.created_at DESC`,
+                q + ` WHERE t.status IS DISTINCT FROM 'draft' AND (t.created_by = $1 OR $1 = ANY(t.assignee_ids)) ORDER BY t.created_at DESC`,
                 [req.user.id]
             );
         }
@@ -112,23 +124,29 @@ router.get('/', requireRole('technician', 'admin'), async (req, res) => {
 router.post('/', requireRole('admin'), async (req, res) => {
     const { title, description, event_start, event_end, event_location, client_id, poc_name, poc_phone } = req.body;
 
-    if (!title) return res.status(400).json({ error: 'Title is required.' });
+    /* A draft is a work-in-progress ticket: it skips the title requirement, is
+       stored as status='draft', never becomes a calendar entry, and is hidden
+       from the normal lists until finalized. */
+    const isDraft = req.body.is_draft === true;
+    if (!title && !isDraft) return res.status(400).json({ error: 'Title is required.' });
 
     const ticketType = TICKET_TYPES.includes(req.body.ticket_type) ? req.body.ticket_type : 'Service';
 
     try {
-        /* Tickets with a scheduled date are treated as calendar entries */
-        const source = event_start ? 'calendar' : 'manual';
+        /* Tickets with a scheduled date are treated as calendar entries — but a
+           draft stays 'manual' and is never pushed to Google Calendar. */
+        const source  = (!isDraft && event_start) ? 'calendar' : 'manual';
+        const status  = isDraft ? 'draft' : 'open';
         const ids     = normalizeAssigneeIds(req.body);
         const primary = ids[0] || null;
 
         const result = await pool.query(
             `INSERT INTO service_tickets
-             (title, description, created_by, assigned_to, assignee_ids, source, event_start, event_end, event_location, client_id, ticket_type, poc_name, poc_phone)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+             (title, description, created_by, assigned_to, assignee_ids, source, event_start, event_end, event_location, client_id, ticket_type, poc_name, poc_phone, status)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
              RETURNING *`,
             [
-                title,
+                title || null,
                 description || null,
                 req.user.id,
                 primary,
@@ -141,11 +159,12 @@ router.post('/', requireRole('admin'), async (req, res) => {
                 ticketType,
                 poc_name  || null,
                 poc_phone || null,
+                status,
             ]
         );
         let ticket = result.rows[0];
 
-        /* Push to Google Calendar when a date is provided */
+        /* Push to Google Calendar when a date is provided (never for drafts). */
         if (source === 'calendar') {
             const techName  = await assigneeLabel(ids);
             const gEventId  = await gcalCreate(ticket, techName).catch(() => null);

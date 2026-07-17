@@ -174,23 +174,25 @@ function AssigneeMultiSelect({ technicians, value = [], onChange }) {
     );
 }
 
-function NewTicketModal({ onClose, onCreated, technicians }) {
-    const [title,       setTitle]       = useState('');
+/* initialClient: when opened from a client's detail panel, pre-select that
+   client (and its autofill) so the user doesn't re-pick it. */
+export function NewTicketModal({ onClose, onCreated, technicians, initialClient = null }) {
+    const [title,       setTitle]       = useState(initialClient?.name || '');
     const [ticketType,  setTicketType]  = useState('Service');
     const [desc,        setDesc]        = useState('');
     const [assigneeIds, setAssigneeIds] = useState([]);
     const [eventStart,  setEventStart]  = useState('');
     const [eventEnd,    setEventEnd]    = useState('');
-    const [location,    setLocation]    = useState('');
+    const [location,    setLocation]    = useState(initialClient?.site_address || '');
     const [error,       setError]       = useState('');
     const [loading,     setLoading]     = useState(false);
     const [inv,         setInv]         = useState([]);
     const [pendingItems, setPendingItems] = useState([]);
     const [clients,     setClients]     = useState([]);
-    const [clientId,    setClientId]    = useState('');
-    const [clientName,  setClientName]  = useState('');
-    const [pocName,     setPocName]     = useState('');
-    const [pocPhone,    setPocPhone]    = useState('');
+    const [clientId,    setClientId]    = useState(initialClient?.id || '');
+    const [clientName,  setClientName]  = useState(initialClient?.name || '');
+    const [pocName,     setPocName]     = useState(initialClient?.contact_name || '');
+    const [pocPhone,    setPocPhone]    = useState(initialClient?.contact_phone || '');
 
     useEffect(() => {
         api.get('/inventory').then(r => setInv(r.data)).catch(() => {});
@@ -371,7 +373,7 @@ function NewTicketModal({ onClose, onCreated, technicians }) {
 }
 
 /* Admin: edit a ticket's details + upload a site-map image. */
-function EditTicketModal({ ticket, technicians, onClose, onUpdated }) {
+export function EditTicketModal({ ticket, technicians, onClose, onUpdated }) {
     /* datetime-local needs LOCAL wall-clock (YYYY-MM-DDTHH:MM). Using
        toISOString() fed UTC into the input, so each edit re-saved the time
        shifted by the tz offset (the "randomly changing time" bug). Offset-

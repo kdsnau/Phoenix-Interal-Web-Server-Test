@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import Layout from '../components/Layout';
 import PageHelp from '../components/PageHelp';
 import { CameraCard } from './Cameras';
+import { NewTicketModal } from './Tickets';
 import './Alarms.css';
 import './Cameras.css';
 
@@ -549,7 +550,7 @@ function RollupLocations({ rollupId, currentClientId, onChanged }) {
     return (
         <div style={{ marginBottom: 16 }}>
             <div className="alarm-label" style={{ marginBottom: 6 }}>
-                Locations in this rollup ({memberCount})
+                Locations in this group ({memberCount})
             </div>
             <input
                 className="alarm-input"
@@ -630,7 +631,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
     const [transactions, setTransactions] = useState([]);
     const [txLoading, setTxLoading]       = useState(false);
     const [txForm, setTxForm]     = useState({ description: '', amount: '', type: 'invoice', date: '' });
-    const [newTicket, setNewTicket] = useState({ title: '', description: '', assigned_to: '' });
+    const [showNewTicket, setShowNewTicket] = useState(false);
     const [togglingMon, setTogglingMon] = useState(false);
     const [monEnabled, setMonEnabled] = useState(client.monitoring_enabled);
     /* Site maps — pulled from Slack (default) or a mounted network drive */
@@ -828,12 +829,6 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
         setTransactions(t => t.filter(x => x.id !== txId));
     }
 
-    async function addTicket(e) {
-        e.preventDefault();
-        await api.post(`/clients/${client.id}/tickets`, newTicket);
-        setNewTicket({ title: '', description: '', assigned_to: '' });
-        onRefresh();
-    }
 
     /* Site-map files (DWG, or whatever's posted in Slack) can't render inline —
        fetch as a blob (sends the auth header) and trigger a download. */
@@ -873,6 +868,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
 
 
     return (
+        <>
         <div className="alarm-detail-overlay" onClick={onClose}>
             <div className="alarm-detail" onClick={e => e.stopPropagation()}>
                 <div className="alarm-detail-header">
@@ -998,10 +994,10 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                                 </div>
                             )}
 
-                            {/* Rollup — manual grouping (admin); overrides the automatic customer-number grouping */}
+                            {/* Multi-Location Client — manual grouping (admin); overrides the automatic customer-number grouping */}
                             {user.role === 'admin' && (
                                 <>
-                                    <div className="alarm-label" style={{ marginBottom: 8, fontWeight: 600 }}>Rollup</div>
+                                    <div className="alarm-label" style={{ marginBottom: 8, fontWeight: 600 }}>Multi-Location Client</div>
                                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 8 }}>
                                         <select className="alarm-input" style={{ maxWidth: 280 }} value={rollupId}
                                             onChange={e => assignRollup(e.target.value)} disabled={savingRollup}>
@@ -1011,7 +1007,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                                         {savingRollup && <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>Saving…</span>}
                                     </div>
                                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16 }}>
-                                        <input className="alarm-input" style={{ maxWidth: 220 }} placeholder="New rollup name…"
+                                        <input className="alarm-input" style={{ maxWidth: 220 }} placeholder="New group name…"
                                             value={newRollup} onChange={e => setNewRollup(e.target.value)}
                                             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); createAndAssignRollup(); } }} />
                                         <button type="button" className="btn btn-ghost" onClick={createAndAssignRollup}
@@ -1028,7 +1024,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                                         />
                                     ) : (
                                         <div className="alarm-label" style={{ marginBottom: 16 }}>
-                                            Assign this client to a rollup to tick other locations into it.
+                                            Assign this client to a multi-location group to tick other locations into it.
                                         </div>
                                     )}
                                 </>
@@ -1053,30 +1049,15 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                     {/* TICKETS TAB */}
                     {tab === 'tickets' && (
                         <div className="alarm-section">
-                            <form className="alarm-ticket-form" onSubmit={addTicket}>
-                                <input
-                                    className="alarm-input"
-                                    placeholder="New ticket title…"
-                                    value={newTicket.title}
-                                    onChange={e => setNewTicket(t => ({ ...t, title: e.target.value }))}
-                                    required
-                                />
-                                <input
-                                    className="alarm-input"
-                                    placeholder="Scope of work (optional)"
-                                    value={newTicket.description}
-                                    onChange={e => setNewTicket(t => ({ ...t, description: e.target.value }))}
-                                />
-                                <select
-                                    className="alarm-select"
-                                    value={newTicket.assigned_to}
-                                    onChange={e => setNewTicket(t => ({ ...t, assigned_to: e.target.value }))}
-                                >
-                                    <option value="">Unassigned</option>
-                                    {technicians.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                                </select>
-                                <button className="btn btn-primary" type="submit">Add Ticket</button>
-                            </form>
+                            {/* The full ticket interface (same modal as the Tickets page),
+                               pre-filled with this client. */}
+                            {isAdmin && (
+                                <div style={{ marginBottom: 16 }}>
+                                    <button className="btn btn-primary" onClick={() => setShowNewTicket(true)}>
+                                        ＋ New Ticket
+                                    </button>
+                                </div>
+                            )}
                             <div className="alarm-ticket-list">
                                 {(client.tickets || []).length === 0 && <div className="alarm-empty">No tickets.</div>}
                                 {(client.tickets || []).map(tk => (
@@ -1331,6 +1312,15 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                 </div>
             </div>
         </div>
+        {showNewTicket && (
+            <NewTicketModal
+                initialClient={client}
+                technicians={technicians}
+                onClose={() => setShowNewTicket(false)}
+                onCreated={() => { setShowNewTicket(false); onRefresh(); }}
+            />
+        )}
+        </>
     );
 }
 
@@ -1923,8 +1913,8 @@ export default function Alarms() {
                                         <div style={{ flex: 1, minWidth: 0 }}>
                                             <div className="alarm-client-name">{g.name}</div>
                                             <div className="alarm-client-meta">
-                                                {g.rollup ? <span className="tag-blue">Rollup</span> : <span className="tag-dim">{g.key}</span>}
-                                                <span className="tag-blue">{g.rows.length} {g.rollup ? 'clients' : 'panels'}</span>
+                                                {g.rollup ? <span className="tag-blue">Multi-Location</span> : <span className="tag-dim">{g.key}</span>}
+                                                <span className="tag-blue">{g.rows.length} {g.rollup ? 'locations' : 'panels'}</span>
                                                 {g.services.map(s => <span key={s} className={svcClass(s)}>{SERVICE_LABEL[s] || s}</span>)}
                                                 {monCnt > 0 && <span className="tag-green">{monCnt} monitored</span>}
                                             </div>

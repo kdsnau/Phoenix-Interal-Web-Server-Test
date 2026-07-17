@@ -266,8 +266,14 @@ router.get('/', authenticate, async (req, res) => {
     const conditions = [];
     const params     = [];
 
-    if (category === 'project') { conditions.push(`c.category = 'project'`); }
-    else                        { conditions.push(`c.category IS DISTINCT FROM 'project'`); }
+    if (category === 'project') {
+        conditions.push(`c.category = 'project'`);
+    } else if (!search) {
+        /* Normal views hide install-only project clients so they don't flood the
+           service tabs — but a search should find them too, even from outside
+           the Projects tab, so only exclude them when not searching. */
+        conditions.push(`c.category IS DISTINCT FROM 'project'`);
+    }
 
     if (service) { params.push(service);        conditions.push(`$${params.length} = ANY(c.services)`); }
     if (vendor)  { params.push(vendor);          conditions.push(`c.vendor = $${params.length}`); }

@@ -121,8 +121,21 @@
 .alarm-close-btn:hover { color: #eaf0f8; }
 
 /* Tabs inside detail */
-.alarm-tabs { display: flex; border-bottom: 1px solid #2a3040; }
-.alarm-tabs .alarm-tab { border-radius: 0; border: none; border-bottom: 2px solid transparent; padding: 12px 20px; background: none; }
+/* Horizontally scrollable: with 9 tabs the bar overflows a phone width, so let
+   it scroll instead of clipping. Tabs keep their size (no squish) and the thin
+   themed scrollbar is the affordance that there's more to the right. */
+.alarm-tabs {
+    display: flex;
+    border-bottom: 1px solid #2a3040;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+}
+.alarm-tabs .alarm-tab {
+    border-radius: 0; border: none; border-bottom: 2px solid transparent;
+    padding: 12px 20px; background: none;
+    flex-shrink: 0; white-space: nowrap;
+}
 .alarm-tabs .alarm-tab.active { background: none; color: var(--accent); border-bottom-color: var(--accent); }
 
 .alarm-detail-body { flex: 1; overflow-y: auto; padding: 24px; }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import PageHelp from '../components/PageHelp';
@@ -683,6 +684,7 @@ export default function Tickets() {
     const [itemsTicket, setItemsTicket] = useState(null);
     const [editTicket,  setEditTicket]  = useState(null);
     const [statusFilter, setStatusFilter] = useState('all');
+    const [searchParams, setSearchParams] = useSearchParams();
 
     const load = async () => {
         try {
@@ -698,6 +700,17 @@ export default function Tickets() {
     };
 
     useEffect(() => { load(); }, []);
+
+    /* Deep link from the calendar: /tickets?open=<id> opens that ticket's editor
+       once the list has loaded, then drops the param so it won't reopen. */
+    useEffect(() => {
+        const openId = searchParams.get('open');
+        if (!openId || tickets.length === 0) return;
+        const t = tickets.find(x => String(x.id) === String(openId));
+        if (t) setEditTicket(t);
+        searchParams.delete('open');
+        setSearchParams(searchParams, { replace: true });
+    }, [tickets, searchParams, setSearchParams]);
 
     const updateStatus = async (id, status) => {
         try {

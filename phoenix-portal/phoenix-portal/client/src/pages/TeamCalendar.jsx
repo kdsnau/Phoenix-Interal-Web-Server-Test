@@ -1,9 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import Layout from '../components/Layout';
 import RoleBadge from '../components/RoleBadge';
 import useRoles from '../hooks/useRoles';
+import { EditTicketModal } from './Tickets';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -39,13 +41,17 @@ const prettyDate = k => { const [y, m, d] = k.split('-').map(Number); return new
 
 export default function TeamCalendar() {
     const { user } = useAuth();
+    const navigate = useNavigate();
+    const canEditTickets = user.role === 'admin' || user.role === 'technician';
     const now = new Date();
     const [cursor, setCursor]   = useState({ year: now.getFullYear(), month: now.getMonth() });
     const [tickets, setTickets] = useState([]);
     const [timeOff, setTimeOff] = useState([]);
     const [notes, setNotes]     = useState([]);
     const [dayKey, setDayKey]   = useState(null);      // open day modal
-    const [ticket, setTicket]   = useState(null);      // open ticket modal
+    const [ticket, setTicket]   = useState(null);      // open ticket (read) modal
+    const [editingTicket, setEditingTicket] = useState(null);   // open ticket editor
+    const [technicians, setTechnicians]     = useState([]);
     const [meetings, setMeetings]           = useState([]);
     const [meeting, setMeeting]             = useState(null);     // open meeting modal
     const [newMeetingDay, setNewMeetingDay] = useState(null);    // open "schedule meeting" form
@@ -58,9 +64,13 @@ export default function TeamCalendar() {
         api.get('/schedule/notes',    { params: { start: startKey, end: endKey } }).then(r => setNotes(r.data)).catch(() => setNotes([]));
         api.get('/schedule/meetings', { params: { start: startKey, end: endKey } }).then(r => setMeetings(r.data)).catch(() => setMeetings([]));
     }
-    useEffect(() => {
+    function reloadTickets() {
         api.get('/tickets').then(r => setTickets(r.data.filter(t => t.event_start))).catch(() => setTickets([]));
+    }
+    useEffect(() => {
+        reloadTickets();
         api.get('/roles/people').then(r => setPeople(r.data)).catch(() => setPeople([]));
+        if (canEditTickets) api.get('/admin/technicians').then(r => setTechnicians(r.data)).catch(() => setTechnicians([]));
     }, []);
     useEffect(reloadSchedule, [startKey, endKey]);
 
@@ -171,7 +181,23 @@ export default function TeamCalendar() {
                         onScheduleMeeting={k => { setDayKey(null); setNewMeetingDay(k); }}
                     />
                 )}
-                {ticket && <TicketModal ticket={ticket} onClose={() => setTicket(null)} />}
+                {ticket && (
+                    <TicketModal
+                        ticket={ticket}
+                        canEdit={canEditTickets}
+                        onClose={() => setTicket(null)}
+                        onEdit={() => { setEditingTicket(ticket); setTicket(null); }}
+                        onOpenInTickets={() => navigate(`/tickets?open=${ticket.id}`)}
+                    />
+                )}
+                {editingTicket && (
+                    <EditTicketModal
+                        ticket={editingTicket}
+                        technicians={technicians}
+                        onClose={() => setEditingTicket(null)}
+                        onUpdated={() => { setEditingTicket(null); reloadTickets(); }}
+                    />
+                )}
                 {meeting && <MeetingModal meeting={meeting} user={user} people={people} onClose={() => setMeeting(null)} onChange={() => { setMeeting(null); reloadSchedule(); }} />}
                 {newMeetingDay && <MeetingFormModal dateKey={newMeetingDay} people={people} onClose={() => setNewMeetingDay(null)} onSaved={() => { setNewMeetingDay(null); reloadSchedule(); }} />}
             </div>
@@ -285,7 +311,7 @@ function DayModal({ dateKey, user, tickets, offs, notes, meetings, onClose, onCh
     );
 }
 
-function TicketModal({ ticket: t, onClose }) {
+function TicketModal({ ticket: t, onClose, canEdit, onEdit, onOpenInTickets }) {
     const row = (label, val) => val ? (
         <div style={{ display: 'flex', gap: 10, padding: '4px 0' }}>
             <span style={{ width: 90, color: 'var(--text-dim)', fontSize: 12, flexShrink: 0 }}>{label}</span>
@@ -311,7 +337,15 @@ function TicketModal({ ticket: t, onClose }) {
                 {t.description && (
                     <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border,#2a2d34)', fontSize: 13, color: 'var(--text)', whiteSpace: 'pre-wrap' }}>{t.description}</div>
                 )}
-                <div className="modal-actions"><button className="btn btn-ghost" onClick={onClose}>Close</button></div>
+                <div className="modal-actions" style={{ justifyContent: 'space-between' }}>
+                    <button className="btn btn-ghost" onClick={onOpenInTickets} title="Open this ticket on the Tickets page">
+                        Open in Tickets ↗
+                    </button>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                        {canEdit && <button className="btn btn-primary" onClick={onEdit}>Edit</button>}
+                        <button className="btn btn-ghost" onClick={onClose}>Close</button>
+                    </div>
+                </div>
             </div>
         </div>
     );

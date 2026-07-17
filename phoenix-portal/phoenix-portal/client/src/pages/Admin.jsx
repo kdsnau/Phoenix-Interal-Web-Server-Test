@@ -157,6 +157,12 @@ function CalendarTab() {
                     Rename the person’s portal account to start with that name, or ask to add an alias.
                 </div>
             )}
+            {result && result.unmatchedClients && result.unmatchedClients.length > 0 && (
+                <div style={{ fontSize: 12, color: 'var(--yellow)', marginTop: 10 }}>
+                    ⚠ Calendar client names not matched to a client (ticket left unlinked): {result.unmatchedClients.join(', ')}.
+                    The ticket is still created — rename the client to match, or the link fills in on the next sync once it does.
+                </div>
+            )}
         </div>
     );
 }

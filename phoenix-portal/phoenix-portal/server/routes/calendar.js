@@ -330,6 +330,46 @@ async function loadUserNameIndex() {
     }
     return idx;
 }
+/* Calendar event titles carry the client after the first '|', sometimes with a
+   city appended ("Alcuin Books - Scottsdale"). Normalise to alphanumerics so
+   punctuation and separators don't defeat the match. */
+function normalizeClientName(s) {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+/* normalised client name → id. A name shared by two clients maps to null: we
+   refuse to guess rather than tag the wrong one. */
+async function loadClientNameIndex() {
+    const r = await pool.query('SELECT id, name FROM clients').catch(() => ({ rows: [] }));
+    const idx = new Map();
+    for (const c of r.rows) {
+        const key = normalizeClientName(c.name);
+        if (!key) continue;
+        if (idx.has(key)) idx.set(key, null);      /* ambiguous */
+        else idx.set(key, c.id);
+    }
+    return idx;
+}
+
+/* Match an event's client text to a client id, or null. Exact first, then the
+   longest client name the text starts with — so "Alcuin Books - Scottsdale"
+   finds "Alcuin Books", and if both "Mountain" and "Mountain Springs" exist the
+   longer wins. Deliberately conservative: a wrong tag is worse than none. */
+function resolveClient(rawName, idx) {
+    const full = normalizeClientName(rawName);
+    if (!full) return null;
+    if (idx.has(full)) return idx.get(full);       /* may be null when ambiguous */
+
+    let best = null, bestLen = 0;
+    for (const [key, id] of idx) {
+        if (id == null || key.length < 4) continue;
+        if (full === key || full.startsWith(key + ' ')) {
+            if (key.length > bestLen) { best = id; bestLen = key.length; }
+        }
+    }
+    return best;
+}
+
 function resolveAssignees(names, idx) {
     const ids = [], unmatched = [];
     for (const n of names) {
@@ -355,52 +395,66 @@ function resolveAssignees(names, idx) {
    so a two-name event never lands with just one. When no name resolves, existing
    assignees are left untouched. Returns the set of names that matched no user. */
 async function upsertEventsAsTickets(events, createdBy) {
-    const nameIdx = await loadUserNameIndex();
+    const nameIdx   = await loadUserNameIndex();
+    const clientIdx = await loadClientNameIndex();
     let created = 0, updated = 0;
     const unmatchedSet = new Set();
+    const unmatchedClientSet = new Set();
     for (const ev of events) {
         if (!ev.uid || !ev.title) continue;
         const parsed = parseCalendarTitle(ev.title);
         if (!parsed) continue;                                 /* skip [OFF]/notes/info entries */
         const { ids: assignees, unmatched } = resolveAssignees(parsed.names, nameIdx);
         unmatched.forEach(n => unmatchedSet.add(n));
+
+        /* Tag the ticket to a client by name only. Nothing is copied off the
+           client record — a calendar ticket's title, location and timing come
+           from the event itself, so this is a link and nothing more. */
+        const clientId = resolveClient(parsed.client, clientIdx);
+        if (parsed.client && !clientId) unmatchedClientSet.add(parsed.client);
+
         const existing = await pool.query(
             `SELECT id FROM service_tickets WHERE google_event_id = $1`, [ev.uid]
         ).catch(() => ({ rows: [] }));
         if (existing.rows.length > 0) {
             /* Refresh title / description / timing; re-apply the calendar's
                assignees whenever it resolved at least one (else leave as-is).
-               Status is never touched. */
+               Same for the client link. Status is never touched. */
             await pool.query(
                 `UPDATE service_tickets SET
                      title = $1, description = $2, event_start = $3, event_end = $4, event_location = $5,
                      assignee_ids = CASE WHEN COALESCE(array_length($7::int[], 1), 0) > 0 THEN $7::int[] ELSE assignee_ids END,
-                     assigned_to  = CASE WHEN COALESCE(array_length($7::int[], 1), 0) > 0 THEN $8 ELSE assigned_to END
+                     assigned_to  = CASE WHEN COALESCE(array_length($7::int[], 1), 0) > 0 THEN $8 ELSE assigned_to END,
+                     client_id    = CASE WHEN $9::int IS NOT NULL THEN $9::int ELSE client_id END
                  WHERE google_event_id = $6`,
-                [parsed.title, ev.desc, ev.start, ev.end, ev.location, ev.uid, assignees, assignees[0] || null]
+                [parsed.title, ev.desc, ev.start, ev.end, ev.location, ev.uid, assignees, assignees[0] || null, clientId]
             );
             updated++;
         } else {
             await pool.query(
                 `INSERT INTO service_tickets
-                 (title, description, created_by, assigned_to, assignee_ids, source, google_event_id, event_start, event_end, event_location, status)
-                 VALUES ($1, $2, $3, $4, $5, 'calendar', $6, $7, $8, $9, 'open')`,
-                [parsed.title, ev.desc, createdBy, assignees[0] || null, assignees, ev.uid, ev.start, ev.end, ev.location]
+                 (title, description, created_by, assigned_to, assignee_ids, source, google_event_id, event_start, event_end, event_location, client_id, status)
+                 VALUES ($1, $2, $3, $4, $5, 'calendar', $6, $7, $8, $9, $10, 'open')`,
+                [parsed.title, ev.desc, createdBy, assignees[0] || null, assignees, ev.uid, ev.start, ev.end, ev.location, clientId]
             );
             created++;
         }
     }
-    return { created, updated, unmatched: [...unmatchedSet] };
+    return {
+        created, updated,
+        unmatched: [...unmatchedSet],
+        unmatchedClients: [...unmatchedClientSet],
+    };
 }
 
 /* Pull the configured iCal (.ics) feed and upsert its events as tickets.
    Used by the scheduled poll (createdBy null → system) and the manual endpoint. */
 async function syncOfficialToTickets(createdBy = null) {
     const icsUrl = await getSetting('official_ics_url');
-    if (!icsUrl) return { skipped: true, created: 0, updated: 0, total: 0, unmatched: [] };
+    if (!icsUrl) return { skipped: true, created: 0, updated: 0, total: 0, unmatched: [], unmatchedClients: [] };
     const events = await fetchIcsEvents(icsUrl);
-    const { created, updated, unmatched } = await upsertEventsAsTickets(events, createdBy);
-    return { created, updated, total: events.length, unmatched };
+    const { created, updated, unmatched, unmatchedClients } = await upsertEventsAsTickets(events, createdBy);
+    return { created, updated, total: events.length, unmatched, unmatchedClients };
 }
 
 function buildDescription(e) {
@@ -502,8 +556,8 @@ router.post('/sync', requireRole('admin', 'technician'), async (req, res) => {
             }));
     }
 
-    const { created, updated, unmatched } = await upsertEventsAsTickets(events, req.user.id);
-    res.json({ created, updated, total: events.length, source, unmatched });
+    const { created, updated, unmatched, unmatchedClients } = await upsertEventsAsTickets(events, req.user.id);
+    res.json({ created, updated, total: events.length, source, unmatched, unmatchedClients });
 });
 
 /* ── GET /api/calendar/auth-status — is the Google write/token connection live? */

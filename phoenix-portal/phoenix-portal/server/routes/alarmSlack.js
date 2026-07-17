@@ -54,6 +54,28 @@ function get(fields, keys) {
     return null;
 }
 
+/* Normalize a name for matching: lowercase, punctuation → spaces, collapse. */
+function norm(s) {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+/* A deliberately loose client↔message match. In order of looseness:
+   - either string contains the other (handles "Sunday Goods Surprise" vs
+     "Sunday Goods Surprise (BURG)");
+   - else all of the client's significant (3+ char) name words appear in the
+     haystack in any order (handles punctuation, word order, "- City" suffixes).
+   Requiring every significant word keeps it from matching on a lone common
+   word, so it's looser without becoming a free-for-all. */
+function looseMatch(clientName, haystack) {
+    const c = norm(clientName), h = norm(haystack);
+    if (!c || !h) return false;
+    if (h.includes(c) || c.includes(h)) return true;
+    const toks = c.split(' ').filter(t => t.length >= 3);
+    if (toks.length === 0) return false;
+    const hset = new Set(h.split(' '));
+    return toks.every(t => hset.has(t));
+}
+
 /* GET /api/alarm-slack/all */
 router.get('/all', async (req, res) => {
     try {
@@ -84,11 +106,10 @@ router.get('/client/:clientId', async (req, res) => {
             .filter(m => {
                 const fields  = parseFields(m.text);
                 const company = get(fields, ['Company name', 'Company', 'Site', 'Customer']);
-                if (company) {
-                    const co = company.toLowerCase();
-                    return co.includes(clientName) || clientName.includes(co);
-                }
-                return (m.text || '').toLowerCase().includes(clientName);
+                /* Match on the company field when present, but also always fall
+                   through to the whole message body — a message can name the
+                   client outside a tidy "Company name" field. */
+                return looseMatch(clientName, company) || looseMatch(clientName, m.text);
             })
             .map(m => ({
                 ts:     m.ts,

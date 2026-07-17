@@ -648,8 +648,6 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
 
     const [tab, setTab]           = useState('system');
     const [notes, setNotes]         = useState(client.notes || '');
-    const [billing, setBilling]     = useState(client.billing_amount || '');
-    const [billingFreq, setBillingFreq] = useState(client.billing_frequency || 'monthly');
     const [savingNotes, setSavingNotes] = useState(false);
 
     /* Inline rename (admin only) */
@@ -761,11 +759,10 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
         try {
             await api.patch(`/clients/${client.id}`, {
                 notes,
-                billing_amount: billing   || null,
-                billing_frequency: billingFreq || 'monthly',
-                /* permit_number / permit_expires are intentionally not sent: the
-                   fields were removed from the UI but the columns are kept, so
-                   omitting them from the PATCH leaves existing values untouched. */
+                /* billing_amount / billing_frequency are intentionally not sent:
+                   billing is set on the Admin page now, so re-sending stale values
+                   from here would clobber a concurrent admin edit. permit_* are
+                   likewise omitted (columns kept, UI removed). */
                 /* Site & contact are still sent so that someone who edits them and
                    reaches for this button doesn't lose the change; they also have
                    their own Save now. */
@@ -955,7 +952,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                 </div>
 
                 <div className="alarm-tabs">
-                    {['system', 'panel', 'tickets', 'cameras', 'notes', 'slack', 'sitemap', ...(canBilling ? ['billing', 'transactions'] : [])].map(t => (
+                    {['system', 'panel', 'tickets', 'cameras', 'slack', 'sitemap', ...(canBilling ? ['transactions'] : [])].map(t => (
                         <button key={t} className={`alarm-tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
                             {t === 'sitemap' ? 'Site Map' : t.charAt(0).toUpperCase() + t.slice(1)}
                         </button>
@@ -1094,6 +1091,14 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                                     {savingNotes ? 'Saving…' : 'Save'}
                                 </button>
                             </div>
+
+                            {/* Notes board (moved here from its own tab) — a running
+                               discussion any staff member can post to, below the
+                               single-field internal-notes box above. */}
+                            <div style={{ borderTop: '1px solid var(--border)', marginTop: 20, paddingTop: 16 }}>
+                                <div className="alarm-label" style={{ marginBottom: 8, fontWeight: 600 }}>Notes Board</div>
+                                <ClientBoard clientId={client.id} user={user} />
+                            </div>
                         </div>
                     )}
 
@@ -1190,42 +1195,9 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                         <ClientCamerasTab clientId={client.id} />
                     )}
 
-                    {/* NOTES TAB — per-client board any staff member can post to */}
-                    {tab === 'notes' && (
-                        <ClientBoard clientId={client.id} user={user} />
-                    )}
-
                     {/* SLACK TAB — alarm-signal Slack messages matched to this client */}
                     {tab === 'slack' && (
                         <ClientSlackTab clientId={client.id} />
-                    )}
-
-                    {/* BILLING TAB */}
-                    {tab === 'billing' && canBilling && (
-                        <div className="alarm-section">
-                            <div className="alarm-label">Recurring Billing Amount</div>
-                            <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                                <input
-                                    className="alarm-input"
-                                    type="number"
-                                    step="0.01"
-                                    placeholder="0.00"
-                                    value={billing}
-                                    onChange={e => setBilling(e.target.value)}
-                                    style={{ width: '160px' }}
-                                />
-                                <select
-                                    className="alarm-select"
-                                    value={billingFreq}
-                                    onChange={e => setBillingFreq(e.target.value)}
-                                >
-                                    <option value="monthly">Monthly</option>
-                                    <option value="quarterly">Quarterly</option>
-                                    <option value="yearly">Yearly</option>
-                                </select>
-                                <button className="btn btn-primary" onClick={saveNotes}>Save</button>
-                            </div>
-                        </div>
                     )}
 
                     {/* TRANSACTIONS TAB */}

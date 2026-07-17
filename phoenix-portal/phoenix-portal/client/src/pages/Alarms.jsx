@@ -502,10 +502,11 @@ function ClientCamerasTab({ clientId }) {
 }
 
 /* -----------------------------------------------------------------------
-   Slack activity for one client — the alarm-signal channel, filtered to this
-   client by name on the server (/alarm-slack/client/:id). The server matches
-   the "Company name" field, so a client "Sunday Goods Surprise" picks up
-   messages tagged "Sunday Goods Surprise (BURG)".
+   Slack activity for one client — merged from the alarm-signal channel and the
+   project-reports channel, filtered to this client by name on the server
+   (/alarm-slack/client/:id). Each message carries a `source` ("Alarm" or
+   "Project") so a project client (e.g. Terros Health) sees its project posts
+   here too.
    ----------------------------------------------------------------------- */
 function ClientSlackTab({ clientId }) {
     const [messages, setMessages] = useState([]);
@@ -532,8 +533,9 @@ function ClientSlackTab({ clientId }) {
                 <div className="alarm-slack-empty">No Slack messages matched to this client.</div>
             )}
             {messages.map(m => (
-                <div key={m.ts} className="alarm-slack-msg">
-                    <div className="alarm-slack-date">
+                <div key={`${m.source || ''}-${m.ts}`} className="alarm-slack-msg">
+                    <div className="alarm-slack-date" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {m.source && <span className={m.source === 'Project' ? 'tag-purple' : 'tag-yellow'}>{m.source}</span>}
                         {new Date(m.date).toLocaleString('en-US', {
                             month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
                         })}

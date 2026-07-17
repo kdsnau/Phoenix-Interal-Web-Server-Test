@@ -737,6 +737,7 @@ export default function Tickets() {
     const [editTicket,  setEditTicket]  = useState(null);
     const [statusFilter, setStatusFilter] = useState('all');
     const [drafts,      setDrafts]      = useState([]);
+    const [loadError,   setLoadError]   = useState('');
     const [searchParams, setSearchParams] = useSearchParams();
 
     const loadDrafts = () => api.get('/tickets', { params: { drafts: 1 } })
@@ -750,7 +751,12 @@ export default function Tickets() {
             ]);
             setTickets(t.data);
             setTechnicians(tech.data);
+            setLoadError('');
             loadDrafts();
+        } catch (e) {
+            /* Don't fail silently — an empty list used to look like "all tickets
+               gone" when the request actually errored. */
+            setLoadError(e.response?.data?.error || 'Could not load tickets.');
         } finally {
             setLoading(false);
         }
@@ -824,6 +830,7 @@ export default function Tickets() {
             </div>
 
             {loading && <p style={{ color: 'var(--text-dim)' }}>Loading...</p>}
+            {!loading && loadError && <div className="error-msg" style={{ marginBottom: 16 }}>{loadError}</div>}
 
             {!loading && (() => {
                 const STATUS_TABS = [

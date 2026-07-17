@@ -28,6 +28,12 @@ const upload = multer({
 });
 
 /* ── Schema migrations ────────────────────────────────────────────────── */
+/* status is the ticket_status ENUM (open|in_progress|resolved|closed). 'draft'
+   must be a member before a draft ticket can be stored. Runs standalone (not in
+   a txn), so the new value is usable by later requests. The list query compares
+   status AS TEXT, so it never depends on this having landed — a missing 'draft'
+   value can't break the main ticket list. */
+pool.query(`ALTER TYPE ticket_status ADD VALUE IF NOT EXISTS 'draft'`).catch(() => {});
 pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS event_end TIMESTAMP`).catch(() => {});
 pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS site_map_file TEXT`).catch(() => {});
 pool.query(`ALTER TABLE service_tickets ADD COLUMN IF NOT EXISTS ticket_type TEXT NOT NULL DEFAULT 'Service'`).catch(() => {});
@@ -95,9 +101,12 @@ router.get('/', requireRole('technician', 'admin'), async (req, res) => {
         /* Drafts are work-in-progress and private to their creator. ?drafts=1
            returns only the caller's drafts; the normal list excludes all drafts
            (so they stay off the ticket table, the calendar and client tabs). */
+        /* Compare status AS TEXT throughout: a bare 'draft' literal would be cast
+           to the ticket_status enum and error out if that value isn't defined,
+           taking down the whole list. ::text never casts the literal to the enum. */
         if (req.query.drafts === '1' || req.query.drafts === 'true') {
             const result = await pool.query(
-                q + ` WHERE t.status = 'draft' AND t.created_by = $1 ORDER BY t.created_at DESC`,
+                q + ` WHERE t.status::text = 'draft' AND t.created_by = $1 ORDER BY t.created_at DESC`,
                 [req.user.id]
             );
             return res.json(result.rows);
@@ -105,10 +114,10 @@ router.get('/', requireRole('technician', 'admin'), async (req, res) => {
 
         let result;
         if (req.user.role === 'admin') {
-            result = await pool.query(q + ` WHERE t.status IS DISTINCT FROM 'draft' ORDER BY t.created_at DESC`);
+            result = await pool.query(q + ` WHERE t.status::text IS DISTINCT FROM 'draft' ORDER BY t.created_at DESC`);
         } else {
             result = await pool.query(
-                q + ` WHERE t.status IS DISTINCT FROM 'draft' AND (t.created_by = $1 OR $1 = ANY(t.assignee_ids)) ORDER BY t.created_at DESC`,
+                q + ` WHERE t.status::text IS DISTINCT FROM 'draft' AND (t.created_by = $1 OR $1 = ANY(t.assignee_ids)) ORDER BY t.created_at DESC`,
                 [req.user.id]
             );
         }

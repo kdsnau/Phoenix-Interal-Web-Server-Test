@@ -502,6 +502,57 @@ function ClientCamerasTab({ clientId }) {
 }
 
 /* -----------------------------------------------------------------------
+   Slack activity for one client — the alarm-signal channel, filtered to this
+   client by name on the server (/alarm-slack/client/:id). The server matches
+   the "Company name" field, so a client "Sunday Goods Surprise" picks up
+   messages tagged "Sunday Goods Surprise (BURG)".
+   ----------------------------------------------------------------------- */
+function ClientSlackTab({ clientId }) {
+    const [messages, setMessages] = useState([]);
+    const [loading,  setLoading]  = useState(true);
+    const [error,    setError]    = useState('');
+
+    useEffect(() => {
+        let cancelled = false;
+        setLoading(true);
+        setError('');
+        api.get(`/alarm-slack/client/${clientId}`)
+            .then(r => { if (!cancelled) setMessages(r.data.messages || []); })
+            .catch(err => { if (!cancelled) setError(err.response?.data?.error || 'Could not load Slack messages.'); })
+            .finally(() => { if (!cancelled) setLoading(false); });
+        return () => { cancelled = true; };
+    }, [clientId]);
+
+    if (loading) return <div className="alarm-empty">Loading Slack activity…</div>;
+    if (error)   return <div style={{ color: 'var(--red)', fontSize: 13 }}>{error}</div>;
+
+    return (
+        <div className="alarm-slack-feed">
+            {messages.length === 0 && (
+                <div className="alarm-slack-empty">No Slack messages matched to this client.</div>
+            )}
+            {messages.map(m => (
+                <div key={m.ts} className="alarm-slack-msg">
+                    <div className="alarm-slack-date">
+                        {new Date(m.date).toLocaleString('en-US', {
+                            month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+                        })}
+                    </div>
+                    {m.fields
+                        ? Object.entries(m.fields).map(([label, val]) => (
+                            <div key={label} className="alarm-slack-field">
+                                <div className="alarm-slack-label">{label}</div>
+                                <div className="alarm-slack-val">{val}</div>
+                            </div>
+                        ))
+                        : <div className="alarm-slack-raw">{m.text}</div>}
+                </div>
+            ))}
+        </div>
+    );
+}
+
+/* -----------------------------------------------------------------------
    Locations in a rollup — tick several clients into the selected rollup at
    once, instead of opening each client and setting its dropdown. A client
    still belongs to at most one rollup (clients.rollup_id), so ticking a row
@@ -904,7 +955,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                 </div>
 
                 <div className="alarm-tabs">
-                    {['system', 'panel', 'tickets', 'cameras', 'notes', 'sitemap', ...(canBilling ? ['billing', 'transactions'] : [])].map(t => (
+                    {['system', 'panel', 'tickets', 'cameras', 'notes', 'slack', 'sitemap', ...(canBilling ? ['billing', 'transactions'] : [])].map(t => (
                         <button key={t} className={`alarm-tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
                             {t === 'sitemap' ? 'Site Map' : t.charAt(0).toUpperCase() + t.slice(1)}
                         </button>
@@ -1142,6 +1193,11 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                     {/* NOTES TAB — per-client board any staff member can post to */}
                     {tab === 'notes' && (
                         <ClientBoard clientId={client.id} user={user} />
+                    )}
+
+                    {/* SLACK TAB — alarm-signal Slack messages matched to this client */}
+                    {tab === 'slack' && (
+                        <ClientSlackTab clientId={client.id} />
                     )}
 
                     {/* BILLING TAB */}

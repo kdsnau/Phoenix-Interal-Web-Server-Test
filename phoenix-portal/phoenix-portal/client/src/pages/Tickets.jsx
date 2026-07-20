@@ -250,8 +250,31 @@ export function NewTicketModal({ onClose, onCreated, technicians, initialClient 
 
     const submit = (e) => { e.preventDefault(); create({ draft: false }); };
 
+    /* Anything the user has actually entered beyond what the form opened with
+       (initialClient pre-fills the title/client/location/POC). */
+    const isDirty = () =>
+        title.trim()    !== (initialClient?.name || '') ||
+        desc.trim()     !== '' ||
+        clientId        !== (initialClient?.id || '') ||
+        assigneeIds.length > 0 ||
+        eventStart      !== '' ||
+        eventEnd        !== '' ||
+        location.trim() !== (initialClient?.site_address || '') ||
+        pocName.trim()  !== (initialClient?.contact_name || '') ||
+        pocPhone.trim() !== (initialClient?.contact_phone || '') ||
+        pendingItems.length > 0;
+
+    /* Clicking off (the backdrop) auto-saves an in-progress ticket as a draft so
+       the work is never lost. An untouched form just closes — no point littering
+       the drafts list. Cancel stays the explicit "discard without saving" path. */
+    const dismiss = () => {
+        if (loading) return;                    // a save/create is already running
+        if (isDirty()) create({ draft: true });
+        else onClose();
+    };
+
     return (
-        <div className="modal-overlay" onClick={onClose}>
+        <div className="modal-overlay" onClick={dismiss}>
             <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
                 <div className="modal-title">New Service Ticket</div>
                 {error && <div className="error-msg">{error}</div>}
@@ -366,7 +389,7 @@ export function NewTicketModal({ onClose, onCreated, technicians, initialClient 
                     </div>
 
                     <div className="modal-actions" style={{ justifyContent: 'space-between' }}>
-                        <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                        <button type="button" className="btn btn-ghost" onClick={onClose} title="Discard without saving (clicking off saves a draft)">Cancel</button>
                         <div style={{ display: 'flex', gap: 8 }}>
                             {/* Save an unfinished ticket to come back to. No title needed. */}
                             <button type="button" className="btn btn-ghost" disabled={loading}
@@ -468,6 +491,15 @@ export function EditTicketModal({ ticket, technicians, onClose, onUpdated }) {
         }
     };
 
+    /* Clicking off keeps a draft's in-progress edits (saves it — still a draft);
+       a normal ticket's unsaved edits are discarded on click-off, as before —
+       auto-persisting half-finished edits to a live ticket would be riskier. */
+    const dismiss = () => {
+        if (saving) return;
+        if (isDraft) save();
+        else onClose();
+    };
+
     const uploadSiteMap = async (file) => {
         if (!file) return;
         setUploading(true); setError('');
@@ -487,7 +519,7 @@ export function EditTicketModal({ ticket, technicians, onClose, onUpdated }) {
     };
 
     return (
-        <div className="modal-overlay" onClick={onClose}>
+        <div className="modal-overlay" onClick={dismiss}>
             <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 520 }}>
                 <div className="modal-title">{isDraft ? `Draft #${ticket.id}` : `Edit Ticket #${ticket.id}`}</div>
                 {error && <div className="error-msg">{error}</div>}

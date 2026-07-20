@@ -197,7 +197,8 @@ export function NewTicketModal({ onClose, onCreated, technicians, initialClient 
 
     useEffect(() => {
         api.get('/inventory').then(r => setInv(r.data)).catch(() => {});
-        api.get('/clients').then(r => setClients(r.data)).catch(() => {});
+        /* all: 1 so project clients are linkable too, not just monitored ones. */
+        api.get('/clients', { params: { all: 1 } }).then(r => setClients(r.data)).catch(() => {});
     }, []);
 
     /* Pick a client → autofill the title, location, point of contact, and link
@@ -436,7 +437,7 @@ export function EditTicketModal({ ticket, technicians, onClose, onUpdated }) {
     const [saving,      setSaving]      = useState(false);
 
     useEffect(() => {
-        api.get('/clients').then(r => {
+        api.get('/clients', { params: { all: 1 } }).then(r => {
             setClients(r.data);
             const c = r.data.find(x => x.id === ticket.client_id);
             if (c) setClientName(c.name);

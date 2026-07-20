@@ -176,7 +176,8 @@ function BillingTab() {
     const origRef                 = useRef({});
 
     useEffect(() => {
-        api.get('/clients').then(r => {
+        /* all: 1 so billing can be set on project clients too, not just monitored. */
+        api.get('/clients', { params: { all: 1 } }).then(r => {
             setClients(r.data);
             origRef.current = Object.fromEntries(r.data.map(c => [c.id, c.billing_amount ?? '']));
         });

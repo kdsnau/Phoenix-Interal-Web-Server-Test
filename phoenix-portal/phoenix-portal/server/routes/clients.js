@@ -258,20 +258,24 @@ router.post('/', requireRole('admin'), async (req, res) => {
     }
 });
 
-/* GET /api/clients?service=&vendor=&search=&category=
+/* GET /api/clients?service=&vendor=&search=&category=&all=
    category='project' returns only install-only project clients; otherwise the
-   standard views exclude them so they don't flood the monitored/service tabs. */
+   standard views exclude them so they don't flood the monitored/service tabs.
+   Link pickers (tickets, billing, cameras, financials, rollups) pass ?all=1 to
+   get every client — project clients are first-class for linking, they just
+   keep their own tab on the Clients page instead of flooding "All". */
 router.get('/', authenticate, async (req, res) => {
-    const { service, vendor, search, category } = req.query;
+    const { service, vendor, search, category, all } = req.query;
     const conditions = [];
     const params     = [];
 
+    const includeProjects = category === 'project' || !!search || all === '1' || all === 'true';
     if (category === 'project') {
         conditions.push(`c.category = 'project'`);
-    } else if (!search) {
+    } else if (!includeProjects) {
         /* Normal views hide install-only project clients so they don't flood the
-           service tabs — but a search should find them too, even from outside
-           the Projects tab, so only exclude them when not searching. */
+           service tabs — but a search (or an explicit ?all=1 from a link picker)
+           should find them too, so only exclude them otherwise. */
         conditions.push(`c.category IS DISTINCT FROM 'project'`);
     }
 

@@ -25,7 +25,7 @@ function NewEntryModal({ onClose, onWorkOrder, onExpense }) {
     const [error, setError]   = useState('');
     const [loading, setLoading] = useState(false);
 
-    useEffect(() => { api.get('/clients').then(r => setClients(r.data)).catch(() => {}); }, []);
+    useEffect(() => { api.get('/clients', { params: { all: 1 } }).then(r => setClients(r.data)).catch(() => {}); }, []);
 
     async function submit(e) {
         e.preventDefault(); setError(''); setLoading(true);

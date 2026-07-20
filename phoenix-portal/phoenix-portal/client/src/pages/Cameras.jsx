@@ -83,7 +83,8 @@ function ServerModal({ existing, onClose, onSaved }) {
     const [clients, setClients] = useState([]);
 
     useEffect(() => {
-        api.get('/clients').then(r => setClients(r.data)).catch(() => {});
+        /* all: 1 so cameras can be linked to project clients too. */
+        api.get('/clients', { params: { all: 1 } }).then(r => setClients(r.data)).catch(() => {});
     }, []);
 
     function set(k, v) { setForm(f => ({ ...f, [k]: v })); }

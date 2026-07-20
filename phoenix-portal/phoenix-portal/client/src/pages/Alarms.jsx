@@ -568,7 +568,8 @@ function RollupLocations({ rollupId, currentClientId, onChanged }) {
 
     const load = () => {
         setLoading(true);
-        api.get('/clients')
+        /* all: 1 so a project client can be grouped into a multi-location rollup too. */
+        api.get('/clients', { params: { all: 1 } })
             .then(r => setAll(r.data))
             .catch(() => setAll([]))
             .finally(() => setLoading(false));

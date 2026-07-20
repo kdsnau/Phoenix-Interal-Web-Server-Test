@@ -283,7 +283,9 @@ router.get('/', authenticate, async (req, res) => {
     if (vendor)  { params.push(vendor);          conditions.push(`c.vendor = $${params.length}`); }
     if (search)  { params.push(`%${search}%`);  conditions.push(`(c.name ILIKE $${params.length} OR c.customer_id ILIKE $${params.length})`); }
 
-    const where = ' WHERE ' + conditions.join(' AND ');
+    /* ?all=1 with no other filter leaves conditions empty — must NOT emit a bare
+       "WHERE" (that's a syntax error that 500s the whole picker). */
+    const where = conditions.length ? ' WHERE ' + conditions.join(' AND ') : '';
     try {
         const result = await pool.query(
             `SELECT c.*, r.name AS rollup_name

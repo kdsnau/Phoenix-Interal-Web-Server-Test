@@ -40,7 +40,48 @@ function haversineMiles(a, b) {
 
 let officeCoords;   // memoized office lat/lng across requests
 
-/* Geocode an address to { lat, lng } via free OSM Nominatim, cached per address. */
+/* Nominatim asks for ≤1 request/second. Serialize every lookup through one queue
+   with a minimum gap so a timesheet build (many addresses back-to-back) doesn't
+   get throttled/blocked — which was silently zeroing out travel for perfectly
+   valid addresses. */
+let geoQueue  = Promise.resolve();
+let lastGeoAt = 0;
+function runGeocode(fn) {
+    const job = geoQueue.then(async () => {
+        const wait = 1100 - (Date.now() - lastGeoAt);
+        if (wait > 0) await new Promise(r => setTimeout(r, wait));
+        try { return await fn(); }
+        finally { lastGeoAt = Date.now(); }
+    });
+    geoQueue = job.then(() => {}, () => {});   // keep the queue alive past failures
+    return job;
+}
+
+/* One Nominatim free-text lookup → { lat, lng } | null. A non-OK HTTP status
+   (429/403 rate-limit) throws so it's treated as transient and NOT cached as a
+   miss — a throttled call shouldn't poison the address as "not found". */
+async function nominatim(q) {
+    const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(q);
+    const res = await fetch(url, { headers: { 'User-Agent': GEO_UA } });
+    if (!res.ok) throw new Error('nominatim ' + res.status);
+    const j   = await res.json();
+    const top = Array.isArray(j) && j[0];
+    return (top && top.lat != null) ? { lat: Number(top.lat), lng: Number(top.lon) } : null;
+}
+
+/* Drop a leading business/place-name prefix ("Hydro Extrusions, 402 N 54th Ave…")
+   → the substring from the first street-number token. Returns null when the
+   address already starts with a number (nothing to strip). Keeps the ZIP so we
+   don't drift to a wrong rooftop the way dropping the ZIP does. */
+function streetOnly(a) {
+    const m = String(a).match(/\d{1,6}\s+\S/);
+    return (m && m.index > 0) ? a.slice(m.index).trim() : null;
+}
+
+/* Geocode an address to { lat, lng } via free OSM Nominatim, cached per address.
+   Falls back to a business-name-stripped variant when the full string can't be
+   placed (Nominatim returns nothing when an unknown name leads the query, e.g.
+   "Marquee Theatre Tempe, 730 N Mill Ave, …"). */
 async function coordsFor(addrRaw) {
     const addr = normAddr(addrRaw);
     if (!addr) return null;
@@ -48,16 +89,17 @@ async function coordsFor(addrRaw) {
     if (hit && hit.rowCount) return { lat: Number(hit.rows[0].lat), lng: Number(hit.rows[0].lng) };
     if (typeof fetch !== 'function') return null;
     try {
-        const url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(addr);
-        const j   = await (await fetch(url, { headers: { 'User-Agent': GEO_UA } })).json();
-        const top = Array.isArray(j) && j[0];
-        if (!top || top.lat == null) {
+        let c = await runGeocode(() => nominatim(addr));
+        if (!c) {
+            const street = streetOnly(addr);
+            if (street) c = await runGeocode(() => nominatim(street));
+        }
+        if (!c) {
             await pool.query(
                 `INSERT INTO distance_cache (address, status, computed_at) VALUES ($1, 'NOT_FOUND', NOW())
                  ON CONFLICT (address) DO UPDATE SET status = 'NOT_FOUND', computed_at = NOW()`, [addr]).catch(() => {});
             return null;
         }
-        const c = { lat: Number(top.lat), lng: Number(top.lon) };
         await pool.query(
             `INSERT INTO distance_cache (address, lat, lng, computed_at) VALUES ($1, $2, $3, NOW())
              ON CONFLICT (address) DO UPDATE SET lat = EXCLUDED.lat, lng = EXCLUDED.lng, computed_at = NOW()`,

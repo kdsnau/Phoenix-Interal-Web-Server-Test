@@ -27,6 +27,9 @@ pool.query(`
         paid_at    TIMESTAMP
     )
 `).catch(() => {});
+/* RFQs (snapshot_entries) can link to a client; ensured here too so the
+   per-client query below is safe even if snapshot.js hasn't migrated yet. */
+pool.query('ALTER TABLE snapshot_entries ADD COLUMN IF NOT EXISTS client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL').catch(() => {});
 
 const WO_SELECT = `
     SELECT w.id, w.label, w.client_id, w.amount, w.status, w.created_at, w.updated_at, w.paid_at,
@@ -431,6 +434,91 @@ router.get('/mrr', requireRole('accounting', 'admin'), async (_req, res) => {
         const total_mrr = clients.reduce((s, c) => s + c.mrr, 0);
         res.json({ total_mrr, count: clients.length, clients });
     } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to load MRR.' }); }
+});
+
+/* ── Customer-centric views ──────────────────────────────────────────────── */
+
+/* GET /api/financials/clients — every client with any financial activity
+   (invoices/payments, work orders, RFQs, or recurring billing) plus rolled-up
+   balances and counts. Powers the clickable Clients list. */
+router.get('/clients', requireRole('accounting', 'admin'), async (_req, res) => {
+    try {
+        const r = await pool.query(`
+            SELECT c.id, c.name, c.customer_id, c.customer_number,
+                   COALESCE(ct.invoiced, 0)  AS invoiced,
+                   COALESCE(ct.paid, 0)      AS paid,
+                   COALESCE(ct.balance, 0)   AS balance,
+                   COALESCE(ct.tx_count, 0)  AS tx_count,
+                   COALESCE(wo.wo_count, 0)  AS wo_count,
+                   COALESCE(wo.wo_open, 0)   AS wo_open,
+                   COALESCE(rq.rfq_count, 0) AS rfq_count,
+                   COALESCE(c.billing_amount / CASE COALESCE(c.billing_frequency, 'monthly')
+                       WHEN 'quarterly' THEN 3.0 WHEN 'yearly' THEN 12.0 ELSE 1.0 END, 0) AS mrr
+            FROM clients c
+            LEFT JOIN (
+                SELECT client_id,
+                       SUM(amount) FILTER (WHERE type = 'invoice')                        AS invoiced,
+                       SUM(COALESCE(paid_amount, 0)) FILTER (WHERE type = 'invoice')
+                         + SUM(amount) FILTER (WHERE type = 'payment')                    AS paid,
+                       SUM(COALESCE(balance_due, amount)) FILTER (WHERE type = 'invoice') AS balance,
+                       COUNT(*)                                                           AS tx_count
+                FROM client_transactions WHERE client_id IS NOT NULL GROUP BY client_id
+            ) ct ON ct.client_id = c.id
+            LEFT JOIN (
+                SELECT client_id, COUNT(*) AS wo_count, COUNT(*) FILTER (WHERE status = 'open') AS wo_open
+                FROM work_orders WHERE client_id IS NOT NULL GROUP BY client_id
+            ) wo ON wo.client_id = c.id
+            LEFT JOIN (
+                SELECT client_id, COUNT(*) AS rfq_count
+                FROM snapshot_entries WHERE client_id IS NOT NULL GROUP BY client_id
+            ) rq ON rq.client_id = c.id
+            WHERE ct.client_id IS NOT NULL OR wo.client_id IS NOT NULL OR rq.client_id IS NOT NULL
+               OR (c.billing_amount IS NOT NULL AND c.billing_amount > 0)
+            ORDER BY balance DESC NULLS LAST, c.name
+        `);
+        res.json(r.rows);
+    } catch (err) { console.error('financials clients:', err); res.status(500).json({ error: 'Failed to load clients.' }); }
+});
+
+/* GET /api/financials/clients/:id — one client's full financial detail:
+   summary totals plus their invoices, payments, work orders and RFQs. */
+router.get('/clients/:id', requireRole('accounting', 'admin'), async (req, res) => {
+    const id = req.params.id;
+    try {
+        const cRes = await pool.query(
+            `SELECT id, name, customer_id, customer_number, services, billing_amount, billing_frequency,
+                    COALESCE(billing_amount / CASE COALESCE(billing_frequency, 'monthly')
+                        WHEN 'quarterly' THEN 3.0 WHEN 'yearly' THEN 12.0 ELSE 1.0 END, 0) AS mrr
+             FROM clients WHERE id = $1`, [id]);
+        if (cRes.rowCount === 0) return res.status(404).json({ error: 'Client not found.' });
+
+        const [txRes, woRes, rqRes] = await Promise.all([
+            pool.query(`SELECT id, description, amount, paid_amount, balance_due, type, date, created_at
+                        FROM client_transactions WHERE client_id = $1
+                        ORDER BY date DESC NULLS LAST, created_at DESC`, [id]),
+            pool.query(`${WO_SELECT} WHERE w.client_id = $1 ORDER BY w.created_at DESC`, [id]),
+            pool.query(`SELECT * FROM snapshot_entries WHERE client_id = $1 ORDER BY created_at DESC`, [id]),
+        ]);
+
+        const invoices = txRes.rows.filter(t => t.type === 'invoice');
+        const payments = txRes.rows.filter(t => t.type === 'payment');
+        const num = n => Number(n) || 0;
+        const invoiced = invoices.reduce((s, t) => s + num(t.amount), 0);
+        const paid     = invoices.reduce((s, t) => s + num(t.paid_amount), 0) + payments.reduce((s, t) => s + num(t.amount), 0);
+        const balance  = invoices.reduce((s, t) => s + (t.balance_due != null ? num(t.balance_due) : num(t.amount)), 0);
+
+        res.json({
+            client:  cRes.rows[0],
+            summary: {
+                invoiced, paid, balance,
+                invoice_count: invoices.length, payment_count: payments.length,
+                work_order_count: woRes.rows.length, rfq_count: rqRes.rows.length,
+            },
+            invoices, payments,
+            work_orders: woRes.rows,
+            rfqs: rqRes.rows,
+        });
+    } catch (err) { console.error('financials client detail:', err); res.status(500).json({ error: 'Failed to load client.' }); }
 });
 
 module.exports = router;

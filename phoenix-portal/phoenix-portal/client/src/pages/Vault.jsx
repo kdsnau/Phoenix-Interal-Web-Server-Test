@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 
 /* Admin credential vault. The page re-prompts for the vault password on every
    visit; the password is held only in component memory while unlocked and is
@@ -78,7 +79,7 @@ export default function Vault() {
     return (
         <Layout>
             <div className="page-header">
-                <h1 className="page-title">Vault</h1>
+                <h1 className="page-title">Vault<PageHelp id="vault" /></h1>
                 {phase === 'unlocked' && <button className="btn btn-ghost" onClick={lock}>🔒 Lock</button>}
             </div>
             {error && <div className="error-msg">{error}</div>}

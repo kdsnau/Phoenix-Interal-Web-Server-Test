@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 
 const daysUntil = d => d ? Math.ceil((new Date(d) - new Date()) / 86400000) : null;
 
@@ -155,7 +156,7 @@ export default function Licenses() {
         <Layout>
             <div className="licenses-page">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-                    <h1 className="page-title">Licenses</h1>
+                    <h1 className="page-title">Licenses<PageHelp id="licenses" /></h1>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         <input placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)} />
                         {isAdmin && <button className="btn btn-ghost" onClick={importDW} disabled={importing}>{importing ? 'Pulling…' : '⤓ Pull from DW Spectrum'}</button>}

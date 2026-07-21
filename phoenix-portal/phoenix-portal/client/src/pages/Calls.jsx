@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 import RoleBadge from '../components/RoleBadge';
 import useRoles from '../hooks/useRoles';
 import { useAuth } from '../context/AuthContext';
@@ -49,6 +50,7 @@ export default function Calls() {
                 <h1 className="page-title">
                     Customer-Service Calls
                     {data?.configured && <span>{calls.length} recent</span>}
+                    <PageHelp id="calls" />
                 </h1>
             </div>
 

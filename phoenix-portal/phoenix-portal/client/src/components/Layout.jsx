@@ -5,7 +5,7 @@ import api from '../api/client';
 import ChangePasswordModal from './ChangePasswordModal';
 import './Layout.css';
 
-const NAV = {
+export const NAV = {
     technician: [
         { divider: 'Operations' },
         { path: '/dashboard', label: 'Dashboard' },

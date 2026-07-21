@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 import './Financials.css';
 
 const SNAP_TYPES = [
@@ -90,7 +91,7 @@ export default function Snapshot() {
     return (
         <Layout>
             <div className="page-header">
-                <h1 className="page-title">Snapshot</h1>
+                <h1 className="page-title">Snapshot<PageHelp id="snapshot" /></h1>
             </div>
 
             <div className="fin-section-tabs" style={{ marginBottom: 12, alignItems: 'center' }}>

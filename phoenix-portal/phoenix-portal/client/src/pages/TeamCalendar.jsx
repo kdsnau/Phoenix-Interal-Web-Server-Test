@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 import RoleBadge from '../components/RoleBadge';
 import useRoles from '../hooks/useRoles';
 import { EditTicketModal } from './Tickets';
@@ -102,7 +103,7 @@ export default function TeamCalendar() {
         <Layout>
             <div className="teamcal-page">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 12 }}>
-                    <h1 className="page-title">Team Calendar</h1>
+                    <h1 className="page-title">Team Calendar<PageHelp id="team-calendar" /></h1>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         <button className="btn btn-ghost" onClick={() => step(-1)}>‹</button>
                         <span style={{ minWidth: 170, textAlign: 'center', fontWeight: 600 }}>{MONTHS[cursor.month]} {cursor.year}</span>

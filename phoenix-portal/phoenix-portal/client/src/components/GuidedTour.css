@@ -1,0 +1,61 @@
+/* Canvas-style guided tour: a blurred, dimmed backdrop with a sharp "spotlight"
+   cut out over the highlighted element, plus a floating explainer card.
+   The spotlight is built from four masking rectangles that frame the target,
+   so the target area stays un-blurred while everything around it is. */
+
+.tour-root { position: fixed; inset: 0; z-index: 4000; }
+
+.tour-mask {
+    position: absolute;
+    background: rgba(9, 13, 20, 0.60);
+    -webkit-backdrop-filter: blur(3px);
+    backdrop-filter: blur(3px);
+    pointer-events: auto;          /* swallow clicks so the page underneath is inert */
+}
+.tour-mask--full { inset: 0; width: 100vw; height: 100vh; }
+
+/* Transparent blocker over the spotlight so clicking the highlighted control
+   doesn't navigate away mid-tour — advance with the buttons instead. */
+.tour-hole-block { position: absolute; background: transparent; pointer-events: auto; }
+
+.tour-ring {
+    position: absolute;
+    pointer-events: none;
+    border-radius: 8px;
+    box-shadow: 0 0 0 2px var(--accent, #f6921e), 0 0 0 7px rgba(246, 146, 30, 0.22);
+    transition: top .22s ease, left .22s ease, width .22s ease, height .22s ease;
+}
+
+.tour-card {
+    position: absolute;
+    width: 340px;
+    max-width: calc(100vw - 28px);
+    background: var(--bg-2, #131a24);
+    border: 1px solid var(--border-hi, #2a3746);
+    border-radius: 10px;
+    padding: 16px 18px;
+    box-shadow: 0 14px 44px rgba(0, 0, 0, 0.5);
+    pointer-events: auto;
+    z-index: 4001;
+    animation: tour-pop .18s ease;
+}
+@keyframes tour-pop { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+
+.tour-step-count {
+    font-size: 11px;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    color: var(--text-dim, #6c7a8a);
+    letter-spacing: .09em;
+    margin-bottom: 6px;
+}
+.tour-card-title { font-size: 16px; font-weight: 600; color: var(--text-hi, #eaf0f6); margin-bottom: 6px; }
+.tour-card-body  { font-size: 13.5px; line-height: 1.55; color: var(--text, #c9d4e0); margin-bottom: 14px; }
+
+.tour-card-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.tour-skip {
+    background: none; border: none; padding: 4px;
+    color: var(--text-dim, #6c7a8a); font-size: 12px; cursor: pointer;
+}
+.tour-skip:hover { color: var(--text-hi, #eaf0f6); text-decoration: underline; }
+.tour-nav-btns { display: flex; gap: 8px; }
+.tour-btn { padding: 6px 16px; font-size: 13px; }

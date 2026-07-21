@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 import { useAuth } from '../context/AuthContext';
 
 const TABS = [
@@ -63,7 +64,7 @@ export default function TechNotes() {
     return (
         <Layout>
             <div className="page-header">
-                <h1 className="page-title">Technician&apos;s Notes</h1>
+                <h1 className="page-title">Technician&apos;s Notes<PageHelp id="tech-notes" /></h1>
                 {isAdmin && sections && !editing && (
                     <button className="btn btn-ghost" onClick={startEdit}>✎ Edit</button>
                 )}

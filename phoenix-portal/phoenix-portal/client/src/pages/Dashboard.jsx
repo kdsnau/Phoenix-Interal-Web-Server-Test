@@ -4,6 +4,8 @@ import { useAuth } from '../context/AuthContext';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import PageHelp from '../components/PageHelp';
+import GuidedTour from '../components/GuidedTour';
+import { buildTourSteps } from '../components/tourSteps';
 import Leaderboard from '../components/Leaderboard';
 import RoleBadge from '../components/RoleBadge';
 import useRoles from '../hooks/useRoles';
@@ -365,6 +367,17 @@ export default function Dashboard() {
     const [posts,      setPosts]      = useState([]);
     const [boardOpen,  setBoardOpen]  = useState(false);
     const [lastRead,   setLastRead]   = useState(() => localStorage.getItem('postBoardLastRead'));
+    const [tourOpen,   setTourOpen]   = useState(false);
+
+    /* First visit ever → auto-launch the guided tour once, so new hires get a
+       rundown of what their role can access. Marked seen when they finish/skip. */
+    useEffect(() => {
+        if (localStorage.getItem('phxTourSeen')) return;
+        const t = setTimeout(() => setTourOpen(true), 700);
+        return () => clearTimeout(t);
+    }, []);
+
+    const closeTour = () => { localStorage.setItem('phxTourSeen', '1'); setTourOpen(false); };
 
     useEffect(() => {
         async function load() {
@@ -408,14 +421,21 @@ export default function Dashboard() {
                     <span>{new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</span>
                     <PageHelp id="dashboard" />
                 </h1>
-                <button
-                    className={`btn btn-ghost board-btn ${hasUnread ? 'board-btn--unread' : ''}`}
-                    onClick={openBoard}
-                >
-                    📋 Board
-                    {hasUnread && <span className="board-badge">{unreadCount}</span>}
-                </button>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <button className="btn btn-ghost" onClick={() => setTourOpen(true)} title="Take a guided tour of the portal">
+                        🧭 Take a tour
+                    </button>
+                    <button
+                        className={`btn btn-ghost board-btn ${hasUnread ? 'board-btn--unread' : ''}`}
+                        onClick={openBoard}
+                    >
+                        📋 Board
+                        {hasUnread && <span className="board-badge">{unreadCount}</span>}
+                    </button>
+                </div>
             </div>
+
+            {tourOpen && <GuidedTour steps={buildTourSteps(user.role)} onClose={closeTour} />}
 
             {loading && <p style={{ color: 'var(--text-dim)' }}>Loading…</p>}
 

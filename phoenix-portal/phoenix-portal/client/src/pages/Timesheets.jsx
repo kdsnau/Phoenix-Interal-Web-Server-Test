@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
+import PageHelp from '../components/PageHelp';
 
 const isoDay  = d => d.toISOString().slice(0, 10);
 const fmtDate = d => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—';
@@ -65,7 +66,7 @@ export default function Timesheets() {
         <Layout>
             <div className="timesheets-page">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-                    <h1 className="page-title">Timesheets</h1>
+                    <h1 className="page-title">Timesheets<PageHelp id="timesheets" /></h1>
                     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                         <select value={userId} onChange={e => setUserId(e.target.value)}>
                             {staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}

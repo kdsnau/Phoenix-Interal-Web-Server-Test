@@ -1,0 +1,79 @@
+/* A print-optimized "Estimate" (RFQ) document that matches the Phoenix
+   Surveillance estimate PDF. Always black-on-white paper, independent of the
+   app theme. On print, only the paper shows; the toolbar/backdrop are hidden. */
+
+.est-overlay {
+    position: fixed; inset: 0; z-index: 4000;
+    background: rgba(0, 0, 0, 0.6);
+    overflow: auto; padding: 24px;
+    display: flex; flex-direction: column; align-items: center; gap: 14px;
+}
+
+.est-toolbar {
+    display: flex; gap: 10px; align-items: center;
+    position: sticky; top: 0; z-index: 2;
+}
+
+/* The paper */
+.est-paper {
+    background: #fff; color: #111;
+    width: 8.5in; max-width: 100%;
+    box-sizing: border-box;
+    padding: 0.5in 0.55in;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 11px; line-height: 1.35;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+}
+
+.est-head { display: grid; grid-template-columns: 1.1fr 0.9fr 1fr; gap: 10px; align-items: start; }
+.est-co-name { font-weight: 700; font-size: 12px; text-align: center; }
+.est-co-sub  { text-align: center; font-size: 10px; }
+.est-title-big { font-size: 30px; font-weight: 700; text-align: center; align-self: center; }
+.est-meta { font-size: 10px; text-align: center; }
+.est-meta .roc { font-weight: 700; }
+.est-meta-fields { margin-top: 8px; }
+.est-meta-fields div { text-align: center; }
+
+.est-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 18px; }
+.est-block-label { font-weight: 700; border-bottom: 1px solid #111; padding-bottom: 2px; margin-bottom: 4px; }
+.est-block-body { white-space: pre-line; }
+
+.est-jobtitle { text-align: center; margin-top: 20px; position: relative; }
+.est-jobtitle .t { font-size: 18px; font-weight: 700; letter-spacing: 0.02em; }
+.est-jobtitle .s { font-size: 12px; }
+.est-jobtitle .po { position: absolute; right: 0; top: 2px; text-align: left; font-size: 10px; }
+
+.est-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+.est-table th {
+    background: #111; color: #fff; font-size: 11px; text-align: center;
+    padding: 3px 6px; border: 1px solid #111;
+}
+.est-table th.desc { text-align: center; }
+.est-table td { border-left: 1px solid #111; border-right: 1px solid #111; padding: 3px 6px; vertical-align: top; font-size: 10.5px; }
+.est-table td.item { width: 8%; }
+.est-table td.desc { white-space: pre-line; }
+.est-table td.num { text-align: right; width: 11%; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.est-table tr.section td { font-weight: 700; }
+.est-table tbody tr:last-child td { border-bottom: 1px solid #111; }
+
+.est-total-row { display: flex; justify-content: flex-end; margin-top: 0; }
+.est-total-box {
+    border: 1px solid #111; border-top: none;
+    display: flex; align-items: center; gap: 16px;
+    padding: 6px 12px; font-size: 16px; font-weight: 700;
+    min-width: 3in; justify-content: space-between;
+}
+
+.est-foot { margin-top: 26px; font-size: 10px; }
+.est-sign { display: flex; gap: 24px; align-items: flex-end; margin-bottom: 12px; }
+.est-sign .line { border-bottom: 1px solid #111; flex: 1; height: 14px; }
+.est-terms { font-style: italic; }
+
+@media print {
+    body * { visibility: hidden !important; }
+    .est-paper, .est-paper * { visibility: visible !important; }
+    .est-overlay { position: static; padding: 0; background: none; overflow: visible; display: block; }
+    .est-paper { box-shadow: none; width: 100%; padding: 0.35in 0.4in; }
+    .est-toolbar { display: none !important; }
+    @page { size: letter portrait; margin: 0.4in; }
+}

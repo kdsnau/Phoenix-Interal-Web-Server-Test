@@ -148,6 +148,8 @@ pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_inspection DATE`).
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS next_inspection DATE`).catch(() => {});
 /* Recurring billing frequency: monthly | quarterly | yearly */
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS billing_frequency TEXT DEFAULT 'monthly'`).catch(() => {});
+/* Anchor date for the annual recurring auto-invoice (see financials.js). */
+pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS billing_anchor DATE`).catch(() => {});
 /* Scheduled maintenance — auto-generates a calendar ticket when due */
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS maintenance_enabled   BOOLEAN DEFAULT FALSE`).catch(() => {});
 pool.query(`ALTER TABLE clients ADD COLUMN IF NOT EXISTS maintenance_frequency TEXT`).catch(() => {});
@@ -1176,6 +1178,12 @@ router.patch('/:id', authenticate, async (req, res) => {
 
         for (const f of FIELDS) {
             if (f in req.body) add(f, req.body[f] ?? null);
+        }
+
+        /* Starting recurring billing anchors the annual auto-invoice cycle (kept
+           once set; the yearly invoice generates on this anchor's anniversary). */
+        if ('billing_amount' in req.body && Number(req.body.billing_amount) > 0) {
+            sets.push('billing_anchor = COALESCE(billing_anchor, CURRENT_DATE)');
         }
 
         /* Service-type reassignment is admin-only. Sanitize to the known set; an

@@ -30,6 +30,67 @@ pool.query(`
 /* RFQs (snapshot_entries) can link to a client; ensured here too so the
    per-client query below is safe even if snapshot.js hasn't migrated yet. */
 pool.query('ALTER TABLE snapshot_entries ADD COLUMN IF NOT EXISTS client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL').catch(() => {});
+/* Manually "pin" a client onto the Financials → Clients list even before they
+   have any activity (invoices/work orders/RFQs). Automatic inclusion stays. */
+pool.query('ALTER TABLE clients ADD COLUMN IF NOT EXISTS financials_pinned BOOLEAN DEFAULT FALSE').catch(() => {});
+/* Portal-created records get source='portal' so a QuickBooks re-import can't
+   duplicate or wipe them; imported rows keep/get the default 'quickbooks'. */
+pool.query("ALTER TABLE client_transactions ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'quickbooks'").catch(() => {});
+pool.query('ALTER TABLE client_transactions ADD COLUMN IF NOT EXISTS paid_amount NUMERIC').catch(() => {});
+pool.query('ALTER TABLE client_transactions ADD COLUMN IF NOT EXISTS balance_due NUMERIC').catch(() => {});
+/* A paid work order auto-generates one payment; the link prevents doubles. */
+pool.query('ALTER TABLE work_orders ADD COLUMN IF NOT EXISTS payment_tx_id INTEGER').catch(() => {});
+/* Recurring-billing anchor + last annual-invoice timestamp drive the yearly
+   auto-invoice. Backfill existing recurring clients to today so they DON'T get
+   a backlog — their first auto-invoice lands a year from now, not immediately. */
+const annualReady = (async () => {
+    await pool.query('ALTER TABLE clients ADD COLUMN IF NOT EXISTS billing_anchor DATE').catch(() => {});
+    await pool.query('ALTER TABLE clients ADD COLUMN IF NOT EXISTS last_annual_invoice_at TIMESTAMP').catch(() => {});
+    await pool.query('UPDATE clients SET billing_anchor = CURRENT_DATE WHERE billing_amount > 0 AND billing_anchor IS NULL').catch(() => {});
+})();
+
+/* Generate the annual recurring invoice for any client whose billing anniversary
+   has come due (idempotent — at most one per client per year, gated by
+   last_annual_invoice_at). ARR = per-period amount normalized to a year. Runs
+   once on startup and then daily. Marked source='portal'. */
+async function generateAnnualInvoices() {
+    try {
+        await pool.query(`
+            WITH due AS (
+                SELECT id,
+                       ROUND(billing_amount * 12.0 / CASE COALESCE(billing_frequency, 'monthly')
+                           WHEN 'quarterly' THEN 3 WHEN 'yearly' THEN 12 ELSE 1 END, 2) AS arr
+                FROM clients
+                WHERE billing_amount > 0 AND billing_anchor IS NOT NULL
+                  AND CURRENT_DATE >= (COALESCE(last_annual_invoice_at::date, billing_anchor) + INTERVAL '1 year')
+            ),
+            ins AS (
+                INSERT INTO client_transactions (client_id, description, amount, paid_amount, balance_due, type, date, source)
+                SELECT id, 'Annual recurring billing — ' || TO_CHAR(CURRENT_DATE, 'YYYY'), arr, 0, arr, 'invoice', CURRENT_DATE, 'portal'
+                FROM due
+                RETURNING client_id
+            )
+            UPDATE clients SET last_annual_invoice_at = NOW() WHERE id IN (SELECT client_id FROM ins)
+        `);
+    } catch (err) { console.error('annual invoice generation:', err.message); }
+}
+annualReady.then(() => { generateAnnualInvoices(); setInterval(generateAnnualInvoices, 24 * 60 * 60 * 1000); });
+
+/* When a work order is (or becomes) closed & paid, auto-create one matching
+   payment — tracked via work_orders.payment_tx_id so it never doubles. */
+async function ensureWorkOrderPayment(woId) {
+    try {
+        const wq = await pool.query('SELECT id, label, client_id, amount, status, payment_tx_id FROM work_orders WHERE id = $1', [woId]);
+        const w = wq.rows[0];
+        if (!w || w.status !== 'closed_paid' || !w.client_id || w.payment_tx_id) return;
+        const tx = await pool.query(
+            `INSERT INTO client_transactions (client_id, description, amount, type, date, source)
+             VALUES ($1, $2, $3, 'payment', CURRENT_DATE, 'portal') RETURNING id`,
+            [w.client_id, `Work order #${w.id}: ${w.label}`, w.amount]
+        );
+        await pool.query('UPDATE work_orders SET payment_tx_id = $1 WHERE id = $2', [tx.rows[0].id, w.id]);
+    } catch (err) { console.error('WO payment auto-gen:', err.message); }
+}
 
 const WO_SELECT = `
     SELECT w.id, w.label, w.client_id, w.amount, w.status, w.created_at, w.updated_at, w.paid_at,
@@ -339,6 +400,7 @@ router.post('/work-orders', requireRole('accounting', 'admin'), async (req, res)
              VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
             [label.trim(), client_id || null, amount, status, req.user.id, status === 'closed_paid' ? new Date() : null]
         );
+        await ensureWorkOrderPayment(ins.rows[0].id);
         const full = await pool.query(`${WO_SELECT} WHERE w.id = $1`, [ins.rows[0].id]);
         res.status(201).json(full.rows[0]);
     } catch (err) { console.error(err); res.status(500).json({ error: 'Server error.' }); }
@@ -363,6 +425,7 @@ router.patch('/work-orders/:id', requireRole('accounting', 'admin'), async (req,
             [status || null, label || null, amount ?? null, 'client_id' in req.body, client_id || null, req.params.id]
         );
         if (r.rowCount === 0) return res.status(404).json({ error: 'Work order not found.' });
+        await ensureWorkOrderPayment(req.params.id);
         const full = await pool.query(`${WO_SELECT} WHERE w.id = $1`, [req.params.id]);
         res.json(full.rows[0]);
     } catch (err) { console.error(err); res.status(500).json({ error: 'Server error.' }); }
@@ -444,7 +507,7 @@ router.get('/mrr', requireRole('accounting', 'admin'), async (_req, res) => {
 router.get('/clients', requireRole('accounting', 'admin'), async (_req, res) => {
     try {
         const r = await pool.query(`
-            SELECT c.id, c.name, c.customer_id, c.customer_number,
+            SELECT c.id, c.name, c.customer_id, c.customer_number, c.financials_pinned,
                    COALESCE(ct.invoiced, 0)  AS invoiced,
                    COALESCE(ct.paid, 0)      AS paid,
                    COALESCE(ct.balance, 0)   AS balance,
@@ -474,6 +537,7 @@ router.get('/clients', requireRole('accounting', 'admin'), async (_req, res) => 
             ) rq ON rq.client_id = c.id
             WHERE ct.client_id IS NOT NULL OR wo.client_id IS NOT NULL OR rq.client_id IS NOT NULL
                OR (c.billing_amount IS NOT NULL AND c.billing_amount > 0)
+               OR c.financials_pinned = TRUE
             ORDER BY balance DESC NULLS LAST, c.name
         `);
         res.json(r.rows);
@@ -486,7 +550,7 @@ router.get('/clients/:id', requireRole('accounting', 'admin'), async (req, res) 
     const id = req.params.id;
     try {
         const cRes = await pool.query(
-            `SELECT id, name, customer_id, customer_number, services, billing_amount, billing_frequency,
+            `SELECT id, name, customer_id, customer_number, services, billing_amount, billing_frequency, financials_pinned,
                     COALESCE(billing_amount / CASE COALESCE(billing_frequency, 'monthly')
                         WHEN 'quarterly' THEN 3.0 WHEN 'yearly' THEN 12.0 ELSE 1.0 END, 0) AS mrr
              FROM clients WHERE id = $1`, [id]);
@@ -519,6 +583,40 @@ router.get('/clients/:id', requireRole('accounting', 'admin'), async (req, res) 
             rfqs: rqRes.rows,
         });
     } catch (err) { console.error('financials client detail:', err); res.status(500).json({ error: 'Failed to load client.' }); }
+});
+
+/* POST /api/financials/clients/:id/pin — manually add a client to the Financials
+   list. DELETE removes the pin (only affects clients with no other activity). */
+router.post('/clients/:id/pin', requireRole('accounting', 'admin'), async (req, res) => {
+    try {
+        const r = await pool.query('UPDATE clients SET financials_pinned = TRUE WHERE id = $1 RETURNING id', [req.params.id]);
+        if (r.rowCount === 0) return res.status(404).json({ error: 'Client not found.' });
+        res.json({ ok: true });
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to add client.' }); }
+});
+router.delete('/clients/:id/pin', requireRole('accounting', 'admin'), async (req, res) => {
+    try {
+        const r = await pool.query('UPDATE clients SET financials_pinned = FALSE WHERE id = $1 RETURNING id', [req.params.id]);
+        if (r.rowCount === 0) return res.status(404).json({ error: 'Client not found.' });
+        res.json({ ok: true });
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to remove client.' }); }
+});
+
+/* POST /api/financials/payments { client_id, amount, description, date? }
+   Record a payment directly against a client. Marked source='portal'. */
+router.post('/payments', requireRole('accounting', 'admin'), async (req, res) => {
+    const { client_id, amount, description, date } = req.body;
+    if (!client_id) return res.status(400).json({ error: 'A client is required.' });
+    if (amount == null || isNaN(amount) || Number(amount) <= 0) return res.status(400).json({ error: 'Amount must be a positive number.' });
+    try {
+        const r = await pool.query(
+            `INSERT INTO client_transactions (client_id, description, amount, type, date, source, created_by)
+             VALUES ($1, $2, $3, 'payment', COALESCE($4::date, CURRENT_DATE), 'portal', $5)
+             RETURNING id, description, amount, type, date, created_at`,
+            [client_id, (description || 'Payment').trim(), amount, date || null, req.user.id]
+        );
+        res.status(201).json(r.rows[0]);
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to add payment.' }); }
 });
 
 module.exports = router;

@@ -48,12 +48,14 @@ function fields(body) {
     const clientId = num(body.client_id);
     /* Line items → [{ item, description, rate, qty }]; null means "not provided"
        (PATCH keeps the existing items) vs [] which clears them. */
+    const invId = v => { const n = Number(v); return (v === '' || v == null || !Number.isInteger(n) || n <= 0) ? null : n; };
     const line_items = Array.isArray(body.line_items)
         ? body.line_items.map(li => ({
             item:        String(li.item ?? '').slice(0, 160),
             description: String(li.description ?? '').slice(0, 4000),
             rate:        num(li.rate),
             qty:         num(li.qty),
+            inventory_item_id: invId(li.inventory_item_id),
         }))
         : null;
     return {

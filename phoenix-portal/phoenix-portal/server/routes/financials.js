@@ -52,6 +52,18 @@ pool.query(`ALTER TABLE work_orders
     ADD COLUMN IF NOT EXISTS contact_phone   TEXT,
     ADD COLUMN IF NOT EXISTS job_site        TEXT,
     ADD COLUMN IF NOT EXISTS line_items      JSONB DEFAULT '[]'::jsonb`).catch(() => {});
+/* Per-work-order stock ledger: how much of each inventory item THIS work order
+   has deducted from on-hand stock. Lets edits apply only the delta and lets a
+   delete restore. No FK constraints (avoids a create-order race with the
+   work_orders / inventory_items tables); rows are cleaned up in code. */
+pool.query(`
+    CREATE TABLE IF NOT EXISTS work_order_stock (
+        work_order_id     INTEGER NOT NULL,
+        inventory_item_id INTEGER NOT NULL,
+        quantity          NUMERIC NOT NULL DEFAULT 0,
+        PRIMARY KEY (work_order_id, inventory_item_id)
+    )
+`).catch(() => {});
 /* Recurring-billing anchor + last annual-invoice timestamp drive the yearly
    auto-invoice. Backfill existing recurring clients to today so they DON'T get
    a backlog — their first auto-invoice lands a year from now, not immediately. */
@@ -104,6 +116,63 @@ async function ensureWorkOrderPayment(woId) {
     } catch (err) { console.error('WO payment auto-gen:', err.message); }
 }
 
+/* Reconcile the inventory a work order consumes against on-hand stock.
+   work_order_stock records how much THIS work order has already deducted per
+   item, so an edit applies only the delta (qty changed, line removed/added) and
+   a delete can add it all back. Only call when line_items were actually sent —
+   the inline status-only PATCH omits them and must NOT touch stock. */
+async function applyWorkOrderStock(woId, lineItems) {
+    /* Desired deduction per item = sum of qty across linked lines. */
+    const desired = new Map();
+    for (const li of (Array.isArray(lineItems) ? lineItems : [])) {
+        const id = Number(li.inventory_item_id);
+        const q  = Number(li.qty);
+        if (!Number.isInteger(id) || id <= 0 || !Number.isFinite(q) || q <= 0) continue;
+        desired.set(id, (desired.get(id) || 0) + q);
+    }
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const prev = await client.query('SELECT inventory_item_id, quantity FROM work_order_stock WHERE work_order_id = $1', [woId]);
+        const already = new Map(prev.rows.map(r => [Number(r.inventory_item_id), Number(r.quantity)]));
+        const ids = new Set([...desired.keys(), ...already.keys()]);
+        for (const id of ids) {
+            const want  = desired.get(id) || 0;
+            const have  = already.get(id) || 0;
+            const delta = want - have;                       // >0 deduct more, <0 give back
+            if (delta !== 0)
+                await client.query('UPDATE inventory_items SET quantity = quantity - $1, updated_at = NOW() WHERE id = $2', [delta, id]);
+            if (want <= 0)
+                await client.query('DELETE FROM work_order_stock WHERE work_order_id = $1 AND inventory_item_id = $2', [woId, id]);
+            else if (want !== have)
+                await client.query(
+                    `INSERT INTO work_order_stock (work_order_id, inventory_item_id, quantity) VALUES ($1,$2,$3)
+                     ON CONFLICT (work_order_id, inventory_item_id) DO UPDATE SET quantity = EXCLUDED.quantity`,
+                    [woId, id, want]);
+        }
+        await client.query('COMMIT');
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('WO stock reconcile:', err.message);
+    } finally { client.release(); }
+}
+
+/* Give a work order's deducted stock back (used before deleting it). */
+async function restoreWorkOrderStock(woId) {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const prev = await client.query('SELECT inventory_item_id, quantity FROM work_order_stock WHERE work_order_id = $1', [woId]);
+        for (const r of prev.rows)
+            await client.query('UPDATE inventory_items SET quantity = quantity + $1, updated_at = NOW() WHERE id = $2', [Number(r.quantity), Number(r.inventory_item_id)]);
+        await client.query('DELETE FROM work_order_stock WHERE work_order_id = $1', [woId]);
+        await client.query('COMMIT');
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('WO stock restore:', err.message);
+    } finally { client.release(); }
+}
+
 const WO_SELECT = `
     SELECT w.id, w.label, w.client_id, w.amount, w.status, w.created_at, w.updated_at, w.paid_at,
            w.wo_number, w.customer_number, w.wo_date, w.scheduled, w.tech_on_site, w.contact_phone, w.job_site, w.line_items,
@@ -117,11 +186,13 @@ const WO_SELECT = `
    (null line_items means "not provided" — PATCH keeps the existing items). */
 function woFields(body) {
     const t = s => { const v = (s == null ? '' : String(s)).trim(); return v === '' ? null : v; };
+    const invId = v => { const n = Number(v); return (v === '' || v == null || !Number.isInteger(n) || n <= 0) ? null : n; };
     const line_items = Array.isArray(body.line_items)
         ? body.line_items.map(li => ({
             item:        String(li.item ?? '').slice(0, 160),
             description: String(li.description ?? '').slice(0, 4000),
             qty:         (li.qty === '' || li.qty == null) ? null : (Number.isFinite(Number(li.qty)) ? Number(li.qty) : null),
+            inventory_item_id: invId(li.inventory_item_id),
         }))
         : null;
     return {
@@ -446,6 +517,7 @@ router.post('/work-orders', requireRole('accounting', 'admin'), async (req, res)
              wf.line_items ? JSON.stringify(wf.line_items) : null]
         );
         await ensureWorkOrderPayment(ins.rows[0].id);
+        if (wf.line_items) await applyWorkOrderStock(ins.rows[0].id, wf.line_items);
         const full = await pool.query(`${WO_SELECT} WHERE w.id = $1`, [ins.rows[0].id]);
         res.status(201).json(full.rows[0]);
     } catch (err) { console.error(err); res.status(500).json({ error: 'Server error.' }); }
@@ -482,6 +554,7 @@ router.patch('/work-orders/:id', requireRole('accounting', 'admin'), async (req,
         );
         if (r.rowCount === 0) return res.status(404).json({ error: 'Work order not found.' });
         await ensureWorkOrderPayment(req.params.id);
+        if (wf.line_items) await applyWorkOrderStock(req.params.id, wf.line_items);
         const full = await pool.query(`${WO_SELECT} WHERE w.id = $1`, [req.params.id]);
         res.json(full.rows[0]);
     } catch (err) { console.error(err); res.status(500).json({ error: 'Server error.' }); }
@@ -490,6 +563,7 @@ router.patch('/work-orders/:id', requireRole('accounting', 'admin'), async (req,
 /* DELETE /api/financials/work-orders/:id — admin only */
 router.delete('/work-orders/:id', requireRole('admin'), async (req, res) => {
     try {
+        await restoreWorkOrderStock(req.params.id);   // give any deducted stock back first
         const r = await pool.query('DELETE FROM work_orders WHERE id = $1', [req.params.id]);
         if (r.rowCount === 0) return res.status(404).json({ error: 'Work order not found.' });
         res.json({ ok: true });

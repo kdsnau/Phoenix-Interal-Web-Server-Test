@@ -42,7 +42,7 @@ function ClientSelect({ clients, value, onChange, placeholder = '— none —' }
 /* -----------------------------------------------------------------------
    Create / edit a Work Order
    ----------------------------------------------------------------------- */
-function WorkOrderModal({ entry, clients, presetClientId, onSaved, onClose }) {
+function WorkOrderModal({ entry, clients, presetClientId, inventory = [], onSaved, onClose }) {
     const editing = !!entry;
     const [clientId, setClientId] = useState(entry?.client_id || presetClientId || '');
     const [label,    setLabel]    = useState(entry?.label || '');
@@ -122,7 +122,7 @@ function WorkOrderModal({ entry, clients, presetClientId, onSaved, onClose }) {
                     </div>
                     <div className="form-group" style={{ marginTop: 14 }}>
                         <label className="form-label">Line Items · Inventory Used</label>
-                        <LineItemsEditor items={lineItems} onChange={setLineItems} priced={false} />
+                        <LineItemsEditor items={lineItems} onChange={setLineItems} priced={false} inventory={inventory} />
                     </div>
 
                     {/* ── Filing (kept in the system, not printed on the form) ── */}
@@ -162,28 +162,90 @@ function WorkOrderModal({ entry, clients, presetClientId, onSaved, onClose }) {
    Line-items editor — rows of { item, description, rate?, qty }. `priced`
    shows the Rate column + a running total (RFQ estimate); off for Work Orders.
    ----------------------------------------------------------------------- */
-function LineItemsEditor({ items, onChange, priced = true }) {
+function LineItemsEditor({ items, onChange, priced = true, inventory = [] }) {
+    const [pickOpen, setPickOpen] = useState(false);
+    const [q,        setQ]        = useState('');
     const setRow = (i, patch) => onChange(items.map((r, idx) => idx === i ? { ...r, ...patch } : r));
     const addRow = () => onChange([...items, { item: '', description: '', rate: '', qty: '' }]);
     const delRow = (i) => onChange(items.filter((_, idx) => idx !== i));
+    /* Add a line linked to an inventory item: fills part #, description, and
+       (when priced) rate; remembers the item id so saving can deduct stock. */
+    const addFromInv = (it) => {
+        onChange([...items, {
+            item:        it.sku || it.mpn || '',
+            description: it.name || '',
+            rate:        priced ? (it.price != null ? String(it.price) : '') : '',
+            qty:         '1',
+            inventory_item_id: it.id,
+        }]);
+        setPickOpen(false); setQ('');
+    };
     const lt = r => (r.rate === '' || r.rate == null ? null : Number(r.rate) * (r.qty === '' || r.qty == null ? 1 : Number(r.qty)));
     const grand = items.reduce((s, r) => s + (lt(r) || 0), 0);
     const cols = priced ? '84px 1fr 74px 46px 26px' : '110px 1fr 46px 26px';
+
+    const invById = useMemo(() => { const m = new Map(); (inventory || []).forEach(it => m.set(it.id, it)); return m; }, [inventory]);
+    const matches = useMemo(() => {
+        const s = q.trim().toLowerCase();
+        const list = inventory || [];
+        return (s ? list.filter(it => [it.name, it.sku, it.mpn, it.category].some(v => v && String(v).toLowerCase().includes(s))) : list).slice(0, 40);
+    }, [q, inventory]);
+
     return (
         <div>
             <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 6, fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>
                 <span>Item</span><span>Description</span>{priced && <span>Rate</span>}<span>Qty</span><span />
             </div>
-            {items.map((r, i) => (
-                <div key={i} style={{ display: 'grid', gridTemplateColumns: cols, gap: 6, marginBottom: 6, alignItems: 'start' }}>
-                    <input value={r.item} onChange={e => setRow(i, { item: e.target.value })} style={{ fontSize: 12 }} />
-                    <textarea value={r.description} onChange={e => setRow(i, { description: e.target.value })} rows={1} style={{ fontSize: 12, resize: 'vertical' }} />
-                    {priced && <input type="number" step="0.01" value={r.rate} onChange={e => setRow(i, { rate: e.target.value })} style={{ fontSize: 12 }} />}
-                    <input type="number" step="1" value={r.qty} onChange={e => setRow(i, { qty: e.target.value })} style={{ fontSize: 12 }} />
-                    <button type="button" className="btn btn-ghost" style={{ padding: '2px 6px', color: 'var(--red)' }} onClick={() => delRow(i)}>✕</button>
-                </div>
-            ))}
-            <button type="button" className="btn btn-ghost" style={{ fontSize: 12 }} onClick={addRow}>+ Add line</button>
+            {items.map((r, i) => {
+                const inv    = r.inventory_item_id != null ? invById.get(r.inventory_item_id) : null;
+                const onHand = inv ? Number(inv.quantity) : null;
+                const short  = onHand != null && r.qty !== '' && r.qty != null && Number(r.qty) > onHand;
+                return (
+                    <div key={i} style={{ marginBottom: 6 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 6, alignItems: 'start' }}>
+                            <input value={r.item} onChange={e => setRow(i, { item: e.target.value })} style={{ fontSize: 12 }} />
+                            <textarea value={r.description} onChange={e => setRow(i, { description: e.target.value })} rows={1} style={{ fontSize: 12, resize: 'vertical' }} />
+                            {priced && <input type="number" step="0.01" value={r.rate} onChange={e => setRow(i, { rate: e.target.value })} style={{ fontSize: 12 }} />}
+                            <input type="number" step="1" value={r.qty} onChange={e => setRow(i, { qty: e.target.value })} style={{ fontSize: 12 }} />
+                            <button type="button" className="btn btn-ghost" style={{ padding: '2px 6px', color: 'var(--red)' }} onClick={() => delRow(i)}>✕</button>
+                        </div>
+                        {r.inventory_item_id != null && (
+                            <div style={{ fontSize: 10.5, marginTop: 2, marginLeft: 2, color: short ? 'var(--red)' : 'var(--text-dim)' }}>
+                                📦 linked{inv ? ` · ${onHand} on hand${!priced ? ' · will deduct on save' : ''}` : ' · item no longer in inventory'}{short ? ` · only ${onHand} available` : ''}
+                                <button type="button" onClick={() => setRow(i, { inventory_item_id: null })}
+                                    style={{ marginLeft: 6, background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer', textDecoration: 'underline', fontSize: 10.5, padding: 0 }}>unlink</button>
+                            </div>
+                        )}
+                    </div>
+                );
+            })}
+            <div style={{ display: 'flex', gap: 10, marginTop: 4, position: 'relative' }}>
+                <button type="button" className="btn btn-ghost" style={{ fontSize: 12 }} onClick={addRow}>+ Add line</button>
+                {inventory && inventory.length > 0 && (
+                    <button type="button" className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => setPickOpen(o => !o)}>📦 From inventory</button>
+                )}
+                {pickOpen && (
+                    <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, marginTop: 4, background: 'var(--bg-2)', border: '1px solid var(--border-hi)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,.35)', padding: 8, maxHeight: 280, overflowY: 'auto' }}>
+                        <input autoFocus value={q} onChange={e => setQ(e.target.value)} placeholder="Search inventory by name, SKU, MPN…" style={{ fontSize: 12, width: '100%', marginBottom: 6 }} />
+                        {matches.length === 0 ? (
+                            <div style={{ fontSize: 12, color: 'var(--text-dim)', padding: '6px 4px' }}>No matching items.</div>
+                        ) : matches.map(it => (
+                            <button type="button" key={it.id} onClick={() => addFromInv(it)}
+                                style={{ display: 'flex', justifyContent: 'space-between', gap: 8, width: '100%', textAlign: 'left', background: 'none', border: 'none', borderRadius: 6, padding: '6px 8px', cursor: 'pointer', fontSize: 12, color: 'var(--text)' }}
+                                onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-3)'}
+                                onMouseLeave={e => e.currentTarget.style.background = 'none'}>
+                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    <span style={{ fontWeight: 600 }}>{it.name}</span>
+                                    {(it.sku || it.mpn) && <span style={{ color: 'var(--text-dim)' }}> · {it.sku || it.mpn}</span>}
+                                </span>
+                                <span style={{ color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>
+                                    {priced && it.price != null ? `$${Number(it.price).toLocaleString(undefined, { minimumFractionDigits: 2 })} · ` : ''}{Number(it.quantity)} on hand
+                                </span>
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
             {priced && items.length > 0 && (
                 <div style={{ textAlign: 'right', marginTop: 6, fontWeight: 600 }}>Total: ${grand.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
             )}
@@ -194,7 +256,7 @@ function LineItemsEditor({ items, onChange, priced = true }) {
 /* -----------------------------------------------------------------------
    Create / edit an RFQ (snapshot_entries) — also an estimate document
    ----------------------------------------------------------------------- */
-function RfqModal({ entry, clients, presetClientId, presetCustomer, onSaved, onClose }) {
+function RfqModal({ entry, clients, presetClientId, presetCustomer, inventory = [], onSaved, onClose }) {
     const editing = !!entry;
     const [type,       setType]       = useState(entry?.type || 'in_progress');
     const [clientId,   setClientId]   = useState(entry?.client_id || presetClientId || '');
@@ -293,7 +355,7 @@ function RfqModal({ entry, clients, presetClientId, presetCustomer, onSaved, onC
                     </div>
                     <div className="form-group" style={{ marginTop: 14 }}>
                         <label className="form-label">Line Items</label>
-                        <LineItemsEditor items={lineItems} onChange={setLineItems} priced />
+                        <LineItemsEditor items={lineItems} onChange={setLineItems} priced inventory={inventory} />
                     </div>
 
                     {/* ── Internal tracking (kept in the system, not printed) ── */}
@@ -967,7 +1029,7 @@ function AddClientModal({ clients, existingIds, onAdded, onClose }) {
 /* -----------------------------------------------------------------------
    Client detail — summary + a tab per thing (Invoices / Payments / WO / RFQ)
    ----------------------------------------------------------------------- */
-function FinClientDetail({ clientId, clients, canManage, isAdmin, onBack, onChanged }) {
+function FinClientDetail({ clientId, clients, inventory = [], canManage, isAdmin, onBack, onChanged }) {
     const [data,  setData]  = useState(null);
     const [tab,   setTab]   = useState('invoices');
     const [error, setError] = useState('');
@@ -1049,11 +1111,11 @@ function FinClientDetail({ clientId, clients, canManage, isAdmin, onBack, onChan
             {tab === 'rfqs'        && <RfqsTable rfqs={rfqs} canManage={canManage} onEdit={e => setModal({ kind: 'rfq', entry: e })} onDelete={deleteRfq} onPrint={setPrintRfq} />}
 
             {modal?.kind === 'wo' && (
-                <WorkOrderModal entry={modal.entry} clients={clients} presetClientId={client.id}
+                <WorkOrderModal entry={modal.entry} clients={clients} presetClientId={client.id} inventory={inventory}
                     onSaved={afterChange} onClose={() => setModal(null)} />
             )}
             {modal?.kind === 'rfq' && (
-                <RfqModal entry={modal.entry} clients={clients} presetClientId={client.id} presetCustomer={client.name}
+                <RfqModal entry={modal.entry} clients={clients} presetClientId={client.id} presetCustomer={client.name} inventory={inventory}
                     onSaved={afterChange} onClose={() => setModal(null)} />
             )}
             {modal?.kind === 'payment' && (
@@ -1096,6 +1158,7 @@ export default function Financials() {
     const [inventory,  setInventory]  = useState(null);
     const [finClients, setFinClients] = useState(null);
     const [pickClients, setPickClients] = useState([]);   // for the modal selects
+    const [pickInventory, setPickInventory] = useState([]); // inventory catalog for line-item linking
     const [loading,    setLoading]    = useState(true);
     const [tab,        setTab]        = useState('overview');
     const [openClient, setOpenClient] = useState(null);   // client row being viewed
@@ -1108,7 +1171,7 @@ export default function Financials() {
     async function load() {
         setLoading(true);
         try {
-            const [sum, mon, mrrRes, wo, rfqRes, recs, fl, inv, fc, pc] = await Promise.all([
+            const [sum, mon, mrrRes, wo, rfqRes, recs, fl, inv, fc, pc, pinv] = await Promise.all([
                 api.get('/financials/summary').catch(() => ({ data: null })),
                 api.get('/financials/monthly').catch(() => ({ data: null })),
                 api.get('/financials/mrr').catch(() => ({ data: null })),
@@ -1119,10 +1182,12 @@ export default function Financials() {
                 api.get('/financials/inventory').catch(() => ({ data: null })),
                 api.get('/financials/clients').catch(() => ({ data: [] })),
                 api.get('/clients', { params: { all: 1 } }).catch(() => ({ data: [] })),
+                api.get('/inventory', { params: { active: true } }).catch(() => ({ data: [] })),
             ]);
             setSummary(sum.data); setMonthly(mon.data); setMrrData(mrrRes.data);
             setWorkOrders(wo.data); setRfqs(rfqRes.data); setRecords(recs.data);
             setFleet(fl.data); setInventory(inv.data); setFinClients(fc.data); setPickClients(pc.data);
+            setPickInventory(Array.isArray(pinv.data) ? pinv.data : []);
         } finally { setLoading(false); }
     }
     useEffect(() => { load(); }, []);
@@ -1131,19 +1196,22 @@ export default function Financials() {
         api.get('/financials/summary').then(r => setSummary(r.data)).catch(() => {});
         api.get('/financials/clients').then(r => setFinClients(r.data)).catch(() => {});
     };
+    /* Re-pull the catalog so on-hand counts stay current after a WO deducts stock. */
+    const reloadInventory = () => api.get('/inventory', { params: { active: true } })
+        .then(r => setPickInventory(Array.isArray(r.data) ? r.data : [])).catch(() => {});
 
     /* Work orders */
     const onWoSaved = (wo, editing) => {
         setWorkOrders(prev => editing ? prev.map(w => w.id === wo.id ? wo : w) : [wo, ...prev]);
-        refreshMoney();
+        refreshMoney(); reloadInventory();
     };
     const patchWo = async (id, body) => {
-        try { const { data } = await api.patch(`/financials/work-orders/${id}`, body); setWorkOrders(prev => prev.map(w => w.id === id ? data : w)); refreshMoney(); }
+        try { const { data } = await api.patch(`/financials/work-orders/${id}`, body); setWorkOrders(prev => prev.map(w => w.id === id ? data : w)); refreshMoney(); reloadInventory(); }
         catch (e) { console.error(e); }
     };
     const deleteWo = async (id) => {
         if (!confirm('Delete this work order?')) return;
-        try { await api.delete(`/financials/work-orders/${id}`); setWorkOrders(prev => prev.filter(w => w.id !== id)); refreshMoney(); }
+        try { await api.delete(`/financials/work-orders/${id}`); setWorkOrders(prev => prev.filter(w => w.id !== id)); refreshMoney(); reloadInventory(); }
         catch (e) { console.error(e); }
     };
 
@@ -1202,10 +1270,11 @@ export default function Financials() {
                         <FinClientDetail
                             clientId={openClient.id}
                             clients={pickClients}
+                            inventory={pickInventory}
                             canManage={canManage}
                             isAdmin={isAdmin}
                             onBack={() => setOpenClient(null)}
-                            onChanged={() => { refreshMoney(); api.get('/financials/work-orders').then(r => setWorkOrders(r.data)).catch(() => {}); api.get('/snapshot').then(r => setRfqs(r.data)).catch(() => {}); }}
+                            onChanged={() => { refreshMoney(); reloadInventory(); api.get('/financials/work-orders').then(r => setWorkOrders(r.data)).catch(() => {}); api.get('/snapshot').then(r => setRfqs(r.data)).catch(() => {}); }}
                         />
                     ) : (
                         <FinClientsList clients={finClients} onOpen={setOpenClient} />
@@ -1226,10 +1295,10 @@ export default function Financials() {
             </div>
 
             {modal?.kind === 'wo' && (
-                <WorkOrderModal entry={modal.entry} clients={pickClients} onSaved={onWoSaved} onClose={() => setModal(null)} />
+                <WorkOrderModal entry={modal.entry} clients={pickClients} inventory={pickInventory} onSaved={onWoSaved} onClose={() => setModal(null)} />
             )}
             {modal?.kind === 'rfq' && (
-                <RfqModal entry={modal.entry} clients={pickClients} onSaved={onRfqSaved} onClose={() => setModal(null)} />
+                <RfqModal entry={modal.entry} clients={pickClients} inventory={pickInventory} onSaved={onRfqSaved} onClose={() => setModal(null)} />
             )}
             {modal?.kind === 'expense' && (
                 <ExpenseModal onSaved={onExpenseAdded} onClose={() => setModal(null)} />

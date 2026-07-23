@@ -3,6 +3,7 @@ import api from '../api/client';
 import Layout from '../components/Layout';
 import PageHelp from '../components/PageHelp';
 import EstimatePrint from '../components/EstimatePrint';
+import WorkOrderPrint from '../components/WorkOrderPrint';
 import { useAuth } from '../context/AuthContext';
 import './Financials.css';
 
@@ -41,12 +42,36 @@ function WorkOrderModal({ entry, clients, presetClientId, onSaved, onClose }) {
     const [clientId, setClientId] = useState(entry?.client_id || presetClientId || '');
     const [amount,   setAmount]   = useState(entry?.amount != null ? String(entry.amount) : '');
     const [status,   setStatus]   = useState(entry?.status || 'open');
+    /* Work Order document fields */
+    const [woNumber,       setWoNumber]       = useState(entry?.wo_number || '');
+    const [customerNumber, setCustomerNumber] = useState(entry?.customer_number || '');
+    const [woDate,         setWoDate]         = useState(entry?.wo_date ? String(entry.wo_date).slice(0, 10) : '');
+    const [scheduled,      setScheduled]      = useState(entry?.scheduled || '');
+    const [techOnSite,     setTechOnSite]     = useState(entry?.tech_on_site || '');
+    const [contactPhone,   setContactPhone]   = useState(entry?.contact_phone || '');
+    const [jobSite,        setJobSite]        = useState(entry?.job_site || '');
+    const [lineItems,      setLineItems]      = useState(Array.isArray(entry?.line_items) ? entry.line_items : []);
     const [error,    setError]    = useState('');
     const [saving,   setSaving]   = useState(false);
 
+    /* Picking a client fills the customer # and job site if they're still blank. */
+    const pickClient = (id) => {
+        setClientId(id);
+        const c = clients.find(x => String(x.id) === String(id));
+        if (c) {
+            if (!customerNumber) setCustomerNumber(c.customer_number || '');
+            if (!jobSite.trim()) setJobSite([c.name, c.site_address].filter(Boolean).join('\n'));
+        }
+    };
+
     async function submit(e) {
         e.preventDefault(); setError(''); setSaving(true);
-        const body = { label, client_id: clientId || undefined, amount: Number(amount), status };
+        const body = {
+            label, client_id: clientId || undefined, amount: Number(amount), status,
+            wo_number: woNumber, customer_number: customerNumber, wo_date: woDate || undefined,
+            scheduled, tech_on_site: techOnSite, contact_phone: contactPhone, job_site: jobSite,
+            line_items: lineItems,
+        };
         try {
             const { data } = editing
                 ? await api.patch(`/financials/work-orders/${entry.id}`, body)
@@ -58,7 +83,7 @@ function WorkOrderModal({ entry, clients, presetClientId, onSaved, onClose }) {
 
     return (
         <div className="modal-overlay" onClick={onClose}>
-            <div className="modal" onClick={e => e.stopPropagation()}>
+            <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 700, maxHeight: '88vh', overflowY: 'auto' }}>
                 <div className="modal-title">{editing ? `Edit Work Order #${entry.id}` : 'New Work Order'}</div>
                 {error && <div className="error-msg">{error}</div>}
                 <form onSubmit={submit}>
@@ -68,7 +93,7 @@ function WorkOrderModal({ entry, clients, presetClientId, onSaved, onClose }) {
                     </div>
                     <div className="form-group">
                         <label className="form-label">Client (optional)</label>
-                        <ClientSelect clients={clients} value={clientId} onChange={setClientId} />
+                        <ClientSelect clients={clients} value={clientId} onChange={pickClient} />
                     </div>
                     <div className="form-group">
                         <label className="form-label">Amount ($)</label>
@@ -80,6 +105,34 @@ function WorkOrderModal({ entry, clients, presetClientId, onSaved, onClose }) {
                             {WO_STATUS_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                         </select>
                     </div>
+
+                    {/* ── Work Order document (drives the printable form) ── */}
+                    <div style={{ borderTop: '1px solid var(--border)', margin: '16px 0 12px', paddingTop: 12 }}>
+                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>
+                            Work Order document (for the printable form)
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">Work Order #</label><input value={woNumber} onChange={e => setWoNumber(e.target.value)} placeholder="e.g. W10605" /></div>
+                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">Customer #</label><input value={customerNumber} onChange={e => setCustomerNumber(e.target.value)} /></div>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
+                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">Date</label><input type="date" value={woDate} onChange={e => setWoDate(e.target.value)} /></div>
+                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">Scheduled</label><input value={scheduled} onChange={e => setScheduled(e.target.value)} placeholder="date or TBD" /></div>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
+                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">Tech On Site</label><input value={techOnSite} onChange={e => setTechOnSite(e.target.value)} /></div>
+                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">Contact / Phone</label><input value={contactPhone} onChange={e => setContactPhone(e.target.value)} /></div>
+                        </div>
+                        <div className="form-group" style={{ marginTop: 14 }}>
+                            <label className="form-label">Job Site Information</label>
+                            <textarea value={jobSite} onChange={e => setJobSite(e.target.value)} rows={3} placeholder={'The Pharm\n5900 Greenhouse Rd.\nWillcox, AZ 85643'} style={{ resize: 'vertical' }} />
+                        </div>
+                        <div className="form-group" style={{ marginTop: 14 }}>
+                            <label className="form-label">Line Items</label>
+                            <LineItemsEditor items={lineItems} onChange={setLineItems} priced={false} />
+                        </div>
+                    </div>
+
                     <div className="modal-actions">
                         <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
                         <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : (editing ? 'Save' : 'Add')}</button>
@@ -444,13 +497,13 @@ function MonthlyChart({ months }) {
 /* -----------------------------------------------------------------------
    Work orders table
    ----------------------------------------------------------------------- */
-function WorkOrdersTable({ orders, canManage, isAdmin, onEdit, onPatch, onDelete }) {
+function WorkOrdersTable({ orders, canManage, isAdmin, onEdit, onPatch, onDelete, onPrint }) {
     if (orders.length === 0) return <div className="fin-empty">No work orders yet.</div>;
     return (
         <div className="fin-table-wrap">
             <table className="fin-table">
                 <thead>
-                    <tr><th>#</th><th>Work Order</th><th>Client</th><th>Amount</th><th>Status</th><th>Added By</th><th>Date</th>{canManage && <th></th>}</tr>
+                    <tr><th>#</th><th>Work Order</th><th>Client</th><th>Amount</th><th>Status</th><th>Added By</th><th>Date</th><th></th></tr>
                 </thead>
                 <tbody>
                     {orders.map(w => (
@@ -469,12 +522,11 @@ function WorkOrdersTable({ orders, canManage, isAdmin, onEdit, onPatch, onDelete
                             </td>
                             <td style={{ color: '#5c6e82' }}>{w.creator_name || '—'}</td>
                             <td className="fin-mono">{new Date(w.created_at).toLocaleDateString()}</td>
-                            {canManage && (
-                                <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                                    <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => onEdit(w)}>Edit</button>
-                                    {isAdmin && <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: 12, color: 'var(--red)' }} onClick={() => onDelete(w.id)}>Del</button>}
-                                </td>
-                            )}
+                            <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => onPrint(w)} title="Open the printable work order">PDF</button>
+                                {canManage && <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => onEdit(w)}>Edit</button>}
+                                {canManage && isAdmin && <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: 12, color: 'var(--red)' }} onClick={() => onDelete(w.id)}>Del</button>}
+                            </td>
                         </tr>
                     ))}
                 </tbody>
@@ -910,6 +962,7 @@ function FinClientDetail({ clientId, clients, canManage, isAdmin, onBack, onChan
     const [error, setError] = useState('');
     const [modal, setModal] = useState(null);   // { kind:'wo'|'rfq', entry }
     const [printRfq, setPrintRfq] = useState(null);
+    const [printWo,  setPrintWo]  = useState(null);
 
     const load = () => api.get(`/financials/clients/${clientId}`)
         .then(r => setData(r.data)).catch(() => setError('Failed to load client.'));
@@ -981,7 +1034,7 @@ function FinClientDetail({ clientId, clients, canManage, isAdmin, onBack, onChan
 
             {tab === 'invoices'    && <TxTable rows={invoices} kind="invoices" />}
             {tab === 'payments'    && <TxTable rows={payments} kind="payments" />}
-            {tab === 'work_orders' && <WorkOrdersTable orders={work_orders} canManage={canManage} isAdmin={isAdmin} onEdit={w => setModal({ kind: 'wo', entry: w })} onPatch={patchWo} onDelete={deleteWo} />}
+            {tab === 'work_orders' && <WorkOrdersTable orders={work_orders} canManage={canManage} isAdmin={isAdmin} onEdit={w => setModal({ kind: 'wo', entry: w })} onPatch={patchWo} onDelete={deleteWo} onPrint={setPrintWo} />}
             {tab === 'rfqs'        && <RfqsTable rfqs={rfqs} canManage={canManage} onEdit={e => setModal({ kind: 'rfq', entry: e })} onDelete={deleteRfq} onPrint={setPrintRfq} />}
 
             {modal?.kind === 'wo' && (
@@ -999,6 +1052,7 @@ function FinClientDetail({ clientId, clients, canManage, isAdmin, onBack, onChan
                 <BillingModal client={client} onSaved={afterChange} onClose={() => setModal(null)} />
             )}
             {printRfq && <EstimatePrint rfq={printRfq} onClose={() => setPrintRfq(null)} />}
+            {printWo && <WorkOrderPrint wo={printWo} onClose={() => setPrintWo(null)} />}
         </>
     );
 }
@@ -1036,6 +1090,7 @@ export default function Financials() {
     const [openClient, setOpenClient] = useState(null);   // client row being viewed
     const [modal,      setModal]      = useState(null);   // { kind, entry }
     const [printRfq,   setPrintRfq]   = useState(null);   // RFQ being printed as an estimate
+    const [printWo,    setPrintWo]    = useState(null);   // work order being printed as a form
 
     const expenses = records.filter(r => r.type === 'expense');
 
@@ -1146,7 +1201,7 @@ export default function Financials() {
                     )
                 ) : tab === 'workorders' ? (
                     <WorkOrdersTable orders={workOrders} canManage={canManage} isAdmin={isAdmin}
-                        onEdit={w => setModal({ kind: 'wo', entry: w })} onPatch={patchWo} onDelete={deleteWo} />
+                        onEdit={w => setModal({ kind: 'wo', entry: w })} onPatch={patchWo} onDelete={deleteWo} onPrint={setPrintWo} />
                 ) : tab === 'rfqs' ? (
                     <RfqsTable rfqs={rfqs} canManage={canManage}
                         onEdit={e => setModal({ kind: 'rfq', entry: e })} onDelete={deleteRfq} onPrint={setPrintRfq} />
@@ -1177,6 +1232,7 @@ export default function Financials() {
                 />
             )}
             {printRfq && <EstimatePrint rfq={printRfq} onClose={() => setPrintRfq(null)} />}
+            {printWo && <WorkOrderPrint wo={printWo} onClose={() => setPrintWo(null)} />}
         </Layout>
     );
 }

@@ -16,8 +16,13 @@ const CO = {
 const money = n => (n == null || isNaN(n) ? '' : Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const fmtDate = (d) => {
     if (!d) return '';
+    const s = String(d);
+    /* Format a YYYY-MM-DD (date-only) value directly so it doesn't shift a day
+       across timezones. Falls back to locale formatting for full timestamps. */
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return `${Number(m[2])}/${Number(m[3])}/${m[1]}`;
     const dt = new Date(d);
-    return isNaN(dt) ? String(d) : dt.toLocaleDateString('en-US');
+    return isNaN(dt) ? s : dt.toLocaleDateString('en-US');
 };
 /* Line total = rate × qty (qty defaults to 1); blank when the row has no rate. */
 const lineTotal = li => (li.rate == null || li.rate === '' ? null : Number(li.rate) * (li.qty == null || li.qty === '' ? 1 : Number(li.qty)));

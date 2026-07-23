@@ -40,6 +40,18 @@ pool.query('ALTER TABLE client_transactions ADD COLUMN IF NOT EXISTS paid_amount
 pool.query('ALTER TABLE client_transactions ADD COLUMN IF NOT EXISTS balance_due NUMERIC').catch(() => {});
 /* A paid work order auto-generates one payment; the link prevents doubles. */
 pool.query('ALTER TABLE work_orders ADD COLUMN IF NOT EXISTS payment_tx_id INTEGER').catch(() => {});
+/* Work Order document fields (match the Work Order PDF form): header meta, the
+   job-site block, and line items (Item·Description·Qty — no pricing) as JSON.
+   Lets a work order render + print as the field-service form. */
+pool.query(`ALTER TABLE work_orders
+    ADD COLUMN IF NOT EXISTS wo_number       TEXT,
+    ADD COLUMN IF NOT EXISTS customer_number TEXT,
+    ADD COLUMN IF NOT EXISTS wo_date         DATE,
+    ADD COLUMN IF NOT EXISTS scheduled       TEXT,
+    ADD COLUMN IF NOT EXISTS tech_on_site    TEXT,
+    ADD COLUMN IF NOT EXISTS contact_phone   TEXT,
+    ADD COLUMN IF NOT EXISTS job_site        TEXT,
+    ADD COLUMN IF NOT EXISTS line_items      JSONB DEFAULT '[]'::jsonb`).catch(() => {});
 /* Recurring-billing anchor + last annual-invoice timestamp drive the yearly
    auto-invoice. Backfill existing recurring clients to today so they DON'T get
    a backlog — their first auto-invoice lands a year from now, not immediately. */
@@ -94,10 +106,35 @@ async function ensureWorkOrderPayment(woId) {
 
 const WO_SELECT = `
     SELECT w.id, w.label, w.client_id, w.amount, w.status, w.created_at, w.updated_at, w.paid_at,
-           c.name AS client_name, u.name AS creator_name
+           w.wo_number, w.customer_number, w.wo_date, w.scheduled, w.tech_on_site, w.contact_phone, w.job_site, w.line_items,
+           c.name AS client_name, c.customer_number AS client_customer_number, c.site_address AS client_site_address,
+           u.name AS creator_name
     FROM work_orders w
     LEFT JOIN clients c ON w.client_id = c.id
     LEFT JOIN users   u ON w.created_by = u.id`;
+
+/* Normalize the Work Order document fields; line items = [{item,description,qty}]
+   (null line_items means "not provided" — PATCH keeps the existing items). */
+function woFields(body) {
+    const t = s => { const v = (s == null ? '' : String(s)).trim(); return v === '' ? null : v; };
+    const line_items = Array.isArray(body.line_items)
+        ? body.line_items.map(li => ({
+            item:        String(li.item ?? '').slice(0, 160),
+            description: String(li.description ?? '').slice(0, 4000),
+            qty:         (li.qty === '' || li.qty == null) ? null : (Number.isFinite(Number(li.qty)) ? Number(li.qty) : null),
+        }))
+        : null;
+    return {
+        wo_number:       t(body.wo_number),
+        customer_number: t(body.customer_number),
+        wo_date:         t(body.wo_date),
+        scheduled:       t(body.scheduled),
+        tech_on_site:    t(body.tech_on_site),
+        contact_phone:   t(body.contact_phone),
+        job_site:        t(body.job_site),
+        line_items,
+    };
+}
 
 /* GET /api/financials */
 router.get('/', requireRole('accounting', 'admin'), async (req, res) => {
@@ -394,11 +431,16 @@ router.post('/work-orders', requireRole('accounting', 'admin'), async (req, res)
     if (!label || !label.trim()) return res.status(400).json({ error: 'Label is required.' });
     if (amount == null || isNaN(amount) || Number(amount) <= 0) return res.status(400).json({ error: 'Amount must be a positive number.' });
     const status = WO_STATUSES.includes(req.body.status) ? req.body.status : 'open';
+    const wf = woFields(req.body);
     try {
         const ins = await pool.query(
-            `INSERT INTO work_orders (label, client_id, amount, status, created_by, paid_at)
-             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-            [label.trim(), client_id || null, amount, status, req.user.id, status === 'closed_paid' ? new Date() : null]
+            `INSERT INTO work_orders
+                (label, client_id, amount, status, created_by, paid_at,
+                 wo_number, customer_number, wo_date, scheduled, tech_on_site, contact_phone, job_site, line_items)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,COALESCE($14::jsonb,'[]'::jsonb)) RETURNING id`,
+            [label.trim(), client_id || null, amount, status, req.user.id, status === 'closed_paid' ? new Date() : null,
+             wf.wo_number, wf.customer_number, wf.wo_date, wf.scheduled, wf.tech_on_site, wf.contact_phone, wf.job_site,
+             wf.line_items ? JSON.stringify(wf.line_items) : null]
         );
         await ensureWorkOrderPayment(ins.rows[0].id);
         const full = await pool.query(`${WO_SELECT} WHERE w.id = $1`, [ins.rows[0].id]);
@@ -411,6 +453,7 @@ router.patch('/work-orders/:id', requireRole('accounting', 'admin'), async (req,
     const { status, label, amount, client_id } = req.body;
     if (status != null && !WO_STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status.' });
     if (amount != null && (isNaN(amount) || Number(amount) <= 0)) return res.status(400).json({ error: 'Amount must be a positive number.' });
+    const wf = woFields(req.body);
     try {
         const r = await pool.query(
             `UPDATE work_orders
@@ -420,9 +463,19 @@ router.patch('/work-orders/:id', requireRole('accounting', 'admin'), async (req,
                  client_id = CASE WHEN $4::boolean THEN $5::int ELSE client_id END,
                  paid_at   = CASE WHEN $1 = 'closed_paid' AND paid_at IS NULL THEN NOW()
                                   WHEN $1 IN ('open','deadbeat') THEN NULL ELSE paid_at END,
+                 wo_number       = COALESCE($7, wo_number),
+                 customer_number = COALESCE($8, customer_number),
+                 wo_date         = COALESCE($9::date, wo_date),
+                 scheduled       = COALESCE($10, scheduled),
+                 tech_on_site    = COALESCE($11, tech_on_site),
+                 contact_phone   = COALESCE($12, contact_phone),
+                 job_site        = COALESCE($13, job_site),
+                 line_items      = COALESCE($14::jsonb, line_items),
                  updated_at = NOW()
              WHERE id = $6 RETURNING id`,
-            [status || null, label || null, amount ?? null, 'client_id' in req.body, client_id || null, req.params.id]
+            [status || null, label || null, amount ?? null, 'client_id' in req.body, client_id || null, req.params.id,
+             wf.wo_number, wf.customer_number, wf.wo_date, wf.scheduled, wf.tech_on_site, wf.contact_phone, wf.job_site,
+             wf.line_items ? JSON.stringify(wf.line_items) : null]
         );
         if (r.rowCount === 0) return res.status(404).json({ error: 'Work order not found.' });
         await ensureWorkOrderPayment(req.params.id);

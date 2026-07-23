@@ -11,6 +11,12 @@ const money  = n => `$${Number(n || 0).toLocaleString()}`;
 const money0 = n => `$${Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 const money2 = n => `$${Number(n || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+/* Local (not UTC) YYYY-MM-DD — used to default document dates to "today" in AZ. */
+const todayLocal = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 const WO_STATUS_OPTS = [
     ['open',        'Open · Invoice'],
     ['closed_paid', 'Closed & Paid · Payment'],
@@ -38,14 +44,14 @@ function ClientSelect({ clients, value, onChange, placeholder = '— none —' }
    ----------------------------------------------------------------------- */
 function WorkOrderModal({ entry, clients, presetClientId, onSaved, onClose }) {
     const editing = !!entry;
-    const [label,    setLabel]    = useState(entry?.label || '');
     const [clientId, setClientId] = useState(entry?.client_id || presetClientId || '');
+    const [label,    setLabel]    = useState(entry?.label || '');
     const [amount,   setAmount]   = useState(entry?.amount != null ? String(entry.amount) : '');
     const [status,   setStatus]   = useState(entry?.status || 'open');
-    /* Work Order document fields */
+    /* One set of fields drives both the list entry and the printable work-order form. */
     const [woNumber,       setWoNumber]       = useState(entry?.wo_number || '');
     const [customerNumber, setCustomerNumber] = useState(entry?.customer_number || '');
-    const [woDate,         setWoDate]         = useState(entry?.wo_date ? String(entry.wo_date).slice(0, 10) : '');
+    const [woDate,         setWoDate]         = useState(entry?.wo_date ? String(entry.wo_date).slice(0, 10) : (editing ? '' : todayLocal()));
     const [scheduled,      setScheduled]      = useState(entry?.scheduled || '');
     const [techOnSite,     setTechOnSite]     = useState(entry?.tech_on_site || '');
     const [contactPhone,   setContactPhone]   = useState(entry?.contact_phone || '');
@@ -53,6 +59,8 @@ function WorkOrderModal({ entry, clients, presetClientId, onSaved, onClose }) {
     const [lineItems,      setLineItems]      = useState(Array.isArray(entry?.line_items) ? entry.line_items : []);
     const [error,    setError]    = useState('');
     const [saving,   setSaving]   = useState(false);
+
+    const clientName = (id) => clients.find(x => String(x.id) === String(id))?.name || '';
 
     /* Picking a client fills the customer # and job site if they're still blank. */
     const pickClient = (id) => {
@@ -66,8 +74,11 @@ function WorkOrderModal({ entry, clients, presetClientId, onSaved, onClose }) {
 
     async function submit(e) {
         e.preventDefault(); setError(''); setSaving(true);
+        /* List title auto-derives from the client / WO # when left blank. */
+        const listTitle = label.trim() || clientName(clientId) || (woNumber.trim() ? `WO ${woNumber.trim()}` : 'Work order');
         const body = {
-            label, client_id: clientId || undefined, amount: Number(amount), status,
+            label: listTitle, client_id: clientId || undefined,
+            amount: amount === '' ? 0 : Number(amount), status,
             wo_number: woNumber, customer_number: customerNumber, wo_date: woDate || undefined,
             scheduled, tech_on_site: techOnSite, contact_phone: contactPhone, job_site: jobSite,
             line_items: lineItems,
@@ -81,55 +92,59 @@ function WorkOrderModal({ entry, clients, presetClientId, onSaved, onClose }) {
         finally { setSaving(false); }
     }
 
+    const gp = { margin: 0 };
     return (
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 700, maxHeight: '88vh', overflowY: 'auto' }}>
                 <div className="modal-title">{editing ? `Edit Work Order #${entry.id}` : 'New Work Order'}</div>
                 {error && <div className="error-msg">{error}</div>}
                 <form onSubmit={submit}>
+                    {/* ── The work order (everything here prints on the form) ── */}
                     <div className="form-group">
-                        <label className="form-label">Work Order / Description</label>
-                        <input value={label} onChange={e => setLabel(e.target.value)} required autoFocus />
-                    </div>
-                    <div className="form-group">
-                        <label className="form-label">Client (optional)</label>
+                        <label className="form-label">Client</label>
                         <ClientSelect clients={clients} value={clientId} onChange={pickClient} />
                     </div>
-                    <div className="form-group">
-                        <label className="form-label">Amount ($)</label>
-                        <input type="number" min="0.01" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} required />
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <div className="form-group" style={gp}><label className="form-label">Work Order #</label><input value={woNumber} onChange={e => setWoNumber(e.target.value)} placeholder="e.g. W10605" autoFocus /></div>
+                        <div className="form-group" style={gp}><label className="form-label">Customer #</label><input value={customerNumber} onChange={e => setCustomerNumber(e.target.value)} /></div>
                     </div>
-                    <div className="form-group">
-                        <label className="form-label">Status</label>
-                        <select value={status} onChange={e => setStatus(e.target.value)}>
-                            {WO_STATUS_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                        </select>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
+                        <div className="form-group" style={gp}><label className="form-label">Date</label><input type="date" value={woDate} onChange={e => setWoDate(e.target.value)} /></div>
+                        <div className="form-group" style={gp}><label className="form-label">Scheduled</label><input value={scheduled} onChange={e => setScheduled(e.target.value)} placeholder="date or TBD" /></div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
+                        <div className="form-group" style={gp}><label className="form-label">Tech On Site</label><input value={techOnSite} onChange={e => setTechOnSite(e.target.value)} /></div>
+                        <div className="form-group" style={gp}><label className="form-label">Contact / Phone</label><input value={contactPhone} onChange={e => setContactPhone(e.target.value)} /></div>
+                    </div>
+                    <div className="form-group" style={{ marginTop: 14 }}>
+                        <label className="form-label">Job Site Information</label>
+                        <textarea value={jobSite} onChange={e => setJobSite(e.target.value)} rows={3} placeholder={'The Pharm\n5900 Greenhouse Rd.\nWillcox, AZ 85643'} style={{ resize: 'vertical' }} />
+                    </div>
+                    <div className="form-group" style={{ marginTop: 14 }}>
+                        <label className="form-label">Line Items · Inventory Used</label>
+                        <LineItemsEditor items={lineItems} onChange={setLineItems} priced={false} />
                     </div>
 
-                    {/* ── Work Order document (drives the printable form) ── */}
+                    {/* ── Filing (kept in the system, not printed on the form) ── */}
                     <div style={{ borderTop: '1px solid var(--border)', margin: '16px 0 12px', paddingTop: 12 }}>
                         <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>
-                            Work Order document (for the printable form)
+                            Filing · not printed
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">Work Order #</label><input value={woNumber} onChange={e => setWoNumber(e.target.value)} placeholder="e.g. W10605" /></div>
-                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">Customer #</label><input value={customerNumber} onChange={e => setCustomerNumber(e.target.value)} /></div>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
-                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">Date</label><input type="date" value={woDate} onChange={e => setWoDate(e.target.value)} /></div>
-                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">Scheduled</label><input value={scheduled} onChange={e => setScheduled(e.target.value)} placeholder="date or TBD" /></div>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
-                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">Tech On Site</label><input value={techOnSite} onChange={e => setTechOnSite(e.target.value)} /></div>
-                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">Contact / Phone</label><input value={contactPhone} onChange={e => setContactPhone(e.target.value)} /></div>
-                        </div>
-                        <div className="form-group" style={{ marginTop: 14 }}>
-                            <label className="form-label">Job Site Information</label>
-                            <textarea value={jobSite} onChange={e => setJobSite(e.target.value)} rows={3} placeholder={'The Pharm\n5900 Greenhouse Rd.\nWillcox, AZ 85643'} style={{ resize: 'vertical' }} />
+                            <div className="form-group" style={gp}>
+                                <label className="form-label">Status</label>
+                                <select value={status} onChange={e => setStatus(e.target.value)}>
+                                    {WO_STATUS_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                                </select>
+                            </div>
+                            <div className="form-group" style={gp}>
+                                <label className="form-label">Amount ($) <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}>— for billing</span></label>
+                                <input type="number" min="0" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" />
+                            </div>
                         </div>
                         <div className="form-group" style={{ marginTop: 14 }}>
-                            <label className="form-label">Line Items</label>
-                            <LineItemsEditor items={lineItems} onChange={setLineItems} priced={false} />
+                            <label className="form-label">List title <span style={{ color: 'var(--text-dim)', fontWeight: 400 }}>— optional</span></label>
+                            <input value={label} onChange={e => setLabel(e.target.value)} placeholder={clientName(clientId) || 'Auto from client / WO #'} />
                         </div>
                     </div>
 
@@ -191,7 +206,7 @@ function RfqModal({ entry, clients, presetClientId, presetCustomer, onSaved, onC
     const [emailDate,  setEmailDate]  = useState(entry?.email_date || '');
     const [notes,      setNotes]      = useState(entry?.notes || '');
     /* Estimate document fields */
-    const [estimateDate,    setEstimateDate]    = useState(entry?.estimate_date ? String(entry.estimate_date).slice(0, 10) : '');
+    const [estimateDate,    setEstimateDate]    = useState(entry?.estimate_date ? String(entry.estimate_date).slice(0, 10) : (entry ? '' : todayLocal()));
     const [salesman,        setSalesman]        = useState(entry?.salesman || '');
     const [poNumber,        setPoNumber]        = useState(entry?.po_number || '');
     const [billingAddress,  setBillingAddress]  = useState(entry?.billing_address || '');
@@ -202,10 +217,14 @@ function RfqModal({ entry, clients, presetClientId, presetCustomer, onSaved, onC
     const [error,      setError]      = useState('');
     const [saving,     setSaving]     = useState(false);
 
-    /* Linking a client defaults the (still-editable) customer text to its name. */
+    /* Linking a client defaults the (still-editable) customer + project location. */
     const pickClient = (id) => {
         setClientId(id);
-        if (id && !customer.trim()) { const c = clients.find(x => String(x.id) === String(id)); if (c) setCustomer(c.name); }
+        const c = clients.find(x => String(x.id) === String(id));
+        if (c) {
+            if (!customer.trim()) setCustomer(c.name);
+            if (!projectLocation.trim()) setProjectLocation([c.name, c.site_address].filter(Boolean).join('\n'));
+        }
     };
 
     async function submit(e) {
@@ -226,12 +245,14 @@ function RfqModal({ entry, clients, presetClientId, presetCustomer, onSaved, onC
         finally { setSaving(false); }
     }
 
+    const gp = { margin: 0 };
     return (
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 700, maxHeight: '88vh', overflowY: 'auto' }}>
                 <div className="modal-title">{editing ? `Edit RFQ #${entry.id}` : 'New RFQ'}</div>
                 {error && <div className="error-msg">{error}</div>}
                 <form onSubmit={submit}>
+                    {/* ── Identity ── */}
                     <div className="form-group">
                         <label className="form-label">Client (optional — links it to their page)</label>
                         <ClientSelect clients={clients} value={clientId} onChange={pickClient} />
@@ -241,66 +262,56 @@ function RfqModal({ entry, clients, presetClientId, presetCustomer, onSaved, onC
                         <input value={customer} onChange={e => setCustomer(e.target.value)} required autoFocus />
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                        <div className="form-group" style={{ margin: 0 }}>
+                        <div className="form-group" style={gp}>
                             <label className="form-label">Status</label>
                             <select value={type} onChange={e => setType(e.target.value)}>
                                 {RFQ_TYPE_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                             </select>
                         </div>
-                        <div className="form-group" style={{ margin: 0 }}>
+                        <div className="form-group" style={gp}>
                             <label className="form-label">RFQ #</label>
                             <input value={rfq} onChange={e => setRfq(e.target.value)} />
                         </div>
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
-                        <div className="form-group" style={{ margin: 0 }}>
-                            <label className="form-label">Hours</label>
-                            <input type="number" min="0" step="0.25" value={hours} onChange={e => setHours(e.target.value)} />
-                        </div>
-                        <div className="form-group" style={{ margin: 0 }}>
-                            <label className="form-label">Scheduled</label>
-                            <input value={scheduled} onChange={e => setScheduled(e.target.value)} placeholder="date or TBD" />
-                        </div>
+
+                    {/* ── Estimate (everything here prints on the estimate) ── */}
+                    <div className="form-group" style={{ marginTop: 14 }}>
+                        <label className="form-label">Title</label>
+                        <input value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. KEYSCAN PANEL SWAP" />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                        <div className="form-group" style={gp}><label className="form-label">Subtitle</label><input value={subtitle} onChange={e => setSubtitle(e.target.value)} placeholder="e.g. CA4500 & CA150" /></div>
+                        <div className="form-group" style={gp}><label className="form-label">P.O. #</label><input value={poNumber} onChange={e => setPoNumber(e.target.value)} /></div>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
-                        <div className="form-group" style={{ margin: 0 }}>
-                            <label className="form-label">Invoice #</label>
-                            <input value={invoiceNum} onChange={e => setInvoiceNum(e.target.value)} />
-                        </div>
-                        <div className="form-group" style={{ margin: 0 }}>
-                            <label className="form-label">Email Date</label>
-                            <input value={emailDate} onChange={e => setEmailDate(e.target.value)} />
-                        </div>
+                        <div className="form-group" style={gp}><label className="form-label">Estimate Date</label><input type="date" value={estimateDate} onChange={e => setEstimateDate(e.target.value)} /></div>
+                        <div className="form-group" style={gp}><label className="form-label">Salesman</label><input value={salesman} onChange={e => setSalesman(e.target.value)} placeholder="e.g. AM" /></div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
+                        <div className="form-group" style={gp}><label className="form-label">Customer Billing Address</label><textarea value={billingAddress} onChange={e => setBillingAddress(e.target.value)} rows={3} placeholder={'645 E. Missouri Ave #280\nPhoenix, AZ 85012'} style={{ resize: 'vertical' }} /></div>
+                        <div className="form-group" style={gp}><label className="form-label">Project Location</label><textarea value={projectLocation} onChange={e => setProjectLocation(e.target.value)} rows={3} placeholder={'The Pharm\n5900 Greenhouse Rd.\nWillcox, AZ 85643'} style={{ resize: 'vertical' }} /></div>
                     </div>
                     <div className="form-group" style={{ marginTop: 14 }}>
-                        <label className="form-label">Notes</label>
-                        <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} style={{ resize: 'vertical' }} />
+                        <label className="form-label">Line Items</label>
+                        <LineItemsEditor items={lineItems} onChange={setLineItems} priced />
                     </div>
 
-                    {/* ── Estimate document (drives the printable RFQ) ── */}
+                    {/* ── Internal tracking (kept in the system, not printed) ── */}
                     <div style={{ borderTop: '1px solid var(--border)', margin: '16px 0 12px', paddingTop: 12 }}>
                         <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>
-                            Estimate document (for the printable RFQ)
-                        </div>
-                        <div className="form-group">
-                            <label className="form-label">Title</label>
-                            <input value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. KEYSCAN PANEL SWAP" />
+                            Internal tracking · not printed
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">Subtitle</label><input value={subtitle} onChange={e => setSubtitle(e.target.value)} placeholder="e.g. CA4500 & CA150" /></div>
-                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">P.O. #</label><input value={poNumber} onChange={e => setPoNumber(e.target.value)} /></div>
+                            <div className="form-group" style={gp}><label className="form-label">Hours</label><input type="number" min="0" step="0.25" value={hours} onChange={e => setHours(e.target.value)} /></div>
+                            <div className="form-group" style={gp}><label className="form-label">Scheduled</label><input value={scheduled} onChange={e => setScheduled(e.target.value)} placeholder="date or TBD" /></div>
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
-                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">Estimate Date</label><input type="date" value={estimateDate} onChange={e => setEstimateDate(e.target.value)} /></div>
-                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">Salesman</label><input value={salesman} onChange={e => setSalesman(e.target.value)} placeholder="e.g. AM" /></div>
-                        </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 14 }}>
-                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">Customer Billing Address</label><textarea value={billingAddress} onChange={e => setBillingAddress(e.target.value)} rows={3} placeholder={'645 E. Missouri Ave #280\nPhoenix, AZ 85012'} style={{ resize: 'vertical' }} /></div>
-                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">Project Location</label><textarea value={projectLocation} onChange={e => setProjectLocation(e.target.value)} rows={3} placeholder={'The Pharm\n5900 Greenhouse Rd.\nWillcox, AZ 85643'} style={{ resize: 'vertical' }} /></div>
+                            <div className="form-group" style={gp}><label className="form-label">Invoice #</label><input value={invoiceNum} onChange={e => setInvoiceNum(e.target.value)} /></div>
+                            <div className="form-group" style={gp}><label className="form-label">Email Date</label><input value={emailDate} onChange={e => setEmailDate(e.target.value)} /></div>
                         </div>
                         <div className="form-group" style={{ marginTop: 14 }}>
-                            <label className="form-label">Line Items</label>
-                            <LineItemsEditor items={lineItems} onChange={setLineItems} priced />
+                            <label className="form-label">Notes</label>
+                            <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} style={{ resize: 'vertical' }} />
                         </div>
                     </div>
 
@@ -512,7 +523,7 @@ function WorkOrdersTable({ orders, canManage, isAdmin, onEdit, onPatch, onDelete
                             <td className="fin-name">{w.label}</td>
                             <td>{w.client_name || <span style={{ color: 'var(--text-dim)' }}>—</span>}</td>
                             <td className={w.status === 'closed_paid' ? 'fin-amount-income' : w.status === 'deadbeat' ? 'fin-amount-expense' : 'fin-mono'}>
-                                ${Number(w.amount).toLocaleString()}
+                                {Number(w.amount) > 0 ? `$${Number(w.amount).toLocaleString()}` : <span style={{ color: 'var(--text-dim)' }}>—</span>}
                             </td>
                             <td>
                                 <select value={w.status} onChange={e => onPatch(w.id, { status: e.target.value })}

@@ -94,7 +94,7 @@ async function ensureWorkOrderPayment(woId) {
     try {
         const wq = await pool.query('SELECT id, label, client_id, amount, status, payment_tx_id FROM work_orders WHERE id = $1', [woId]);
         const w = wq.rows[0];
-        if (!w || w.status !== 'closed_paid' || !w.client_id || w.payment_tx_id) return;
+        if (!w || w.status !== 'closed_paid' || !w.client_id || w.payment_tx_id || !(Number(w.amount) > 0)) return;
         const tx = await pool.query(
             `INSERT INTO client_transactions (client_id, description, amount, type, date, source)
              VALUES ($1, $2, $3, 'payment', CURRENT_DATE, 'portal') RETURNING id`,
@@ -427,18 +427,21 @@ router.get('/work-orders', requireRole('accounting', 'admin'), async (_req, res)
 
 /* POST /api/financials/work-orders  { label, client_id?, amount, status? } */
 router.post('/work-orders', requireRole('accounting', 'admin'), async (req, res) => {
-    const { label, client_id, amount } = req.body;
-    if (!label || !label.trim()) return res.status(400).json({ error: 'Label is required.' });
-    if (amount == null || isNaN(amount) || Number(amount) <= 0) return res.status(400).json({ error: 'Amount must be a positive number.' });
+    const { client_id } = req.body;
+    /* Amount is optional now (set when the job is billed); default to 0. */
+    const amt = (req.body.amount == null || req.body.amount === '') ? 0 : Number(req.body.amount);
+    if (isNaN(amt) || amt < 0) return res.status(400).json({ error: 'Amount must be a non-negative number.' });
     const status = WO_STATUSES.includes(req.body.status) ? req.body.status : 'open';
     const wf = woFields(req.body);
+    /* Label (list title) is optional — fall back to the WO # so the list has a name. */
+    const label = (req.body.label && req.body.label.trim()) || (wf.wo_number ? `WO ${wf.wo_number}` : 'Work order');
     try {
         const ins = await pool.query(
             `INSERT INTO work_orders
                 (label, client_id, amount, status, created_by, paid_at,
                  wo_number, customer_number, wo_date, scheduled, tech_on_site, contact_phone, job_site, line_items)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,COALESCE($14::jsonb,'[]'::jsonb)) RETURNING id`,
-            [label.trim(), client_id || null, amount, status, req.user.id, status === 'closed_paid' ? new Date() : null,
+            [label, client_id || null, amt, status, req.user.id, status === 'closed_paid' ? new Date() : null,
              wf.wo_number, wf.customer_number, wf.wo_date, wf.scheduled, wf.tech_on_site, wf.contact_phone, wf.job_site,
              wf.line_items ? JSON.stringify(wf.line_items) : null]
         );
@@ -452,7 +455,7 @@ router.post('/work-orders', requireRole('accounting', 'admin'), async (req, res)
 router.patch('/work-orders/:id', requireRole('accounting', 'admin'), async (req, res) => {
     const { status, label, amount, client_id } = req.body;
     if (status != null && !WO_STATUSES.includes(status)) return res.status(400).json({ error: 'Invalid status.' });
-    if (amount != null && (isNaN(amount) || Number(amount) <= 0)) return res.status(400).json({ error: 'Amount must be a positive number.' });
+    if (amount != null && amount !== '' && (isNaN(amount) || Number(amount) < 0)) return res.status(400).json({ error: 'Amount must be a non-negative number.' });
     const wf = woFields(req.body);
     try {
         const r = await pool.query(
@@ -473,7 +476,7 @@ router.patch('/work-orders/:id', requireRole('accounting', 'admin'), async (req,
                  line_items      = COALESCE($14::jsonb, line_items),
                  updated_at = NOW()
              WHERE id = $6 RETURNING id`,
-            [status || null, label || null, amount ?? null, 'client_id' in req.body, client_id || null, req.params.id,
+            [status || null, label || null, (amount === '' || amount == null) ? null : Number(amount), 'client_id' in req.body, client_id || null, req.params.id,
              wf.wo_number, wf.customer_number, wf.wo_date, wf.scheduled, wf.tech_on_site, wf.contact_phone, wf.job_site,
              wf.line_items ? JSON.stringify(wf.line_items) : null]
         );

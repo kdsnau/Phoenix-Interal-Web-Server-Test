@@ -1,4 +1,5 @@
 const express      = require('express');
+const multer       = require('multer');
 const { WebClient } = require('@slack/web-api');
 const { authenticate, requireRole } = require('../middleware/requireRole');
 const pool         = require('../db/pool');
@@ -8,6 +9,9 @@ router.use(authenticate);
 
 const slack      = new WebClient(process.env.SLACK_TOKEN);
 const CHANNEL_ID = process.env.PROJECT_SLACK_CHANNEL_ID;
+
+/* Report photos are held in memory just long enough to hand off to Slack. */
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024, files: 10 } });
 
 /* Ensure the manual-completion override table exists on first start */
 pool.query(`
@@ -32,8 +36,44 @@ pool.query(`
     )
 `).catch(err => console.error('manual_projects table init:', err.message));
 
+/* Local record of reports authored in the portal (the report itself lives in the
+   project-reports Slack channel; this row lets us flag a ticket "reported" and
+   keep an audit trail). No FK constraints — avoids a create-order race with the
+   service_tickets table; dangling rows for a deleted ticket are harmless. */
+pool.query(`
+    CREATE TABLE IF NOT EXISTS ticket_reports (
+        id          SERIAL    PRIMARY KEY,
+        ticket_id   INTEGER   NOT NULL,
+        author_id   INTEGER,
+        author_name TEXT,
+        work        TEXT,
+        parts       TEXT,
+        arrival     TEXT,
+        return_trip BOOLEAN,
+        photo_count INTEGER   DEFAULT 0,
+        slack_ts    TEXT,
+        created_at  TIMESTAMP DEFAULT NOW()
+    )
+`).catch(err => console.error('ticket_reports table init:', err.message));
+pool.query(`CREATE INDEX IF NOT EXISTS idx_ticket_reports_ticket ON ticket_reports (ticket_id)`).catch(() => {});
+
 /* Normalise a job name for grouping — case-insensitive, collapse whitespace */
 const normalizeKey = s => s.trim().replace(/\s+/g, ' ').toLowerCase();
+
+/* Build the report message in the exact shape the mobile app posts (SlackWebhook.kt)
+   so the parser above and the client Reports tab pick it up identically. */
+function buildReportMessage({ jobName, rfq, technicians, arrival, work, parts, returnTrip }) {
+    const field = (label, value) => `*${label}*\n${(value != null && String(value).trim()) || '—'}\n\n`;
+    return (
+        field('Job name',                          jobName) +
+        field('RFQ',                               rfq) +
+        field('Technicians',                       technicians) +
+        field('Site arrival and departure times',  arrival) +
+        field('What work was completed',           work) +
+        field('What parts and supplies were used', parts) +
+        field('Is a return trip required',         returnTrip ? 'Yes' : 'No')
+    ).trimEnd();
+}
 
 /* -----------------------------------------------------------------------
    Parse a Slack workflow form message into a field map.
@@ -288,6 +328,113 @@ router.get('/image/:fileId', async (req, res) => {
         console.error('Image proxy error:', err.message);
         res.status(500).json({ error: 'Failed to proxy image.' });
     }
+});
+
+/* -----------------------------------------------------------------------
+   GET /api/projects/my-done-tickets
+   The "tickets done" pipeline: resolved/closed tickets the tech is on (or all,
+   for admin/accounting), each with how many reports it already has and a parts
+   suggestion pulled from the ticket's inventory items.
+   ----------------------------------------------------------------------- */
+router.get('/my-done-tickets', async (req, res) => {
+    try {
+        const isPriv = ['admin', 'accounting'].includes(req.user.role);
+        const params = [];
+        let scope = '';
+        if (!isPriv) { params.push(req.user.id); scope = ` AND (t.created_by = $1 OR $1 = ANY(t.assignee_ids))`; }
+        const r = await pool.query(
+            `SELECT t.id, t.title, t.status::text AS status, t.client_id, t.event_start, t.created_at,
+                    c.name AS client_name,
+                    (SELECT count(*) FROM ticket_reports tr WHERE tr.ticket_id = t.id) AS report_count,
+                    (SELECT string_agg(ti.quantity || 'x ' || ii.name, E'\n')
+                       FROM ticket_items ti JOIN inventory_items ii ON ii.id = ti.inventory_item_id
+                       WHERE ti.ticket_id = t.id) AS parts_suggestion
+             FROM service_tickets t
+             LEFT JOIN clients c ON c.id = t.client_id
+             WHERE t.status::text IN ('resolved', 'closed')${scope}
+             ORDER BY COALESCE(t.event_start, t.created_at) DESC
+             LIMIT 100`,
+            params
+        );
+        res.json(r.rows.map(row => ({ ...row, report_count: Number(row.report_count) })));
+    } catch (err) {
+        console.error('my-done-tickets error:', err.message);
+        res.status(500).json({ error: 'Failed to load tickets.' });
+    }
+});
+
+/* -----------------------------------------------------------------------
+   POST /api/projects/report  (multipart: photos[])
+   Post a technician's field report to the project-reports Slack channel in the
+   mobile-app format (Job name = client, so it also matches the client's Reports
+   tab), attaching photos, then record it locally.
+   ----------------------------------------------------------------------- */
+router.post('/report', (req, res) => {
+    upload.array('photos', 10)(req, res, async (uErr) => {
+        if (uErr) return res.status(400).json({ error: uErr.message || 'Photo upload failed.' });
+        try {
+            const ticketId = Number(req.body.ticket_id);
+            if (!ticketId) return res.status(400).json({ error: 'ticket_id is required.' });
+            const work = (req.body.work || '').trim();
+            if (!work)   return res.status(400).json({ error: 'Work completed is required.' });
+            if (!CHANNEL_ID) return res.status(500).json({ error: 'Project reports channel is not configured.' });
+
+            const arrival    = (req.body.arrival || '').trim();
+            const parts      = (req.body.parts || '').trim();
+            const returnTrip = ['true', 'yes', 'on', '1'].includes(String(req.body.return_trip).toLowerCase());
+
+            const tq = await pool.query(
+                `SELECT t.id, t.title, t.client_id, t.created_by, t.assignee_ids, c.name AS client_name
+                 FROM service_tickets t LEFT JOIN clients c ON c.id = t.client_id WHERE t.id = $1`,
+                [ticketId]
+            );
+            if (tq.rowCount === 0) return res.status(404).json({ error: 'Ticket not found.' });
+            const t = tq.rows[0];
+
+            /* Only an admin/accounting user or someone on the ticket may report it. */
+            const isPriv   = ['admin', 'accounting'].includes(req.user.role);
+            const assigned = Array.isArray(t.assignee_ids) && t.assignee_ids.includes(req.user.id);
+            if (!isPriv && !assigned && t.created_by !== req.user.id)
+                return res.status(403).json({ error: 'You can only report on tickets assigned to you.' });
+
+            /* Technician names = the ticket's assignees, falling back to the author. */
+            let technicians = req.user.name;
+            if (Array.isArray(t.assignee_ids) && t.assignee_ids.length) {
+                const uq = await pool.query('SELECT name FROM users WHERE id = ANY($1)', [t.assignee_ids]);
+                if (uq.rows.length) technicians = uq.rows.map(u => u.name).join(', ');
+            }
+
+            const jobName = (t.client_name || t.title || 'Unknown').trim();
+            const text = buildReportMessage({ jobName, rfq: (req.body.rfq || '').trim(), technicians, arrival, work, parts, returnTrip });
+
+            const photos = (req.files || []).filter(f => f.mimetype && f.mimetype.startsWith('image/'));
+
+            let slackTs = null;
+            if (photos.length) {
+                /* One message carrying the report text + all photos, so the parser
+                   reads both the fields and the images off the same message. */
+                const up = await slack.files.uploadV2({
+                    channel_id:      CHANNEL_ID,
+                    initial_comment: text,
+                    file_uploads:    photos.map((f, i) => ({ file: f.buffer, filename: f.originalname || `photo-${i + 1}.jpg` })),
+                });
+                slackTs = up?.files?.[0]?.ts || null;
+            } else {
+                const msg = await slack.chat.postMessage({ channel: CHANNEL_ID, text });
+                slackTs = msg?.ts || null;
+            }
+
+            const ins = await pool.query(
+                `INSERT INTO ticket_reports (ticket_id, author_id, author_name, work, parts, arrival, return_trip, photo_count, slack_ts)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+                [ticketId, req.user.id, req.user.name, work, parts, arrival, returnTrip, photos.length, slackTs]
+            );
+            res.status(201).json(ins.rows[0]);
+        } catch (err) {
+            console.error('Report post error:', err.message);
+            res.status(500).json({ error: 'Failed to submit report.' });
+        }
+    });
 });
 
 module.exports = router;

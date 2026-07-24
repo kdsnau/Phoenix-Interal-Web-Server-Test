@@ -957,7 +957,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                 <div className="alarm-tabs">
                     {['system', 'panel', 'tickets', 'cameras', 'slack', 'sitemap', ...(canBilling ? ['transactions'] : [])].map(t => (
                         <button key={t} className={`alarm-tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
-                            {t === 'sitemap' ? 'Site Map' : t.charAt(0).toUpperCase() + t.slice(1)}
+                            {t === 'sitemap' ? 'Site Map' : t === 'slack' ? 'Reports' : t.charAt(0).toUpperCase() + t.slice(1)}
                         </button>
                     ))}
                 </div>

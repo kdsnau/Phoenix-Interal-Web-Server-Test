@@ -3,7 +3,10 @@ import api from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import Layout from '../components/Layout';
 import PageHelp from '../components/PageHelp';
+import ReportModal from '../components/ReportModal';
 import './Projects.css';
+
+const fmtShort = d => (d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '');
 
 /* -----------------------------------------------------------------------
    Image component — fetches Slack private images via the proxy endpoint
@@ -320,11 +323,15 @@ export default function Projects() {
     const [search, setSearch]               = useState('');
     const [selected, setSelected]           = useState(null);
     const [showAddProject, setShowAddProject] = useState(false);
+    const [doneTickets, setDoneTickets]     = useState([]);
+    const [reportTicket, setReportTicket]   = useState(null);
 
+    const loadDone = () => api.get('/projects/my-done-tickets').then(r => setDoneTickets(r.data)).catch(() => {});
     useEffect(() => {
         api.get('/projects')
             .then(r => setProjects(r.data))
             .finally(() => setLoading(false));
+        loadDone();
     }, []);
 
     const markComplete = async (project, e) => {
@@ -386,7 +393,7 @@ export default function Projects() {
         <Layout>
             <div className="proj-page">
                 <div className="proj-page-header">
-                    <h1 className="page-title">Projects<PageHelp id="projects" /></h1>
+                    <h1 className="page-title">Reports<PageHelp id="projects" /></h1>
                     <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                     {user.role === 'admin' && (
                         <button className="btn btn-primary" onClick={() => setShowAddProject(true)}>
@@ -401,6 +408,34 @@ export default function Projects() {
                     />
                     </div>
                 </div>
+
+                {doneTickets.length > 0 && (
+                    <div style={{ background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 10, padding: 16, marginBottom: 24 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                            <span style={{ fontWeight: 600, color: 'var(--text-hi)' }}>Tickets to report</span>
+                            <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>
+                                {(() => { const n = doneTickets.filter(t => t.report_count === 0).length; return n ? `${n} need${n === 1 ? 's' : ''} a report` : 'all reported'; })()}
+                            </span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            {doneTickets.map(t => (
+                                <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 8, background: 'var(--bg-3)' }}>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.client_name || t.title || 'Untitled ticket'}</div>
+                                        {t.client_name && t.title && <div style={{ fontSize: 12, color: 'var(--text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{t.title}</div>}
+                                    </div>
+                                    <span style={{ fontSize: 12, color: 'var(--text-dim)', whiteSpace: 'nowrap' }}>{fmtShort(t.event_start || t.created_at)}</span>
+                                    {t.report_count > 0
+                                        ? <span className="tag tag-green" style={{ whiteSpace: 'nowrap' }}>Reported{t.report_count > 1 ? ` ×${t.report_count}` : ' ✓'}</span>
+                                        : <span className="tag tag-yellow" style={{ whiteSpace: 'nowrap' }}>Needs report</span>}
+                                    <button className="btn btn-primary" style={{ fontSize: 12, padding: '4px 10px', whiteSpace: 'nowrap' }} onClick={() => setReportTicket(t)}>
+                                        {t.report_count > 0 ? '+ Add' : 'Write report'}
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 <div className="alarm-service-tabs" style={{ marginBottom: '24px' }}>
                     {FILTER_TABS.map(t => (
@@ -451,6 +486,13 @@ export default function Projects() {
                             setShowAddProject(false);
                             api.get('/projects').then(r => setProjects(r.data));
                         }}
+                    />
+                )}
+                {reportTicket && (
+                    <ReportModal
+                        ticket={reportTicket}
+                        onClose={() => setReportTicket(null)}
+                        onSaved={() => { loadDone(); api.get('/projects').then(r => setProjects(r.data)).catch(() => {}); }}
                     />
                 )}
             </div>

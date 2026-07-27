@@ -1,13 +1,17 @@
 const express = require('express');
 const crypto  = require('crypto');
-const bcrypt  = require('bcryptjs');
 const pool    = require('../db/pool');
-const { requireRole } = require('../middleware/requireRole');
+const { authenticate, requireRole } = require('../middleware/requireRole');
 
 const router = express.Router();
 
-/* The entire vault is admin-only (requireRole runs authenticate + role check). */
-router.use(requireRole('admin'));
+/* Anyone signed in can open the vault; they only see the credentials granted to
+   their role. Creating / rolling / editing / deleting stay admin-only (enforced
+   per route). Admins always see every entry regardless of its allowed_roles. */
+router.use(authenticate);
+
+const VALID_ROLES = ['admin', 'accounting', 'technician'];
+const cleanRoles  = v => (Array.isArray(v) ? [...new Set(v.filter(r => VALID_ROLES.includes(r)))] : []);
 
 /* ── Schema ──────────────────────────────────────────────────────────────── */
 pool.query(`
@@ -21,21 +25,10 @@ pool.query(`
         updated_at TIMESTAMP DEFAULT NOW()
     )
 `).catch(() => {});
-
-/* app_settings holds the bcrypt hash of the page (gate) password. */
-const GATE_KEY = 'vault_gate_hash';
-async function getSetting(key) {
-    try { const r = await pool.query('SELECT value FROM app_settings WHERE key = $1', [key]); return r.rows[0]?.value ?? null; }
-    catch { return null; }
-}
-async function setSetting(key, value) {
-    await pool.query(`CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT, updated_at TIMESTAMP DEFAULT NOW())`).catch(() => {});
-    await pool.query(
-        `INSERT INTO app_settings (key, value, updated_at) VALUES ($1, $2, NOW())
-         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
-        [key, value]
-    );
-}
+/* Per-entry access: the permission roles allowed to see this secret. Empty means
+   admins only (admins see everything anyway). Existing rows default to empty, so
+   nothing is exposed to non-admins until an admin grants access. */
+pool.query(`ALTER TABLE vault_entries ADD COLUMN IF NOT EXISTS allowed_roles TEXT[] NOT NULL DEFAULT '{}'`).catch(() => {});
 
 /* ── Crypto ──────────────────────────────────────────────────────────────── */
 /* 32-byte AES key from server/.env VAULT_KEY (64 hex chars, or base64). */
@@ -75,69 +68,54 @@ function generatePassword(len = 15) {
     return out;
 }
 
-async function verifyGate(password) {
-    const hash = await getSetting(GATE_KEY);
-    if (!hash || !password) return false;
-    try { return await bcrypt.compare(String(password), hash); } catch { return false; }
-}
+const ENTRY_COLS = 'id, label, username, allowed_roles, created_at, updated_at';
 
 /* ── Routes ──────────────────────────────────────────────────────────────── */
 
-/* GET /api/vault/status — is the gate set up, and is the server key present? */
-router.get('/status', async (_req, res) => {
-    res.json({ configured: !!(await getSetting(GATE_KEY)), keyOk: !!getKey() });
-});
+/* GET /api/vault/status — is the server encryption key present? */
+router.get('/status', (_req, res) => res.json({ keyOk: !!getKey() }));
 
-/* POST /api/vault/setup { password } — first-time set the page password. */
-router.post('/setup', async (req, res) => {
-    const { password } = req.body;
-    if (!password || String(password).length < 8) return res.status(400).json({ error: 'Vault password must be at least 8 characters.' });
-    if (await getSetting(GATE_KEY)) return res.status(409).json({ error: 'Vault is already set up.' });
-    try {
-        await setSetting(GATE_KEY, await bcrypt.hash(String(password), 12));
-        res.json({ ok: true });
-    } catch (err) { console.error('Vault setup error:', err.message); res.status(500).json({ error: 'Failed to set up vault.' }); }
-});
-
-/* POST /api/vault/unlock { password } — verify, return decrypted entries. */
-router.post('/unlock', async (req, res) => {
+/* GET /api/vault/entries — credentials visible to the caller, decrypted.
+   Admins get everything; everyone else gets only entries granted to their role. */
+router.get('/entries', async (req, res) => {
     if (!getKey()) return res.status(503).json({ error: 'VAULT_KEY is not configured on the server.' });
-    if (!await verifyGate(req.body.password)) return res.status(401).json({ error: 'Incorrect vault password.' });
     try {
-        const r = await pool.query('SELECT id, label, username, secret, created_at, updated_at FROM vault_entries ORDER BY label');
+        const r = req.user.role === 'admin'
+            ? await pool.query(`SELECT ${ENTRY_COLS}, secret FROM vault_entries ORDER BY label`)
+            : await pool.query(`SELECT ${ENTRY_COLS}, secret FROM vault_entries WHERE $1 = ANY(allowed_roles) ORDER BY label`, [req.user.role]);
         const entries = r.rows.map(e => ({
             id: e.id, label: e.label, username: e.username,
-            password: safeDecrypt(e.secret), created_at: e.created_at, updated_at: e.updated_at,
+            password: safeDecrypt(e.secret), allowed_roles: e.allowed_roles || [],
+            created_at: e.created_at, updated_at: e.updated_at,
         }));
         res.json({ entries });
-    } catch (err) { console.error('Vault unlock error:', err.message); res.status(500).json({ error: 'Failed to read vault.' }); }
+    } catch (err) { console.error('Vault read error:', err.message); res.status(500).json({ error: 'Failed to read vault.' }); }
 });
 
-/* POST /api/vault/generate { password, label, username } — new CSPRNG password. */
-router.post('/generate', async (req, res) => {
+/* POST /api/vault/generate { label, username, allowed_roles } — admin only. */
+router.post('/generate', requireRole('admin'), async (req, res) => {
     if (!getKey()) return res.status(503).json({ error: 'VAULT_KEY is not configured on the server.' });
-    if (!await verifyGate(req.body.password)) return res.status(401).json({ error: 'Incorrect vault password.' });
     const label = (req.body.label || '').trim();
     if (!label) return res.status(400).json({ error: 'Service label is required.' });
     const username = (req.body.username || '').trim() || null;
+    const allowed  = cleanRoles(req.body.allowed_roles);
     try {
         const pw = generatePassword(15);
         const r  = await pool.query(
-            'INSERT INTO vault_entries (label, username, secret, created_by) VALUES ($1, $2, $3, $4) RETURNING id, label, username, created_at, updated_at',
-            [label, username, encrypt(pw), req.user.id]
+            `INSERT INTO vault_entries (label, username, secret, allowed_roles, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING ${ENTRY_COLS}`,
+            [label, username, encrypt(pw), allowed, req.user.id]
         );
         res.status(201).json({ ...r.rows[0], password: pw });
     } catch (err) { console.error('Vault generate error:', err.message); res.status(500).json({ error: 'Failed to generate password.' }); }
 });
 
-/* POST /api/vault/entries/:id/regenerate { password } — roll the password. */
-router.post('/entries/:id/regenerate', async (req, res) => {
+/* POST /api/vault/entries/:id/regenerate — roll the password. Admin only. */
+router.post('/entries/:id/regenerate', requireRole('admin'), async (req, res) => {
     if (!getKey()) return res.status(503).json({ error: 'VAULT_KEY is not configured on the server.' });
-    if (!await verifyGate(req.body.password)) return res.status(401).json({ error: 'Incorrect vault password.' });
     try {
         const pw = generatePassword(15);
         const r  = await pool.query(
-            'UPDATE vault_entries SET secret = $1, updated_at = NOW() WHERE id = $2 RETURNING id, label, username, created_at, updated_at',
+            `UPDATE vault_entries SET secret = $1, updated_at = NOW() WHERE id = $2 RETURNING ${ENTRY_COLS}`,
             [encrypt(pw), req.params.id]
         );
         if (r.rowCount === 0) return res.status(404).json({ error: 'Entry not found.' });
@@ -145,9 +123,27 @@ router.post('/entries/:id/regenerate', async (req, res) => {
     } catch (err) { console.error('Vault regenerate error:', err.message); res.status(500).json({ error: 'Failed to regenerate.' }); }
 });
 
-/* POST /api/vault/entries/:id/delete { password } — remove an entry. */
-router.post('/entries/:id/delete', async (req, res) => {
-    if (!await verifyGate(req.body.password)) return res.status(401).json({ error: 'Incorrect vault password.' });
+/* PATCH /api/vault/entries/:id { label?, username?, allowed_roles? } — edit
+   metadata and who can access. Admin only. */
+router.patch('/entries/:id', requireRole('admin'), async (req, res) => {
+    const sets = [], vals = [];
+    if (typeof req.body.label === 'string' && req.body.label.trim()) { vals.push(req.body.label.trim()); sets.push(`label = $${vals.length}`); }
+    if ('username' in req.body)      { vals.push((req.body.username || '').trim() || null); sets.push(`username = $${vals.length}`); }
+    if ('allowed_roles' in req.body) { vals.push(cleanRoles(req.body.allowed_roles));        sets.push(`allowed_roles = $${vals.length}`); }
+    if (sets.length === 0) return res.status(400).json({ error: 'Nothing to update.' });
+    vals.push(req.params.id);
+    try {
+        const r = await pool.query(
+            `UPDATE vault_entries SET ${sets.join(', ')}, updated_at = NOW() WHERE id = $${vals.length} RETURNING ${ENTRY_COLS}`,
+            vals
+        );
+        if (r.rowCount === 0) return res.status(404).json({ error: 'Entry not found.' });
+        res.json(r.rows[0]);
+    } catch (err) { console.error('Vault update error:', err.message); res.status(500).json({ error: 'Failed to update entry.' }); }
+});
+
+/* DELETE /api/vault/entries/:id — remove an entry. Admin only. */
+router.delete('/entries/:id', requireRole('admin'), async (req, res) => {
     try {
         const r = await pool.query('DELETE FROM vault_entries WHERE id = $1', [req.params.id]);
         if (r.rowCount === 0) return res.status(404).json({ error: 'Entry not found.' });

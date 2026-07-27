@@ -198,12 +198,11 @@ async function runReminderDigest() {
     try {
         const soon = `CURRENT_DATE + INTERVAL '30 days'`;
         const q = sql => pool.query(sql).catch(() => ({ rows: [] }));
-        const [contracts, permits, inspections, maint, noBill, overdue] = await Promise.all([
+        const [contracts, permits, inspections, maint, overdue] = await Promise.all([
             q(`SELECT name, (contract_end::date    - CURRENT_DATE)::int AS days FROM clients WHERE contract_end    IS NOT NULL AND contract_end    <= ${soon} ORDER BY contract_end`),
             q(`SELECT name, (permit_expires::date  - CURRENT_DATE)::int AS days FROM clients WHERE permit_expires  IS NOT NULL AND permit_expires  <= ${soon} ORDER BY permit_expires`),
             q(`SELECT name, (next_inspection::date - CURRENT_DATE)::int AS days FROM clients WHERE next_inspection IS NOT NULL AND next_inspection <= ${soon} ORDER BY next_inspection`),
             q(`SELECT name, (maintenance_next::date - CURRENT_DATE)::int AS days FROM clients WHERE maintenance_enabled = TRUE AND maintenance_next IS NOT NULL AND maintenance_next <= CURRENT_DATE + INTERVAL '14 days' ORDER BY maintenance_next`),
-            q(`SELECT name FROM clients WHERE monitoring_enabled = TRUE AND (billing_amount IS NULL OR billing_amount = 0) ORDER BY name`),
             q(`SELECT title FROM service_tickets WHERE event_end IS NOT NULL AND (event_end AT TIME ZONE 'America/Phoenix') < NOW() AND status NOT IN ('resolved','closed') ORDER BY event_end`),
         ]);
 
@@ -214,7 +213,6 @@ async function runReminderDigest() {
         addSec('Permits expiring',                   permits.rows,     c => `${c.name} — ${fmtDays(c.days)}`);
         addSec('Inspections due',                    inspections.rows, c => `${c.name} — ${fmtDays(c.days)}`);
         addSec('Maintenance due',                    maint.rows,       c => `${c.name} — ${fmtDays(c.days)}`);
-        addSec('Monitored but no billing amount',    noBill.rows,      c => `${c.name}`);
         addSec('Tickets past departure, not closed', overdue.rows,     t => `${t.title}`);
 
         if (sections.length === 0) return;   /* nothing to nag about today */

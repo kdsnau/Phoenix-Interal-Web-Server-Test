@@ -79,7 +79,7 @@ function AppRoutes() {
                 <Route path="/tech-notes" element={<PrivateRoute><TechNotes /></PrivateRoute>} />
                 <Route path="/profile"    element={<PrivateRoute><Profile /></PrivateRoute>} />
                 <Route path="/calls"      element={<PrivateRoute><Calls /></PrivateRoute>} />
-                <Route path="/vault"      element={<PrivateRoute roles={['admin']}><Vault /></PrivateRoute>} />
+                <Route path="/vault"      element={<PrivateRoute><Vault /></PrivateRoute>} />
                 <Route path="*"           element={<Navigate to={user ? '/dashboard' : '/login'} />} />
             </Routes>
         </Suspense>

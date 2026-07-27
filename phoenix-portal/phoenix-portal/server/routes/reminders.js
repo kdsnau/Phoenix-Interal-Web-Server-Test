@@ -76,12 +76,11 @@ router.get('/', authenticate, async (req, res) => {
         /* ── Accounting + admin: client renewals & billing gaps ── */
         if (isAdmin || isAcct) {
             const soon = `CURRENT_DATE + INTERVAL '30 days'`;
-            const [contracts, permits, inspections, maint, noBill] = await Promise.all([
+            const [contracts, permits, inspections, maint] = await Promise.all([
                 pool.query(`SELECT name, (contract_end::date  - CURRENT_DATE)::int AS days, contract_end  AS d FROM clients WHERE contract_end  IS NOT NULL AND contract_end  <= ${soon} ORDER BY contract_end  ASC LIMIT 50`).catch(() => ({ rows: [] })),
                 pool.query(`SELECT name, (permit_expires::date - CURRENT_DATE)::int AS days, permit_expires AS d FROM clients WHERE permit_expires IS NOT NULL AND permit_expires <= ${soon} ORDER BY permit_expires ASC LIMIT 50`).catch(() => ({ rows: [] })),
                 pool.query(`SELECT name, (next_inspection::date - CURRENT_DATE)::int AS days, next_inspection AS d FROM clients WHERE next_inspection IS NOT NULL AND next_inspection <= ${soon} ORDER BY next_inspection ASC LIMIT 50`).catch(() => ({ rows: [] })),
                 pool.query(`SELECT name, (maintenance_next::date - CURRENT_DATE)::int AS days, maintenance_next AS d FROM clients WHERE maintenance_enabled = TRUE AND maintenance_next IS NOT NULL AND maintenance_next <= CURRENT_DATE + INTERVAL '14 days' ORDER BY maintenance_next ASC LIMIT 50`).catch(() => ({ rows: [] })),
-                pool.query(`SELECT name FROM clients WHERE monitoring_enabled = TRUE AND (billing_amount IS NULL OR billing_amount = 0) ORDER BY name ASC LIMIT 50`).catch(() => ({ rows: [] })),
             ]);
 
             const dateRem = (rows, category, verb) => {
@@ -99,10 +98,6 @@ router.get('/', authenticate, async (req, res) => {
             dateRem(permits.rows,     'Permit',      'Expires');
             dateRem(inspections.rows, 'Inspection',  'Due');
             dateRem(maint.rows,       'Maintenance', 'Due');
-            for (const c of noBill.rows) out.push({
-                severity: 'info', category: 'Billing', title: c.name,
-                detail: 'Monitored but no recurring billing amount set', date: null, link: '/clients',
-            });
         }
 
         out.sort((a, b) =>

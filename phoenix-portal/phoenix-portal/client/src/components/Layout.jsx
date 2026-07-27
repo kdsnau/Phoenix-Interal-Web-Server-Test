@@ -24,6 +24,8 @@ export const NAV = {
         { path: '/ai',        label: 'AI'        },
         { path: '/messages',  label: 'Messages'  },
         { path: '/feedback',  label: 'Feedback'  },
+        { divider: 'System' },
+        { path: '/vault',     label: 'Vault'     },
     ],
     accounting: [
         { divider: 'Operations' },
@@ -46,6 +48,8 @@ export const NAV = {
         { path: '/ai',         label: 'AI'         },
         { path: '/messages',   label: 'Messages'   },
         { path: '/feedback',   label: 'Feedback'   },
+        { divider: 'System' },
+        { path: '/vault',      label: 'Vault'      },
     ],
     admin: [
         { divider: 'Operations' },

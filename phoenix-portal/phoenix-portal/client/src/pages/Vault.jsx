@@ -2,85 +2,134 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import Layout from '../components/Layout';
 import PageHelp from '../components/PageHelp';
+import { useAuth } from '../context/AuthContext';
 
-/* Admin credential vault. The page re-prompts for the vault password on every
-   visit; the password is held only in component memory while unlocked and is
-   discarded when you leave the page (nothing secret is persisted client-side). */
+/* Permission roles an admin can grant a credential to (admins always have access). */
+const ASSIGNABLE_ROLES = ['accounting', 'technician'];
+const cap = s => (s ? s[0].toUpperCase() + s.slice(1) : s);
+const accessLabel = roles =>
+    (!roles || roles.length === 0) ? 'Admins only' : `${roles.map(cap).join(', ')} + Admins`;
+
+function RoleCheckboxes({ value, onChange }) {
+    const toggle = role => {
+        const set = new Set(value);
+        set.has(role) ? set.delete(role) : set.add(role);
+        onChange([...set]);
+    };
+    return (
+        <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+            {ASSIGNABLE_ROLES.map(r => (
+                <label key={r} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 13, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={value.includes(r)} onChange={() => toggle(r)} style={{ width: 'auto' }} /> {cap(r)}
+                </label>
+            ))}
+        </div>
+    );
+}
+
+/* Admin-only editor for a credential's label, username, and who can access it. */
+function EntryEditModal({ entry, onSaved, onClose }) {
+    const [label,    setLabel]    = useState(entry.label || '');
+    const [username, setUsername] = useState(entry.username || '');
+    const [roles,    setRoles]    = useState(entry.allowed_roles || []);
+    const [error,    setError]    = useState('');
+    const [saving,   setSaving]   = useState(false);
+
+    async function submit(e) {
+        e.preventDefault(); setError(''); setSaving(true);
+        try {
+            const { data } = await api.patch(`/vault/entries/${entry.id}`, { label, username, allowed_roles: roles });
+            onSaved(data); onClose();
+        } catch (err) { setError(err.response?.data?.error || 'Failed to save.'); setSaving(false); }
+    }
+
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal" onClick={e => e.stopPropagation()}>
+                <div className="modal-title">Edit Credential</div>
+                {error && <div className="error-msg">{error}</div>}
+                <form onSubmit={submit}>
+                    <div className="form-group"><label className="form-label">Service</label>
+                        <input value={label} onChange={e => setLabel(e.target.value)} required autoFocus /></div>
+                    <div className="form-group"><label className="form-label">Username</label>
+                        <input value={username} onChange={e => setUsername(e.target.value)} placeholder="optional" /></div>
+                    <div className="form-group"><label className="form-label">Who can access</label>
+                        <RoleCheckboxes value={roles} onChange={setRoles} />
+                        <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 6 }}>Admins always have access.</div></div>
+                    <div className="modal-actions">
+                        <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
+                        <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+}
+
+/* Credential vault. Everyone can open it and sees the credentials granted to
+   their role; admins see all and manage them. Secrets are decrypted server-side
+   and held only in component memory. */
 export default function Vault() {
-    const [phase, setPhase]       = useState('loading'); // loading | no-key | setup | locked | unlocked
-    const [error, setError]       = useState('');
-    const [pw, setPw]             = useState('');         // gate password, kept in memory while unlocked
-    const [entries, setEntries]   = useState([]);
+    const { user }  = useAuth();
+    const isAdmin   = user?.role === 'admin';
+    const [phase,    setPhase]    = useState('loading'); // loading | no-key | ready
+    const [error,    setError]    = useState('');
+    const [entries,  setEntries]  = useState([]);
     const [revealed, setRevealed] = useState({});
-    const [busy, setBusy]         = useState(false);
-
-    const [setupPw, setSetupPw]   = useState('');
-    const [setupPw2, setSetupPw2] = useState('');
-    const [unlockPw, setUnlockPw] = useState('');
+    const [busy,     setBusy]     = useState(false);
     const [genLabel, setGenLabel] = useState('');
-    const [genUser, setGenUser]   = useState('');
-
-    useEffect(() => {
-        api.get('/vault/status')
-            .then(r => setPhase(!r.data.keyOk ? 'no-key' : !r.data.configured ? 'setup' : 'locked'))
-            .catch(() => setError('Failed to load vault status.'));
-    }, []);
+    const [genUser,  setGenUser]  = useState('');
+    const [genRoles, setGenRoles] = useState([]);
+    const [editing,  setEditing]  = useState(null);
 
     const sortEntries = list => [...list].sort((a, b) => a.label.localeCompare(b.label));
-    const onAuthFail = e => { if (e.response?.status === 401) lock(); };
 
-    async function doSetup(e) {
-        e.preventDefault(); setError('');
-        if (setupPw.length < 8)     return setError('Password must be at least 8 characters.');
-        if (setupPw !== setupPw2)   return setError('Passwords do not match.');
-        try { await api.post('/vault/setup', { password: setupPw }); setSetupPw(''); setSetupPw2(''); setPhase('locked'); }
-        catch (e) { setError(e.response?.data?.error || 'Setup failed.'); }
-    }
-
-    async function doUnlock(e) {
-        e.preventDefault(); setError(''); setBusy(true);
+    async function load() {
         try {
-            const { data } = await api.post('/vault/unlock', { password: unlockPw });
+            const st = await api.get('/vault/status');
+            if (!st.data.keyOk) { setPhase('no-key'); return; }
+            const { data } = await api.get('/vault/entries');
             setEntries(sortEntries(data.entries));
-            setPw(unlockPw); setUnlockPw(''); setPhase('unlocked');
-        } catch (e) { setError(e.response?.data?.error || 'Unlock failed.'); }
-        finally { setBusy(false); }
+            setPhase('ready');
+        } catch { setError('Failed to load the vault.'); setPhase('ready'); }
     }
-
-    function lock() { setPw(''); setEntries([]); setRevealed({}); setPhase('locked'); }
+    useEffect(() => { load(); }, []);
 
     async function generate(e) {
         e.preventDefault(); setError(''); setBusy(true);
         try {
-            const { data } = await api.post('/vault/generate', { password: pw, label: genLabel, username: genUser });
+            const { data } = await api.post('/vault/generate', { label: genLabel, username: genUser, allowed_roles: genRoles });
             setEntries(prev => sortEntries([...prev, data]));
             setRevealed(r => ({ ...r, [data.id]: true }));
-            setGenLabel(''); setGenUser('');
-        } catch (e) { setError(e.response?.data?.error || 'Generate failed.'); onAuthFail(e); }
+            setGenLabel(''); setGenUser(''); setGenRoles([]);
+        } catch (err) { setError(err.response?.data?.error || 'Generate failed.'); }
         finally { setBusy(false); }
     }
 
     async function regenerate(id) {
         setError('');
         try {
-            const { data } = await api.post(`/vault/entries/${id}/regenerate`, { password: pw });
+            const { data } = await api.post(`/vault/entries/${id}/regenerate`, {});
             setEntries(prev => prev.map(en => en.id === id ? { ...en, ...data } : en));
             setRevealed(r => ({ ...r, [id]: true }));
-        } catch (e) { setError(e.response?.data?.error || 'Regenerate failed.'); onAuthFail(e); }
+        } catch (err) { setError(err.response?.data?.error || 'Regenerate failed.'); }
     }
 
     async function remove(id) {
         if (!confirm('Delete this entry? This cannot be undone.')) return;
         setError('');
-        try { await api.post(`/vault/entries/${id}/delete`, { password: pw }); setEntries(prev => prev.filter(en => en.id !== id)); }
-        catch (e) { setError(e.response?.data?.error || 'Delete failed.'); onAuthFail(e); }
+        try { await api.delete(`/vault/entries/${id}`); setEntries(prev => prev.filter(en => en.id !== id)); }
+        catch (err) { setError(err.response?.data?.error || 'Delete failed.'); }
     }
+
+    const onEdited = data => setEntries(prev => sortEntries(prev.map(en => en.id === data.id ? { ...en, ...data } : en)));
+
+    const cols = isAdmin ? 6 : 4;
 
     return (
         <Layout>
             <div className="page-header">
                 <h1 className="page-title">Vault<PageHelp id="vault" /></h1>
-                {phase === 'unlocked' && <button className="btn btn-ghost" onClick={lock}>🔒 Lock</button>}
             </div>
             {error && <div className="error-msg">{error}</div>}
 
@@ -92,44 +141,35 @@ export default function Vault() {
                 </div>
             )}
 
-            {phase === 'setup' && (
-                <form onSubmit={doSetup} style={{ maxWidth: 420 }}>
-                    <p style={{ color: 'var(--text-dim)', fontSize: 13, marginBottom: 14 }}>
-                        Set the vault password. You'll be asked for it every time you open this page.
-                    </p>
-                    <div className="form-group"><label className="form-label">New vault password</label>
-                        <input type="password" value={setupPw} onChange={e => setSetupPw(e.target.value)} autoFocus /></div>
-                    <div className="form-group"><label className="form-label">Confirm password</label>
-                        <input type="password" value={setupPw2} onChange={e => setSetupPw2(e.target.value)} /></div>
-                    <button className="btn btn-primary" type="submit">Set Password</button>
-                </form>
-            )}
-
-            {phase === 'locked' && (
-                <form onSubmit={doUnlock} style={{ maxWidth: 420 }}>
-                    <p style={{ color: 'var(--text-dim)', fontSize: 13, marginBottom: 14 }}>🔒 Enter the vault password to view stored credentials.</p>
-                    <div className="form-group"><label className="form-label">Vault password</label>
-                        <input type="password" value={unlockPw} onChange={e => setUnlockPw(e.target.value)} autoFocus /></div>
-                    <button className="btn btn-primary" type="submit" disabled={busy}>{busy ? 'Unlocking…' : 'Unlock'}</button>
-                </form>
-            )}
-
-            {phase === 'unlocked' && (
+            {phase === 'ready' && (
                 <>
-                    <form onSubmit={generate} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 20 }}>
-                        <div className="form-group" style={{ margin: 0 }}><label className="form-label">Service</label>
-                            <input value={genLabel} onChange={e => setGenLabel(e.target.value)} placeholder="e.g. DW Spectrum NVR" required /></div>
-                        <div className="form-group" style={{ margin: 0 }}><label className="form-label">Username (optional)</label>
-                            <input value={genUser} onChange={e => setGenUser(e.target.value)} placeholder="optional" /></div>
-                        <button className="btn btn-primary" type="submit" disabled={busy}>+ Generate</button>
-                    </form>
+                    {isAdmin ? (
+                        <form onSubmit={generate} style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'flex-end', marginBottom: 20 }}>
+                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">Service</label>
+                                <input value={genLabel} onChange={e => setGenLabel(e.target.value)} placeholder="e.g. DW Spectrum NVR" required /></div>
+                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">Username (optional)</label>
+                                <input value={genUser} onChange={e => setGenUser(e.target.value)} placeholder="optional" /></div>
+                            <div className="form-group" style={{ margin: 0 }}><label className="form-label">Who can access</label>
+                                <RoleCheckboxes value={genRoles} onChange={setGenRoles} /></div>
+                            <button className="btn btn-primary" type="submit" disabled={busy}>+ Generate</button>
+                        </form>
+                    ) : (
+                        <p style={{ color: 'var(--text-dim)', fontSize: 13, marginBottom: 16 }}>
+                            Credentials shared with your role ({user?.role}). Ask an admin if you need access to others.
+                        </p>
+                    )}
 
                     <div className="table-card">
                         <table className="data-table">
-                            <thead><tr><th>Service</th><th>Username</th><th>Password</th><th>Updated</th><th></th></tr></thead>
+                            <thead><tr>
+                                <th>Service</th><th>Username</th><th>Password</th>
+                                {isAdmin && <th>Access</th>}<th>Updated</th>{isAdmin && <th></th>}
+                            </tr></thead>
                             <tbody>
                                 {entries.length === 0 && (
-                                    <tr><td colSpan={5} style={{ color: 'var(--text-dim)', textAlign: 'center', padding: 24 }}>No credentials yet. Generate one above.</td></tr>
+                                    <tr><td colSpan={cols} style={{ color: 'var(--text-dim)', textAlign: 'center', padding: 24 }}>
+                                        {isAdmin ? 'No credentials yet. Generate one above.' : 'No credentials are shared with your role yet.'}
+                                    </td></tr>
                                 )}
                                 {entries.map(en => (
                                     <tr key={en.id}>
@@ -146,23 +186,26 @@ export default function Vault() {
                                                 </span>
                                             )}
                                         </td>
+                                        {isAdmin && <td style={{ fontSize: 12, color: 'var(--text-dim)' }}>{accessLabel(en.allowed_roles)}</td>}
                                         <td style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-dim)' }}>{en.updated_at ? new Date(en.updated_at).toLocaleDateString() : ''}</td>
-                                        <td>
-                                            <div style={{ display: 'flex', gap: 6 }}>
-                                                <button className="btn btn-ghost" style={{ padding: '2px 8px', fontSize: 12 }} onClick={() => regenerate(en.id)}>Regenerate</button>
-                                                <button className="btn btn-danger" style={{ padding: '2px 8px', fontSize: 12 }} onClick={() => remove(en.id)}>Del</button>
-                                            </div>
-                                        </td>
+                                        {isAdmin && (
+                                            <td>
+                                                <div style={{ display: 'flex', gap: 6 }}>
+                                                    <button className="btn btn-ghost" style={{ padding: '2px 8px', fontSize: 12 }} onClick={() => setEditing(en)}>Edit</button>
+                                                    <button className="btn btn-ghost" style={{ padding: '2px 8px', fontSize: 12 }} onClick={() => regenerate(en.id)}>Regenerate</button>
+                                                    <button className="btn btn-danger" style={{ padding: '2px 8px', fontSize: 12 }} onClick={() => remove(en.id)}>Del</button>
+                                                </div>
+                                            </td>
+                                        )}
                                     </tr>
                                 ))}
                             </tbody>
                         </table>
                     </div>
-                    <p style={{ color: 'var(--text-dim)', fontSize: 11, marginTop: 12 }}>
-                        Leaving this page locks the vault — you'll be asked for the password again next time.
-                    </p>
                 </>
             )}
+
+            {editing && <EntryEditModal entry={editing} onSaved={onEdited} onClose={() => setEditing(null)} />}
         </Layout>
     );
 }

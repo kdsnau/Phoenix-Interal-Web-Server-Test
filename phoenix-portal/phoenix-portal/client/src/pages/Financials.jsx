@@ -432,25 +432,28 @@ function ExpenseModal({ onSaved, onClose }) {
 /* -----------------------------------------------------------------------
    Record a payment against a client (client_transactions type=payment)
    ----------------------------------------------------------------------- */
-function PaymentModal({ clientId, clientName, onSaved, onClose }) {
-    const [amount,      setAmount]      = useState('');
-    const [description, setDescription] = useState('');
-    const [date,        setDate]        = useState(() => new Date().toISOString().slice(0, 10));
+function PaymentModal({ entry, clientId, clientName, onSaved, onClose }) {
+    const editing = !!entry;
+    const [amount,      setAmount]      = useState(entry?.amount != null ? String(entry.amount) : '');
+    const [description, setDescription] = useState(entry?.description || '');
+    const [date,        setDate]        = useState(() => (entry?.date ? String(entry.date).slice(0, 10) : new Date().toISOString().slice(0, 10)));
     const [error,       setError]       = useState('');
     const [saving,      setSaving]      = useState(false);
 
     async function submit(e) {
         e.preventDefault(); setError(''); setSaving(true);
         try {
-            const { data } = await api.post('/financials/payments', { client_id: clientId, amount: Number(amount), description, date });
+            const { data } = editing
+                ? await api.patch(`/financials/payments/${entry.id}`, { amount: Number(amount), description, date })
+                : await api.post('/financials/payments', { client_id: clientId, amount: Number(amount), description, date });
             onSaved(data); onClose();
-        } catch (err) { setError(err.response?.data?.error || 'Failed to add payment.'); setSaving(false); }
+        } catch (err) { setError(err.response?.data?.error || `Failed to ${editing ? 'update' : 'add'} payment.`); setSaving(false); }
     }
 
     return (
         <div className="modal-overlay" onClick={onClose}>
             <div className="modal" onClick={e => e.stopPropagation()}>
-                <div className="modal-title">New Payment{clientName ? ` — ${clientName}` : ''}</div>
+                <div className="modal-title">{editing ? 'Edit Payment' : 'New Payment'}{clientName ? ` — ${clientName}` : ''}</div>
                 {error && <div className="error-msg">{error}</div>}
                 <form onSubmit={submit}>
                     <div className="form-group">
@@ -467,7 +470,7 @@ function PaymentModal({ clientId, clientName, onSaved, onClose }) {
                     </div>
                     <div className="modal-actions">
                         <button type="button" className="btn btn-ghost" onClick={onClose}>Cancel</button>
-                        <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Add Payment'}</button>
+                        <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : (editing ? 'Save' : 'Add Payment')}</button>
                     </div>
                 </form>
             </div>
@@ -648,8 +651,10 @@ function RfqsTable({ rfqs, canManage, onEdit, onDelete, onPrint }) {
     );
 }
 
-/* Simple invoice/payment table used inside a client's detail. */
-function TxTable({ rows, kind }) {
+/* Simple invoice/payment table used inside a client's detail. onEdit/onDelete
+   (payments only) add a row-actions column. */
+function TxTable({ rows, kind, onEdit, onDelete }) {
+    const actions = !!(onEdit || onDelete);
     if (rows.length === 0) return <div className="fin-empty">No {kind} for this client.</div>;
     return (
         <div className="fin-table-wrap">
@@ -657,7 +662,7 @@ function TxTable({ rows, kind }) {
                 <thead>
                     <tr><th>Description</th><th style={{ textAlign: 'right' }}>Total</th>
                         {kind === 'invoices' && <><th style={{ textAlign: 'right' }}>Paid</th><th style={{ textAlign: 'right' }}>Balance</th></>}
-                        <th>Date</th></tr>
+                        <th>Date</th>{actions && <th></th>}</tr>
                 </thead>
                 <tbody>
                     {rows.map(t => {
@@ -673,6 +678,12 @@ function TxTable({ rows, kind }) {
                                     <td className="fin-amount-expense fin-mono" style={{ textAlign: 'right' }}>{money2(balance)}</td>
                                 </>}
                                 <td className="fin-mono">{t.date ? new Date(t.date).toLocaleDateString() : new Date(t.created_at).toLocaleDateString()}</td>
+                                {actions && (
+                                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                        {onEdit   && <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: 12 }} onClick={() => onEdit(t)}>Edit</button>}
+                                        {onDelete && <button className="btn btn-ghost" style={{ padding: '4px 8px', fontSize: 12, color: 'var(--red)' }} onClick={() => onDelete(t.id)}>Del</button>}
+                                    </td>
+                                )}
                             </tr>
                         );
                     })}
@@ -1051,6 +1062,7 @@ function FinClientDetail({ clientId, clients, inventory = [], canManage, isAdmin
     const deleteWo = async (id) => { if (!confirm('Delete this work order?')) return; await api.delete(`/financials/work-orders/${id}`).catch(() => {}); afterChange(); };
     const patchWo  = async (id, body) => { await api.patch(`/financials/work-orders/${id}`, body).catch(() => {}); afterChange(); };
     const deleteRfq = async (id) => { if (!confirm('Delete this RFQ?')) return; await api.delete(`/snapshot/${id}`).catch(() => {}); afterChange(); };
+    const deletePayment = async (id) => { if (!confirm('Delete this payment?')) return; await api.delete(`/financials/payments/${id}`).catch(() => {}); afterChange(); };
     const removeFromList = async () => {
         if (!confirm('Remove this client from the Financials list? (They reappear automatically if they have any invoices, work orders, or RFQs.)')) return;
         await api.delete(`/financials/clients/${clientId}/pin`).catch(() => {});
@@ -1106,7 +1118,9 @@ function FinClientDetail({ clientId, clients, inventory = [], canManage, isAdmin
             </div>
 
             {tab === 'invoices'    && <TxTable rows={invoices} kind="invoices" />}
-            {tab === 'payments'    && <TxTable rows={payments} kind="payments" />}
+            {tab === 'payments'    && <TxTable rows={payments} kind="payments"
+                onEdit={canManage ? (p => setModal({ kind: 'payment', entry: p })) : undefined}
+                onDelete={canManage ? deletePayment : undefined} />}
             {tab === 'work_orders' && <WorkOrdersTable orders={work_orders} canManage={canManage} isAdmin={isAdmin} onEdit={w => setModal({ kind: 'wo', entry: w })} onPatch={patchWo} onDelete={deleteWo} onPrint={setPrintWo} />}
             {tab === 'rfqs'        && <RfqsTable rfqs={rfqs} canManage={canManage} onEdit={e => setModal({ kind: 'rfq', entry: e })} onDelete={deleteRfq} onPrint={setPrintRfq} />}
 
@@ -1119,7 +1133,7 @@ function FinClientDetail({ clientId, clients, inventory = [], canManage, isAdmin
                     onSaved={afterChange} onClose={() => setModal(null)} />
             )}
             {modal?.kind === 'payment' && (
-                <PaymentModal clientId={client.id} clientName={client.name} onSaved={afterChange} onClose={() => setModal(null)} />
+                <PaymentModal entry={modal.entry} clientId={client.id} clientName={client.name} onSaved={afterChange} onClose={() => setModal(null)} />
             )}
             {modal?.kind === 'billing' && (
                 <BillingModal client={client} onSaved={afterChange} onClose={() => setModal(null)} />

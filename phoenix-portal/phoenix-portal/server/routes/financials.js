@@ -749,4 +749,36 @@ router.post('/payments', requireRole('accounting', 'admin'), async (req, res) =>
     } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to add payment.' }); }
 });
 
+/* PATCH /api/financials/payments/:id { amount?, description?, date? } — edit a payment.
+   Scoped to type='payment' so this can never touch an invoice row. */
+router.patch('/payments/:id', requireRole('accounting', 'admin'), async (req, res) => {
+    const { amount, description, date } = req.body;
+    if (amount != null && amount !== '' && (isNaN(amount) || Number(amount) <= 0))
+        return res.status(400).json({ error: 'Amount must be a positive number.' });
+    try {
+        const r = await pool.query(
+            `UPDATE client_transactions
+             SET amount      = COALESCE($1::numeric, amount),
+                 description = COALESCE($2, description),
+                 date        = COALESCE($3::date, date)
+             WHERE id = $4 AND type = 'payment'
+             RETURNING id, description, amount, type, date, created_at`,
+            [(amount === '' || amount == null) ? null : Number(amount), description ?? null, date || null, req.params.id]
+        );
+        if (r.rowCount === 0) return res.status(404).json({ error: 'Payment not found.' });
+        res.json(r.rows[0]);
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to update payment.' }); }
+});
+
+/* DELETE /api/financials/payments/:id — remove a payment. If a work order generated
+   it (payment_tx_id), clear that link first so the WO doesn't dangle. */
+router.delete('/payments/:id', requireRole('accounting', 'admin'), async (req, res) => {
+    try {
+        await pool.query('UPDATE work_orders SET payment_tx_id = NULL WHERE payment_tx_id = $1', [req.params.id]);
+        const r = await pool.query("DELETE FROM client_transactions WHERE id = $1 AND type = 'payment' RETURNING id", [req.params.id]);
+        if (r.rowCount === 0) return res.status(404).json({ error: 'Payment not found.' });
+        res.json({ ok: true });
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to delete payment.' }); }
+});
+
 module.exports = router;

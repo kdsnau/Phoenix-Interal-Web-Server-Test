@@ -211,7 +211,7 @@ router.post('/', requireRole('admin'), async (req, res) => {
     }
 });
 
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', requireRole('admin', 'accounting'), async (req, res) => {
     const { mileage, registration, tags_renewal } = req.body;
     /* driver_id present (incl. null) → set it; absent → leave unchanged */
     const setDriver = 'driver_id' in req.body;

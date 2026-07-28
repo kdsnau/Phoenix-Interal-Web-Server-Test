@@ -384,6 +384,17 @@ router.post('/report', (req, res) => {
             const parts      = (req.body.parts || '').trim();
             const returnTrip = ['true', 'yes', 'on', '1'].includes(String(req.body.return_trip).toLowerCase());
 
+            /* Inventory items the tech linked → pending stock-change requests (deducted
+               only when admin/accounting approve). Also appended to the parts text so
+               they appear in the Slack report. */
+            let lineItems = [];
+            try { lineItems = JSON.parse(req.body.line_items || '[]'); } catch { lineItems = []; }
+            lineItems = (Array.isArray(lineItems) ? lineItems : [])
+                .map(li => ({ id: Number(li.inventory_item_id), qty: Number(li.qty), name: String(li.name || '').trim(), sku: String(li.sku || '').trim() }))
+                .filter(li => Number.isInteger(li.id) && li.id > 0 && Number.isFinite(li.qty) && li.qty > 0);
+            const linkedText = lineItems.map(li => `${li.qty}x ${li.name}${li.sku ? ` (${li.sku})` : ''}`).join('\n');
+            const partsText  = [parts, linkedText].filter(Boolean).join('\n');
+
             const tq = await pool.query(
                 `SELECT t.id, t.title, t.client_id, t.created_by, t.assignee_ids, c.name AS client_name
                  FROM service_tickets t LEFT JOIN clients c ON c.id = t.client_id WHERE t.id = $1`,
@@ -412,7 +423,7 @@ router.post('/report', (req, res) => {
             /* Job name: the form value if given, else the client name — which also
                makes the report match this client on their Reports tab. */
             const jobName = (req.body.job_name || '').trim() || (t.client_name || t.title || 'Unknown').trim();
-            const text = buildReportMessage({ jobName, rfq: (req.body.rfq || '').trim(), technicians, arrival, work, parts, returnTrip });
+            const text = buildReportMessage({ jobName, rfq: (req.body.rfq || '').trim(), technicians, arrival, work, parts: partsText, returnTrip });
 
             const photos = (req.files || []).filter(f => f.mimetype && f.mimetype.startsWith('image/'));
 
@@ -434,9 +445,17 @@ router.post('/report', (req, res) => {
             const ins = await pool.query(
                 `INSERT INTO ticket_reports (ticket_id, author_id, author_name, work, parts, arrival, return_trip, photo_count, slack_ts)
                  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-                [ticketId, req.user.id, req.user.name, work, parts, arrival, returnTrip, photos.length, slackTs]
+                [ticketId, req.user.id, req.user.name, work, partsText, arrival, returnTrip, photos.length, slackTs]
             );
-            res.status(201).json(ins.rows[0]);
+            /* Queue linked items as pending stock changes for admin/accounting to approve. */
+            for (const li of lineItems) {
+                await pool.query(
+                    `INSERT INTO stock_change_requests (inventory_item_id, qty, requested_by, requester_name, source, source_id, note)
+                     VALUES ($1,$2,$3,$4,'report',$5,$6)`,
+                    [li.id, li.qty, req.user.id, req.user.name, ticketId, li.name || null]
+                ).catch(e => console.error('stock request insert:', e.message));
+            }
+            res.status(201).json({ ...ins.rows[0], pending_changes: lineItems.length });
         } catch (err) {
             console.error('Report post error:', err.message);
             res.status(500).json({ error: 'Failed to submit report.' });

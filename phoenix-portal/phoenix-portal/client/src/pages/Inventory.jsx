@@ -322,6 +322,13 @@ export default function Inventory() {
         fetchItems();
     }
 
+    /* Pending stock changes (e.g. items a tech linked in a field report). */
+    const [pending, setPending] = useState([]);
+    const fetchPending = () => { if (canEdit) api.get('/inventory/change-requests').then(r => setPending(Array.isArray(r.data) ? r.data : [])).catch(() => {}); };
+    useEffect(() => { fetchPending(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+    const approveChange = async (id) => { await api.post(`/inventory/change-requests/${id}/approve`, {}).catch(() => {}); fetchPending(); fetchItems(); };
+    const rejectChange  = async (id) => { await api.post(`/inventory/change-requests/${id}/reject`, {}).catch(() => {}); fetchPending(); };
+
     /* Stats — only for items with thresholds set */
     const lowCount  = items.filter(i => i.min_threshold > 0 && i.quantity > 0 && i.quantity <= i.min_threshold).length;
     const outCount  = items.filter(i => i.quantity === 0).length;
@@ -365,6 +372,33 @@ export default function Inventory() {
                         </div>
                     )}
                 </div>
+
+                {/* Pending stock changes awaiting approval (admin/accounting) */}
+                {canEdit && pending.length > 0 && (
+                    <div style={{ background: 'var(--bg-2)', border: '1px solid var(--accent)', borderRadius: 10, padding: 16, marginBottom: 20 }}>
+                        <div style={{ fontWeight: 600, color: 'var(--text-hi)', marginBottom: 10 }}>
+                            Pending stock changes <span style={{ fontSize: 12, color: 'var(--text-dim)', fontWeight: 400 }}>({pending.length} awaiting approval)</span>
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {pending.map(p => (
+                                <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 8, background: 'var(--bg-3)' }}>
+                                    <div style={{ flex: 1, minWidth: 0 }}>
+                                        <div style={{ fontSize: 13 }}>
+                                            <strong>{p.requester_name || 'Someone'}</strong> used <strong>{Number(p.qty)}×</strong> {p.item_name || `item #${p.inventory_item_id}`}
+                                            {p.sku ? <span style={{ color: 'var(--text-dim)' }}> · {p.sku}</span> : null}
+                                        </div>
+                                        <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+                                            {p.source === 'report' ? 'Field report' : (p.source || 'change')}{p.source_id ? ` · ticket #${p.source_id}` : ''}
+                                            {p.on_hand != null ? ` · ${Number(p.on_hand)} on hand → ${Number(p.on_hand) - Number(p.qty)}` : ''}
+                                        </div>
+                                    </div>
+                                    <button className="btn btn-primary" style={{ fontSize: 12, padding: '4px 10px' }} onClick={() => approveChange(p.id)} title={`Approve this item change from ${p.requester_name || 'user'}?`}>Approve</button>
+                                    <button className="btn btn-ghost" style={{ fontSize: 12, padding: '4px 10px', color: 'var(--red)' }} onClick={() => rejectChange(p.id)}>Reject</button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 {/* Alert banners */}
                 {outCount > 0 && (

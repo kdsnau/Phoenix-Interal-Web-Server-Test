@@ -14,6 +14,28 @@ pool.query(`ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS active BOOLEAN 
 /* Unique index on sku enables ON CONFLICT upserts */
 pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_inv_sku ON inventory_items(sku) WHERE sku IS NOT NULL`).catch(() => {});
 
+/* Pending stock changes proposed by non-admins (e.g. items a technician linked in
+   a field report). Admin/accounting approve them here; approving deducts on-hand
+   stock. No FK constraints — avoids a create-order race with inventory_items /
+   users; a dangling item_id just shows a blank name and can be rejected. */
+pool.query(`
+    CREATE TABLE IF NOT EXISTS stock_change_requests (
+        id                SERIAL    PRIMARY KEY,
+        inventory_item_id INTEGER   NOT NULL,
+        qty               NUMERIC   NOT NULL,
+        requested_by      INTEGER,
+        requester_name    TEXT,
+        source            TEXT,                       -- 'report'
+        source_id         INTEGER,                    -- e.g. the ticket id
+        note              TEXT,
+        status            TEXT      NOT NULL DEFAULT 'pending',   -- pending | approved | rejected
+        created_at        TIMESTAMP DEFAULT NOW(),
+        resolved_by       INTEGER,
+        resolved_at       TIMESTAMP
+    )
+`).catch(() => {});
+pool.query(`CREATE INDEX IF NOT EXISTS idx_scr_status ON stock_change_requests (status, created_at DESC)`).catch(() => {});
+
 pool.query(`
     CREATE TABLE IF NOT EXISTS vehicle_inventory (
         id                SERIAL PRIMARY KEY,
@@ -68,6 +90,51 @@ router.get('/vehicles', authenticate, async (req, res) => {
         console.error(err);
         res.status(500).json({ error: 'Failed to fetch vehicles.' });
     }
+});
+
+/* ── Stock change requests (must be BEFORE /:id routes) ──────────────────
+   GET pending list; approve (deducts stock) / reject. Admin + accounting. */
+router.get('/change-requests', requireRole('admin', 'accounting'), async (req, res) => {
+    const status = req.query.status || 'pending';
+    try {
+        const r = await pool.query(
+            `SELECT scr.id, scr.inventory_item_id, scr.qty, scr.requester_name, scr.source, scr.source_id,
+                    scr.note, scr.status, scr.created_at,
+                    ii.name AS item_name, ii.sku, ii.quantity AS on_hand
+             FROM stock_change_requests scr
+             LEFT JOIN inventory_items ii ON ii.id = scr.inventory_item_id
+             WHERE scr.status = $1
+             ORDER BY scr.created_at DESC`,
+            [status]
+        );
+        res.json(r.rows);
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to load change requests.' }); }
+});
+
+router.post('/change-requests/:id/approve', requireRole('admin', 'accounting'), async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const q = await client.query("SELECT * FROM stock_change_requests WHERE id = $1 AND status = 'pending' FOR UPDATE", [req.params.id]);
+        if (q.rowCount === 0) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Request not found or already resolved.' }); }
+        const cr = q.rows[0];
+        await client.query('UPDATE inventory_items SET quantity = quantity - $1, updated_at = NOW() WHERE id = $2', [Number(cr.qty), cr.inventory_item_id]);
+        await client.query("UPDATE stock_change_requests SET status = 'approved', resolved_by = $1, resolved_at = NOW() WHERE id = $2", [req.user.id, cr.id]);
+        await client.query('COMMIT');
+        res.json({ ok: true });
+    } catch (err) { await client.query('ROLLBACK').catch(() => {}); console.error(err); res.status(500).json({ error: 'Failed to approve.' }); }
+    finally { client.release(); }
+});
+
+router.post('/change-requests/:id/reject', requireRole('admin', 'accounting'), async (req, res) => {
+    try {
+        const r = await pool.query(
+            "UPDATE stock_change_requests SET status = 'rejected', resolved_by = $1, resolved_at = NOW() WHERE id = $2 AND status = 'pending'",
+            [req.user.id, req.params.id]
+        );
+        if (r.rowCount === 0) return res.status(404).json({ error: 'Request not found or already resolved.' });
+        res.json({ ok: true });
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Failed to reject.' }); }
 });
 
 /* ── PATCH /api/inventory/assignments/:id ─────────────────────────────── */

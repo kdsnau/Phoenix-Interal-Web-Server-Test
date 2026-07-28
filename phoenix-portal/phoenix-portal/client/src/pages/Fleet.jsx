@@ -201,6 +201,7 @@ function AddVehicleInvModal({ vehicleId, onClose, onAdd }) {
 
 function VehicleDetail({ vehicleId, onClose }) {
     const { user }                           = useAuth();
+    const canEdit = ['admin', 'accounting'].includes(user.role);   // technicians view only
     const [v, setV]                         = useState(null);
     const [loading, setLoading]             = useState(true);
     const [showInsurance, setShowInsurance] = useState(false);
@@ -394,28 +395,30 @@ function VehicleDetail({ vehicleId, onClose }) {
                         <div className="fleet-fields">
                             <div className="fleet-field">
                                 <label className="form-label">Mileage</label>
-                                <input type="number" value={editMileage} onChange={e => setEditMileage(e.target.value)} />
+                                <input type="number" value={editMileage} onChange={e => setEditMileage(e.target.value)} disabled={!canEdit} />
                             </div>
                             <div className="fleet-field">
                                 <label className="form-label">Registration</label>
-                                <input value={editReg} onChange={e => setEditReg(e.target.value)} />
+                                <input value={editReg} onChange={e => setEditReg(e.target.value)} disabled={!canEdit} />
                             </div>
                             <div className="fleet-field">
                                 <label className="form-label">Tags Renewal</label>
-                                <input type="date" value={editTags} onChange={e => setEditTags(e.target.value)} />
+                                <input type="date" value={editTags} onChange={e => setEditTags(e.target.value)} disabled={!canEdit} />
                             </div>
                             <div className="fleet-field">
                                 <label className="form-label">Driver</label>
-                                <select value={editDriverId} onChange={e => setEditDriverId(e.target.value)}>
+                                <select value={editDriverId} onChange={e => setEditDriverId(e.target.value)} disabled={!canEdit}>
                                     <option value="">Unassigned</option>
                                     {drivers.map(d => <option key={d.id} value={d.id}>{d.name} ({d.role})</option>)}
                                 </select>
                             </div>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
-                            <button className="btn btn-primary" onClick={saveVehicle} disabled={saving}>
-                                {saving ? 'Saving...' : 'Save Changes'}
-                            </button>
+                            {canEdit && (
+                                <button className="btn btn-primary" onClick={saveVehicle} disabled={saving}>
+                                    {saving ? 'Saving...' : 'Save Changes'}
+                                </button>
+                            )}
                             {daysUntilTags !== null && (
                                 <span className={`tag ${daysUntilTags < 0 ? 'tag-red' : daysUntilTags < 30 ? 'tag-yellow' : 'tag-green'}`}>
                                     Tags {daysUntilTags < 0 ? 'EXPIRED' : `due in ${daysUntilTags}d`}
@@ -808,13 +811,18 @@ export default function Fleet() {
     const [importing, setImporting]   = useState(false);
     const [importMsg, setImportMsg]   = useState('');
 
+    const [myVehicleId, setMyVehicleId] = useState(null);
+
     const refreshVehicles = () => api.get('/fleet').then(r => setVehicles(r.data)).catch(() => {});
 
     useEffect(() => {
         api.get('/fleet')
             .then(r => setVehicles(r.data))
             .finally(() => setLoading(false));
+        api.get('/fleet/my-vehicle').then(r => setMyVehicleId(r.data?.vehicle?.id ?? null)).catch(() => {});
     }, []);
+
+    const sectionHeading = { fontSize: 15, fontWeight: 600, color: 'var(--text-hi)', margin: '0 0 12px', paddingBottom: 6, borderBottom: '1px solid var(--border)' };
 
     const runImport = async () => {
         setImporting(true);
@@ -847,13 +855,28 @@ export default function Fleet() {
                 </div>
             </div>
             {loading && <p style={{ color: 'var(--text-dim)' }}>Loading...</p>}
-            {!loading && (
-                <div className="fleet-grid">
-                    {vehicles.map(v => (
-                        <VehicleCard key={v.id} vehicle={v} onClick={v => setSelectedId(v.id)} />
-                    ))}
-                </div>
-            )}
+            {!loading && (() => {
+                const mine = myVehicleId != null ? vehicles.filter(v => v.id === myVehicleId) : [];
+                const rest = vehicles.filter(v => !mine.includes(v));
+                return (
+                    <>
+                        {mine.length > 0 && (
+                            <section style={{ marginBottom: 28 }}>
+                                <h2 style={sectionHeading}>Your Vehicle</h2>
+                                <div className="fleet-grid">
+                                    {mine.map(v => <VehicleCard key={v.id} vehicle={v} onClick={v => setSelectedId(v.id)} />)}
+                                </div>
+                            </section>
+                        )}
+                        <section>
+                            <h2 style={sectionHeading}>{mine.length > 0 ? 'Rest of Fleet' : 'Fleet'}</h2>
+                            <div className="fleet-grid">
+                                {rest.map(v => <VehicleCard key={v.id} vehicle={v} onClick={v => setSelectedId(v.id)} />)}
+                            </div>
+                        </section>
+                    </>
+                );
+            })()}
             {selectedId && (
                 <VehicleDetail vehicleId={selectedId} onClose={() => { setSelectedId(null); refreshVehicles(); }} />
             )}

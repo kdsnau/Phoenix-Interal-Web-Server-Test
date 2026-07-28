@@ -346,6 +346,7 @@ router.get('/my-done-tickets', async (req, res) => {
             `SELECT t.id, t.title, t.status::text AS status, t.client_id, t.event_start, t.created_at,
                     c.name AS client_name,
                     (SELECT count(*) FROM ticket_reports tr WHERE tr.ticket_id = t.id) AS report_count,
+                    (SELECT string_agg(u.name, ', ') FROM users u WHERE u.id = ANY(t.assignee_ids)) AS technicians,
                     (SELECT string_agg(ti.quantity || 'x ' || ii.name, E'\n')
                        FROM ticket_items ti JOIN inventory_items ii ON ii.id = ti.inventory_item_id
                        WHERE ti.ticket_id = t.id) AS parts_suggestion
@@ -397,14 +398,20 @@ router.post('/report', (req, res) => {
             if (!isPriv && !assigned && t.created_by !== req.user.id)
                 return res.status(403).json({ error: 'You can only report on tickets assigned to you.' });
 
-            /* Technician names = the ticket's assignees, falling back to the author. */
-            let technicians = req.user.name;
-            if (Array.isArray(t.assignee_ids) && t.assignee_ids.length) {
-                const uq = await pool.query('SELECT name FROM users WHERE id = ANY($1)', [t.assignee_ids]);
-                if (uq.rows.length) technicians = uq.rows.map(u => u.name).join(', ');
+            /* Technicians: the form value if given, else the ticket's assignees
+               (falling back to the author). */
+            let technicians = (req.body.technicians || '').trim();
+            if (!technicians) {
+                technicians = req.user.name;
+                if (Array.isArray(t.assignee_ids) && t.assignee_ids.length) {
+                    const uq = await pool.query('SELECT name FROM users WHERE id = ANY($1)', [t.assignee_ids]);
+                    if (uq.rows.length) technicians = uq.rows.map(u => u.name).join(', ');
+                }
             }
 
-            const jobName = (t.client_name || t.title || 'Unknown').trim();
+            /* Job name: the form value if given, else the client name — which also
+               makes the report match this client on their Reports tab. */
+            const jobName = (req.body.job_name || '').trim() || (t.client_name || t.title || 'Unknown').trim();
             const text = buildReportMessage({ jobName, rfq: (req.body.rfq || '').trim(), technicians, arrival, work, parts, returnTrip });
 
             const photos = (req.files || []).filter(f => f.mimetype && f.mimetype.startsWith('image/'));

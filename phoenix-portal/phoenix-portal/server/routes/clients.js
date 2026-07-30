@@ -1162,7 +1162,7 @@ router.patch('/billing/bulk', requireRole('admin', 'accounting'), async (req, re
 });
 
 /* PATCH /api/clients/:id */
-router.patch('/:id', authenticate, async (req, res) => {
+router.patch('/:id', requireRole('admin', 'accounting'), async (req, res) => {
     const FIELDS = [
         'notes', 'billing_amount', 'billing_frequency',
         'permit_number', 'permit_expires',

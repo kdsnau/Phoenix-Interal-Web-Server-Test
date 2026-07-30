@@ -157,8 +157,13 @@ router.patch('/assignments/:id', authenticate, async (req, res) => {
     }
 });
 
-/* ── DELETE /api/inventory/assignments/:id ────────────────────────────── */
-router.delete('/assignments/:id', requireRole('admin', 'accounting'), async (req, res) => {
+/* ── DELETE /api/inventory/assignments/:id ────────────────────────────────
+   Van-stock management is available to all staff: assigning (POST /:id/assign)
+   and adjusting (PATCH /assignments/:id) are authenticate-only, so removing an
+   assignment is too — otherwise the Remove button 403s for technicians while
+   the +/- controls beside it work. (This governs vehicle_inventory only, not
+   the base catalog, whose create/delete stay admin/accounting.) */
+router.delete('/assignments/:id', authenticate, async (req, res) => {
     try {
         const r = await pool.query(
             'DELETE FROM vehicle_inventory WHERE id = $1 RETURNING id',

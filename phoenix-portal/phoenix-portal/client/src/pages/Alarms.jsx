@@ -648,6 +648,9 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
     const { user } = useAuth();
     const canBilling = user.role === 'admin' || user.role === 'accounting';
     const isAdmin    = user.role === 'admin';
+    /* Technicians are read-only on the client record (site/contact/notes/maintenance).
+       They keep the collaborative Notes Board, ticket creation, and their own reports. */
+    const canEdit    = canBilling;
 
     const [tab, setTab]           = useState('system');
     const [notes, setNotes]         = useState(client.notes || '');
@@ -971,30 +974,33 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                             <div className="alarm-grid" style={{ marginBottom: 12 }}>
                                 <div className="alarm-field" style={{ gridColumn: 'span 2' }}>
                                     <div className="alarm-label">Site Address</div>
-                                    <input className="alarm-input" value={siteAddress} onChange={e => setSiteAddress(e.target.value)} placeholder="123 Main St, Phoenix AZ 85001" />
+                                    <input className="alarm-input" value={siteAddress} onChange={e => setSiteAddress(e.target.value)} readOnly={!canEdit} placeholder="123 Main St, Phoenix AZ 85001" />
                                 </div>
                                 <div className="alarm-field">
                                     <div className="alarm-label">Contact Name</div>
-                                    <input className="alarm-input" value={contactName} onChange={e => setContactName(e.target.value)} placeholder="John Smith" />
+                                    <input className="alarm-input" value={contactName} onChange={e => setContactName(e.target.value)} readOnly={!canEdit} placeholder="John Smith" />
                                 </div>
                                 <div className="alarm-field">
                                     <div className="alarm-label">Contact Phone</div>
-                                    <input className="alarm-input" value={contactPhone} onChange={e => setContactPhone(e.target.value)} placeholder="(602) 555-0100" />
+                                    <input className="alarm-input" value={contactPhone} onChange={e => setContactPhone(e.target.value)} readOnly={!canEdit} placeholder="(602) 555-0100" />
                                 </div>
                                 <div className="alarm-field">
                                     <div className="alarm-label">Contact Email</div>
-                                    <input className="alarm-input" value={contactEmail} onChange={e => setContactEmail(e.target.value)} placeholder="owner@example.com" />
+                                    <input className="alarm-input" value={contactEmail} onChange={e => setContactEmail(e.target.value)} readOnly={!canEdit} placeholder="owner@example.com" />
                                 </div>
                             </div>
                             {/* These fields used to have no save control of their own — the only
                                one was the "Save" under Notes at the bottom of the tab, which
-                               also PATCHed them. Edits made here were routinely lost. */}
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-                                <button className="btn btn-primary" onClick={saveContact} disabled={savingContact}>
-                                    {savingContact ? 'Saving…' : 'Save Site & Contact'}
-                                </button>
-                                {contactMsg && <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{contactMsg}</span>}
-                            </div>
+                               also PATCHed them. Edits made here were routinely lost.
+                               Technicians see the values read-only (no Save). */}
+                            {canEdit && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+                                    <button className="btn btn-primary" onClick={saveContact} disabled={savingContact}>
+                                        {savingContact ? 'Saving…' : 'Save Site & Contact'}
+                                    </button>
+                                    {contactMsg && <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>{contactMsg}</span>}
+                                </div>
+                            )}
 
                             {/* System type / vendor / serial # / connection / carrier were removed
                                from the UI; their columns are kept and still populated by the
@@ -1088,11 +1094,14 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                                     value={notes}
                                     onChange={e => setNotes(e.target.value)}
                                     rows={4}
+                                    readOnly={!canEdit}
                                     placeholder="Internal notes…"
                                 />
-                                <button className="btn btn-primary" onClick={saveNotes} disabled={savingNotes}>
-                                    {savingNotes ? 'Saving…' : 'Save'}
-                                </button>
+                                {canEdit && (
+                                    <button className="btn btn-primary" onClick={saveNotes} disabled={savingNotes}>
+                                        {savingNotes ? 'Saving…' : 'Save'}
+                                    </button>
+                                )}
                             </div>
 
                             {/* Notes board (moved here from its own tab) — a running
@@ -1135,7 +1144,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                             <div style={{ borderTop: '1px solid var(--border)', marginTop: 20, paddingTop: 16 }}>
                                 <div className="alarm-label" style={{ marginBottom: 8, fontWeight: 600 }}>Scheduled Maintenance</div>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                                    <input type="checkbox" id={`maint-${client.id}`} checked={maintEnabled} onChange={e => setMaintEnabled(e.target.checked)} />
+                                    <input type="checkbox" id={`maint-${client.id}`} checked={maintEnabled} onChange={e => setMaintEnabled(e.target.checked)} disabled={!canEdit} />
                                     <label htmlFor={`maint-${client.id}`} style={{ fontSize: 13, cursor: 'pointer' }}>
                                         Auto-create a maintenance ticket on the calendar when due
                                     </label>
@@ -1145,7 +1154,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                                         <div className="alarm-grid" style={{ marginBottom: 16 }}>
                                             <div className="alarm-field">
                                                 <div className="alarm-label">Frequency</div>
-                                                <select className="alarm-input" value={maintFreq} onChange={e => setMaintFreq(e.target.value)}>
+                                                <select className="alarm-input" value={maintFreq} onChange={e => setMaintFreq(e.target.value)} disabled={!canEdit}>
                                                     <option value="monthly">Monthly</option>
                                                     <option value="quarterly">Quarterly</option>
                                                     <option value="semiannual">Semi-Annual</option>
@@ -1154,12 +1163,12 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                                             </div>
                                             <div className="alarm-field">
                                                 <div className="alarm-label">Next Maintenance Due</div>
-                                                <input className="alarm-input" type="date" value={maintNext} onChange={e => setMaintNext(e.target.value)} />
+                                                <input className="alarm-input" type="date" value={maintNext} onChange={e => setMaintNext(e.target.value)} readOnly={!canEdit} />
                                             </div>
                                         </div>
                                         <div className="alarm-field" style={{ marginBottom: 16 }}>
                                             <div className="alarm-label">Assign maintenance ticket to</div>
-                                            <select className="alarm-input" value={maintAssignee} onChange={e => setMaintAssignee(e.target.value)}>
+                                            <select className="alarm-input" value={maintAssignee} onChange={e => setMaintAssignee(e.target.value)} disabled={!canEdit}>
                                                 <option value="">Unassigned</option>
                                                 {technicians.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                                             </select>
@@ -1172,17 +1181,19 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                                         })()}
                                     </>
                                 )}
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                                    <button className="btn btn-primary" onClick={saveMaintenance} disabled={savingMaint}>
-                                        {savingMaint ? 'Saving…' : 'Save Maintenance'}
-                                    </button>
-                                    {maintEnabled && (
-                                        <button type="button" className="btn btn-ghost" onClick={runMaintenanceNow}
-                                            title="Generate tickets now for any client whose maintenance is due">
-                                            Run maintenance check now
+                                {canEdit && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                        <button className="btn btn-primary" onClick={saveMaintenance} disabled={savingMaint}>
+                                            {savingMaint ? 'Saving…' : 'Save Maintenance'}
                                         </button>
-                                    )}
-                                </div>
+                                        {maintEnabled && (
+                                            <button type="button" className="btn btn-ghost" onClick={runMaintenanceNow}
+                                                title="Generate tickets now for any client whose maintenance is due">
+                                                Run maintenance check now
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
                                 {maintRunMsg && <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 8 }}>{maintRunMsg}</div>}
                             </div>
                         </div>

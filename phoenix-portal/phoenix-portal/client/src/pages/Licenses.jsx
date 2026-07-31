@@ -167,7 +167,7 @@ export default function Licenses() {
 
                 {loading ? <div className="alarm-empty">Loading…</div> : (
                     <div className="table-card" style={{ marginTop: 16 }}>
-                        <table className="data-table">
+                        <table className="data-table card-table">
                             <thead>
                                 <tr><th>Name</th><th>Vendor</th><th>Usage</th><th>Expiry</th><th>Key</th>{isAdmin && <th></th>}</tr>
                             </thead>
@@ -177,26 +177,26 @@ export default function Licenses() {
                                     const du = daysUntil(l.expires_at);
                                     return (
                                         <tr key={l.id}>
-                                            <td style={{ color: 'var(--text-hi)', fontWeight: 500 }}>
+                                            <td data-label="Name" style={{ color: 'var(--text-hi)', fontWeight: 500 }}>
                                                 {l.name}
                                                 {l.category && <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{l.category}</div>}
                                             </td>
-                                            <td>{l.vendor || '—'}</td>
-                                            <td>
+                                            <td data-label="Vendor">{l.vendor || '—'}</td>
+                                            <td data-label="Usage">
                                                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                                     {isAdmin && <button className="btn btn-ghost" style={{ padding: '0 9px' }} onClick={() => bump(l, -1)}>−</button>}
                                                     <UsageBar used={l.seats_used} total={l.seats_total} over={l.over} />
                                                     {isAdmin && <button className="btn btn-ghost" style={{ padding: '0 9px' }} onClick={() => bump(l, +1)}>+</button>}
                                                 </div>
                                             </td>
-                                            <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                                            <td data-label="Expiry" style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                                                 {l.expires_at
                                                     ? <span className={du < 0 ? 'tag-red' : du <= 30 ? 'tag-yellow' : ''}>
                                                         {new Date(l.expires_at).toLocaleDateString()}{du < 0 ? ' (expired)' : du <= 30 ? ` (${du}d)` : ''}
                                                       </span>
                                                     : '—'}
                                             </td>
-                                            <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+                                            <td data-label="Key" style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
                                                 {!l.has_key ? <span style={{ color: 'var(--text-dim)' }}>—</span>
                                                     : isAdmin
                                                         ? (showKey[l.id] ? l.license_key : '••••••')
@@ -209,7 +209,7 @@ export default function Licenses() {
                                                 )}
                                             </td>
                                             {isAdmin && (
-                                                <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                                <td data-label="" style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                                                     <button className="btn btn-ghost"  style={{ padding: '2px 10px', fontSize: 12 }} onClick={() => setModal(l)}>Edit</button>
                                                     <button className="btn btn-danger" style={{ padding: '2px 10px', fontSize: 12, marginLeft: 6 }} onClick={() => del(l)}>✕</button>
                                                 </td>

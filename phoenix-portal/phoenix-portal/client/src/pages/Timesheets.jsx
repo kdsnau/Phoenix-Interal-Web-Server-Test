@@ -92,7 +92,7 @@ export default function Timesheets() {
                         </div>
 
                         <div className="table-card">
-                            <table className="data-table">
+                            <table className="data-table card-table">
                                 <thead>
                                     <tr>
                                         <th>Date</th><th>Ticket</th><th>Client</th><th>Location</th>
@@ -107,15 +107,15 @@ export default function Timesheets() {
                                     )}
                                     {sheet.rows.map(r => (
                                         <tr key={r.id}>
-                                            <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{fmtDate(r.date)}</td>
-                                            <td style={{ color: 'var(--text-hi)' }}>{r.title}</td>
-                                            <td>{r.client || '—'}</td>
-                                            <td style={{ fontSize: 12, color: 'var(--text-dim)' }}>{r.location || '—'}</td>
-                                            <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{r.onsite_hours.toFixed(2)}</td>
-                                            <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: r.travel_hours == null ? 'var(--text-dim)' : undefined }}>
+                                            <td data-label="Date" style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{fmtDate(r.date)}</td>
+                                            <td data-label="Ticket" style={{ color: 'var(--text-hi)' }}>{r.title}</td>
+                                            <td data-label="Client">{r.client || '—'}</td>
+                                            <td data-label="Location" style={{ fontSize: 12, color: 'var(--text-dim)' }}>{r.location || '—'}</td>
+                                            <td data-label="On-site" style={{ textAlign: 'right', fontFamily: 'var(--font-mono)' }}>{r.onsite_hours.toFixed(2)}</td>
+                                            <td data-label="Travel" style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: r.travel_hours == null ? 'var(--text-dim)' : undefined }}>
                                                 {r.travel_hours == null ? '—' : r.travel_hours.toFixed(2)}
                                             </td>
-                                            <td style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>{r.total_hours.toFixed(2)}</td>
+                                            <td data-label="Total" style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--accent)' }}>{r.total_hours.toFixed(2)}</td>
                                         </tr>
                                     ))}
                                 </tbody>

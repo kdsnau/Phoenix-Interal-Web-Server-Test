@@ -238,7 +238,7 @@ function BillingTab() {
                 {msg && <span style={{ fontSize: 12, color: 'var(--green)', fontFamily: 'var(--font-mono)' }}>{msg}</span>}
             </div>
             <div className="table-card">
-                <table className="data-table">
+                <table className="data-table card-table">
                     <thead>
                         <tr>
                             <th>Client</th>
@@ -304,7 +304,7 @@ function TimeOffTab({ onResolved }) {
     if (loading) return <p style={{ color: 'var(--text-dim)' }}>Loading…</p>;
     return (
         <div className="table-card">
-            <table className="data-table">
+            <table className="data-table card-table">
                 <thead><tr><th>Technician</th><th>Dates</th><th>Reason</th><th>Requested</th><th>Actions</th></tr></thead>
                 <tbody>
                     {reqs.length === 0 && <tr><td colSpan={5} className="alarm-empty">No pending time-off requests.</td></tr>}
@@ -473,7 +473,7 @@ export default function Admin() {
 
             {tab === 'users' && !loading && (
                 <div className="table-card">
-                    <table className="data-table">
+                    <table className="data-table card-table">
                         <thead>
                             <tr>
                                 <th>#</th>

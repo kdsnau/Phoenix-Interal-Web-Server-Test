@@ -89,8 +89,10 @@ router.get('/thread/:userId', authenticate, async (req, res) => {
    ----------------------------------------------------------------------- */
 router.post('/', authenticate, async (req, res) => {
     const { to_id, body } = req.body;
-    if (!to_id || !body?.trim())
-        return res.status(400).json({ error: 'to_id and body are required.' });
+    if (!Number.isInteger(Number(to_id)) || typeof body !== 'string' || !body.trim())
+        return res.status(400).json({ error: 'to_id (integer) and body (text) are required.' });
+    if (body.length > 5000)
+        return res.status(400).json({ error: 'Message too long (max 5000 chars).' });
     if (Number(to_id) === req.user.id)
         return res.status(400).json({ error: 'Cannot message yourself.' });
 

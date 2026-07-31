@@ -2,7 +2,7 @@ const express      = require('express');
 const router       = express.Router();
 const pool         = require('../db/pool');
 const { WebClient } = require('@slack/web-api');
-const { authenticate } = require('../middleware/requireRole');
+const { authenticate, requireRole } = require('../middleware/requireRole');
 
 const slack          = new WebClient(process.env.SLACK_TOKEN);
 const PROJECT_CH     = process.env.PROJECT_SLACK_CHANNEL_ID;
@@ -88,9 +88,10 @@ async function fetchSlackProjects(limit = 60) {
    The LLM never touches the database or Slack — we fetch everything with
    hardcoded read-only calls and pass it as plain text.
    ----------------------------------------------------------------------- */
-router.post('/query', authenticate, async (req, res) => {
+router.post('/query', requireRole('admin', 'accounting'), async (req, res) => {
     const { question } = req.body;
-    if (!question?.trim()) return res.status(400).json({ error: 'question is required' });
+    if (typeof question !== 'string' || !question.trim()) return res.status(400).json({ error: 'question is required' });
+    if (question.length > 2000) return res.status(400).json({ error: 'question is too long (max 2000 chars).' });
 
     /* ---- 1. Pull read-only snapshot (DB + Slack in parallel) ----------- */
     const [clients, vehicles, vehicleNotes, tickets, finance, slackProjects] = await Promise.all([

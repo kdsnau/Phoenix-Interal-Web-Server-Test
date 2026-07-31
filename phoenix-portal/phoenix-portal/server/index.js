@@ -52,12 +52,78 @@ app.use((req, res, next) => {
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('X-XSS-Protection', '0');
     res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+    // Content-Security-Policy: the Vite build ships a single self-hosted module
+    // script (no inline <script>), so 'self' is enough for scripts. Inline styles
+    // are allowed (React style props); images allow data:/blob: for previews.
+    res.setHeader('Content-Security-Policy',
+        "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; " +
+        "script-src 'self'; connect-src 'self'; font-src 'self' data:; " +
+        "object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
     next();
 });
 
+/* Optional edge password gate for public demo / staging instances. Active only
+   when PORTAL_GATE_USER + PORTAL_GATE_PASS are set; a normal internal deploy
+   leaves them unset and this is a no-op. Runs before all routes and static
+   assets, so nothing is reachable without the gate credentials. */
+if (process.env.PORTAL_GATE_USER && process.env.PORTAL_GATE_PASS) {
+    const crypto = require('crypto');
+    const { rateLimit } = require('./middleware/rateLimit');
+    const GATE_SECRET  = process.env.JWT_SECRET || process.env.PORTAL_GATE_PASS;
+    const GATE_TOKEN   = crypto.createHmac('sha256', GATE_SECRET)
+        .update(`${process.env.PORTAL_GATE_USER}:${process.env.PORTAL_GATE_PASS}`).digest('hex');
+    const COOKIE       = 'phx_gate';
+    const COOKIE_MAXAGE = 4 * 60 * 60;   // 4 hours (seconds)
+    const clientKey    = (req) => `gate:${req.headers['cf-connecting-ip'] || req.ip}`;
+    // Brute-force guard: only WRONG password attempts are counted, so benign
+    // no-auth popup/asset requests never trip it. Reset on a successful unlock.
+    const gateLimiter  = rateLimit({
+        windowMs: 15 * 60 * 1000, max: 20, key: clientKey,
+        message: 'Too many gate attempts. Please wait a few minutes.',
+    });
+    const hasGateCookie = (req) => (req.headers.cookie || '').split(';').some(c => {
+        const [k, v] = c.trim().split('=');
+        return k === COOKIE && v === GATE_TOKEN;
+    });
+    const challenge = (res) => {
+        res.set('WWW-Authenticate', 'Basic realm="Phoenix Portal"');
+        return res.status(401).send('Authentication required');
+    };
+
+    app.use((req, res, next) => {
+        // The API is already protected by the app's JWT login; never gate it
+        // (gating it with Basic collides with the app's Authorization: Bearer
+        // header and breaks XHR logins).
+        if (req.path.startsWith('/api/')) return next();
+        // Already passed the gate in this browser -> no popup on refresh.
+        if (hasGateCookie(req)) return next();
+
+        const [scheme, encoded] = (req.headers.authorization || '').split(' ');
+        if (scheme === 'Basic' && encoded) {
+            const [user, pass] = Buffer.from(encoded, 'base64').toString().split(':');
+            if (user === process.env.PORTAL_GATE_USER && pass === process.env.PORTAL_GATE_PASS) {
+                gateLimiter.reset(clientKey(req));   // good unlock clears the counter
+                // 4h cookie: reloads don't re-prompt; auto-expires so a shared
+                // machine can't stay unlocked indefinitely.
+                res.setHeader('Set-Cookie',
+                    `${COOKIE}=${GATE_TOKEN}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${COOKIE_MAXAGE}`);
+                return next();
+            }
+            // Wrong credentials -> count this guess; 429s once over the limit.
+            return gateLimiter(req, res, () => challenge(res));
+        }
+        // No credentials yet (browser asking for the popup) -> just challenge.
+        return challenge(res);
+    });
+}
+
 const allowedOrigins = (process.env.CLIENT_ORIGIN || 'http://localhost:5173').split(',').map(o => o.trim());
-app.use(cors({ origin: (origin, cb) => cb(null, !origin || allowedOrigins.includes(origin)) }));
-app.use(express.json());
+// Only echo an allow-origin for known origins. A missing Origin (same-origin
+// requests, curl) simply gets no CORS header — same-origin isn't CORS-checked
+// by the browser anyway — while a `null` origin (sandboxed iframe / data: URL)
+// is now rejected instead of allowed.
+app.use(cors({ origin: (origin, cb) => cb(null, !!origin && allowedOrigins.includes(origin)) }));
+app.use(express.json({ limit: '2mb' }));
 app.use((req, res, next) => {
     console.log(`${req.method} ${req.path} [${req.ip}]`);
     next();
@@ -100,6 +166,10 @@ app.use('/api/schedule',    scheduleRoutes);
 app.use('/api/roles',       roleRoutes);
 
 app.get('/api/health', (_, res) => res.json({ status: 'ok' }));
+
+/* Unknown /api/* paths return JSON 404 instead of falling through to the SPA
+   catch-all (which would answer a REST call with index.html + HTTP 200). */
+app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
 /* -----------------------------------------------------------------------
    Serve the React production build.

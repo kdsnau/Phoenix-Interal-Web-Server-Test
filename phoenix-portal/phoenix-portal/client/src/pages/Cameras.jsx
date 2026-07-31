@@ -627,7 +627,7 @@ function ServerPanel({ server, onEdit, onDelete }) {
                                 <div className="nvr-loading">No license data available.</div>
                             ) : (
                                 <div className="table-card">
-                                    <table className="data-table">
+                                    <table className="data-table card-table">
                                         <thead>
                                             <tr>
                                                 <th>Key</th>

@@ -45,10 +45,12 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 
 -- Seed: default admin account (password: Admin1234!)
+-- Hash is bcrypt(Admin1234!, cost 10). If you change the password, regenerate with:
+--   node -e "console.log(require('bcryptjs').hashSync('YOUR_PASSWORD',10))"
 INSERT INTO users (name, email, password_hash, role)
 VALUES (
     'Admin',
     'admin@phoenixsectech.com',
-    '$2a$10$wQj5PTj.MtCKW/fshLYLo.WAnA7GzFQy7k2jptGgXv3zV4OjhCcFe',
+    '$2b$10$MZpG4CackjOFiL6tDGhQhOgGnR/5Zuygx.PEwKveMMg5Vk7JO3.2i',
     'admin'
 ) ON CONFLICT (email) DO NOTHING;

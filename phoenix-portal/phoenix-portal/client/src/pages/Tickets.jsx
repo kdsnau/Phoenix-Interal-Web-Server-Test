@@ -888,7 +888,7 @@ export default function Tickets() {
                     })}
                 </div>
                 <div className="table-card">
-                    <table className="data-table">
+                    <table className="data-table card-table">
                         <thead>
                             <tr>
                                 <th>#</th>
@@ -906,10 +906,10 @@ export default function Tickets() {
                             )}
                             {shown.map(t => (
                                 <tr key={t.id}>
-                                    <td style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', fontSize: 12 }}>#{t.id}</td>
+                                    <td data-label="#" style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-dim)', fontSize: 12 }}>#{t.id}</td>
 
                                     {/* ── Title cell ── */}
-                                    <td>
+                                    <td data-label="Title">
                                         <div style={{ fontWeight: 500, color: 'var(--text-hi)', display: 'flex', alignItems: 'center', gap: 6 }}>
                                             {t.event_start && <span title="Scheduled event">📅</span>}
                                             {t.title || <span style={{ color: 'var(--text-dim)', fontStyle: 'italic' }}>(untitled draft)</span>}
@@ -941,7 +941,7 @@ export default function Tickets() {
                                     </td>
 
                                     {/* ── Schedule cell ── */}
-                                    <td style={{ minWidth: 150 }}>
+                                    <td data-label="Schedule" style={{ minWidth: 150 }}>
                                         {t.event_start ? (
                                             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.6 }}>
                                                 <div style={{ color: 'var(--accent)' }}>
@@ -958,11 +958,11 @@ export default function Tickets() {
                                         )}
                                     </td>
 
-                                    <td>
+                                    <td data-label="Status">
                                         <span className={`tag ${STATUS_TAG[t.status]}`}>{t.status.replace('_', ' ')}</span>
                                     </td>
 
-                                    <td>
+                                    <td data-label="Assigned">
                                         {user.role === 'admin' ? (
                                             <AssigneeMultiSelect
                                                 technicians={technicians}
@@ -983,11 +983,11 @@ export default function Tickets() {
                                         )}
                                     </td>
 
-                                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>
+                                    <td data-label="Created" style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-dim)' }}>
                                         {new Date(t.created_at).toLocaleDateString()}
                                     </td>
 
-                                    <td>
+                                    <td data-label="">
                                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                                             {t.status === 'draft' ? (
                                                 /* Drafts can't take a status yet — resume to finish. */

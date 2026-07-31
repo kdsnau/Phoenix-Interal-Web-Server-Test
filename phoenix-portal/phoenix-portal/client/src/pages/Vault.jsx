@@ -160,7 +160,7 @@ export default function Vault() {
                     )}
 
                     <div className="table-card">
-                        <table className="data-table">
+                        <table className="data-table card-table">
                             <thead><tr>
                                 <th>Service</th><th>Username</th><th>Password</th>
                                 {isAdmin && <th>Access</th>}<th>Updated</th>{isAdmin && <th></th>}

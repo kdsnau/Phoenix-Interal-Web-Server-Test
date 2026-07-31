@@ -376,6 +376,9 @@
 }
 
 /* ── Responsive breakpoint ──────────────────────────────────────────── */
+/* Bottom tab bar is mobile-only; hidden on desktop. */
+.bottom-nav { display: none; }
+
 @media (max-width: 768px) {
 
     /* Layout becomes single column */
@@ -487,4 +490,169 @@
     /* Modals fill screen on mobile */
     .modal-overlay { padding: 12px; }
     .modal { max-width: 100%; }
+
+    /* ---- Mobile scaling safety net (applies to every page) ---------------- */
+
+    /* Nothing may push the layout wider than the screen; long strings wrap. */
+    .main-content { overflow-x: hidden; overflow-wrap: break-word; }
+
+    /* Raw data tables that aren't converted to cards scroll horizontally inside
+       their own box instead of overflowing the whole page. */
+    .main-content table:not(.card-table) {
+        display: block;
+        width: 100%;
+        max-width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* Opt-in card layout: a table with .card-table renders each row as a labelled
+       card on mobile. Label in column 1, ALL value children stacked in column 2
+       (grid, not flex — so multi-<div> cells don't spread across the row). */
+    .card-table, .card-table tbody, .card-table tr, .card-table td { display: block; width: 100%; }
+    .card-table thead { display: none; }
+    .card-table tr {
+        background: var(--bg-2);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 4px 12px;
+        margin-bottom: 10px;
+    }
+    .card-table td {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        align-items: start;
+        gap: 6px 16px;
+        padding: 7px 0;
+        text-align: right;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        border: none !important;
+    }
+    .card-table tr td:not(:last-child) { border-bottom: 1px solid var(--border) !important; }
+    .card-table td::before {
+        content: attr(data-label);
+        grid-column: 1;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        color: var(--text-dim);
+        text-align: left;
+    }
+    .card-table td > * { grid-column: 2; min-width: 0; }
+
+    /* Primary field (Name/Title): full-width card title, no label prefix. */
+    .card-table td.inv-name,
+    .card-table td[data-label="Name"],
+    .card-table td[data-label="Title"] {
+        grid-template-columns: 1fr;
+        text-align: left;
+        font-weight: 600;
+        color: var(--text-hi);
+    }
+    .card-table td.inv-name::before,
+    .card-table td[data-label="Name"]::before,
+    .card-table td[data-label="Title"]::before { content: none; }
+    .card-table td.inv-name > *,
+    .card-table td[data-label="Name"] > *,
+    .card-table td[data-label="Title"] > * { grid-column: 1; }
+
+    /* Action / unlabelled cells: wrap buttons, comfortable touch targets. */
+    .card-table td[data-label=""],
+    .card-table td:not([data-label]) {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-start;
+        gap: 8px;
+    }
+    .card-table td[data-label=""]::before,
+    .card-table td:not([data-label])::before { content: none; }
+
+    /* Empty-state (colSpan) rows: plain centred text, not a card. */
+    .card-table td[colspan] { display: block; text-align: center; }
+    .card-table td[colspan]::before { content: none; }
+    .card-table tr:has(td[colspan]) { background: transparent; border: none; padding: 0; margin: 0; }
+
+    /* Media / preformatted text can never overflow their container. */
+    .main-content img,
+    .main-content svg,
+    .main-content canvas,
+    .main-content video,
+    .main-content pre { max-width: 100%; height: auto; }
+
+    /* Fixed multi-column grids collapse so they don't force horizontal scroll. */
+    .comp-summary,
+    .dmp-info-grid { grid-template-columns: repeat(2, 1fr); }
+    .comp-row      { grid-template-columns: 1fr 1fr; gap: 8px; }
+    .proj-grid     { grid-template-columns: 1fr; }
+
+    /* ---- Native app feel ------------------------------------------------- */
+
+    /* Inputs at 16px so iOS doesn't auto-zoom the page on focus. */
+    input, select, textarea { font-size: 16px; }
+
+    /* Respect the notch: top bar clears the status bar; content clears the
+       bottom tab bar + home indicator. */
+    .mobile-topbar { padding-top: calc(12px + env(safe-area-inset-top, 0px)); }
+    .main-content  { padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px)); }
+
+    /* Full-height sidebar that accounts for mobile browser chrome. */
+    .sidebar { height: 100dvh; }
+
+    /* Bottom tab bar — the primary mobile navigation. */
+    .bottom-nav {
+        display: flex;
+        position: fixed;
+        left: 0; right: 0; bottom: 0;
+        z-index: 200;
+        background: var(--bg-2);   /* fallback for no color-mix support */
+        background: color-mix(in srgb, var(--bg-2) 92%, transparent);
+        -webkit-backdrop-filter: blur(12px);
+        backdrop-filter: blur(12px);
+        border-top: 1px solid var(--border);
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    .bottom-tab {
+        position: relative;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 3px;
+        min-height: 52px;
+        padding: 7px 0 6px;
+        background: none;
+        border: none;
+        color: var(--text-dim);
+        font-family: var(--font-sans);
+        font-size: 10px;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+        text-decoration: none;
+        -webkit-tap-highlight-color: transparent;
+        transition: color 0.15s, transform 0.08s;
+    }
+    .bottom-tab svg { width: 23px; height: 23px; }
+    .bottom-tab.active { color: var(--accent); }
+    .bottom-tab:active { transform: scale(0.92); }
+    .bottom-tab-label { line-height: 1; }
+    .bottom-tab-badge {
+        position: absolute;
+        top: 4px;
+        left: calc(50% + 6px);
+        background: var(--red);
+        color: #fff;
+        font-size: 9px;
+        font-weight: 700;
+        line-height: 1;
+        min-width: 15px;
+        height: 15px;
+        border-radius: 8px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0 4px;
+    }
 }

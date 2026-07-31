@@ -1,0 +1,15 @@
+{
+  "name": "phoenix-portal",
+  "private": true,
+  "description": "Phoenix Security & Technology internal portal — React+Vite client, Express+PostgreSQL server",
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,yellow \"npm --prefix server run dev\" \"npm --prefix client run dev\"",
+    "build": "npm --prefix client run build",
+    "start": "npm --prefix server start",
+    "install:all": "npm --prefix server install && npm --prefix client install",
+    "test": "npm --prefix server test"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}

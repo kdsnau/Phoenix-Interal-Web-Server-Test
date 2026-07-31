@@ -109,7 +109,7 @@ export default function Calls() {
                     {/* Recent calls */}
                     <div className="dash-section-label" style={{ marginBottom: 10 }}>Recent Calls</div>
                     <div className="table-card">
-                        <table className="data-table">
+                        <table className="data-table card-table">
                             <thead><tr><th style={{ width: 150 }}>When</th><th style={{ width: 160 }}>Category</th><th style={{ width: 140 }}>Taken By</th><th>Details</th></tr></thead>
                             <tbody>
                                 {calls.length === 0 && (

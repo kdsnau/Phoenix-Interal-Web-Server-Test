@@ -109,7 +109,7 @@ export default function Snapshot() {
                 <div className="fin-empty">Loading…</div>
             ) : (
                 <div className="fin-table-wrap">
-                    <table className="fin-table">
+                    <table className="fin-table card-table">
                         <thead>
                             {inProgress ? (
                                 <tr><th>Customer</th><th>RFQ</th><th>Hours</th><th>Scheduled</th><th>Notes</th>{canManage && <th></th>}</tr>

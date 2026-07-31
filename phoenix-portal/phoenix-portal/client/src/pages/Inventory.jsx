@@ -441,7 +441,7 @@ export default function Inventory() {
                     <div className="alarm-empty">Loading…</div>
                 ) : (
                     <div className="inv-table-wrap">
-                        <table className="inv-table">
+                        <table className="inv-table card-table">
                             <thead>
                                 <tr>
                                     <th>Name</th>
@@ -465,7 +465,7 @@ export default function Inventory() {
                                     const priceFmt = fmt$(item.price);
                                     return (
                                         <tr key={item.id} className={isOut ? 'inv-row-out' : isLow ? 'inv-row-low' : ''}>
-                                            <td className="inv-name">
+                                            <td className="inv-name" data-label="Name">
                                                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' }}>
                                                     <span>{item.name}</span>
                                                     {isOut && <span className="tag tag-red"  style={{ fontSize: 10 }}>Out of stock</span>}
@@ -474,9 +474,9 @@ export default function Inventory() {
                                                 </div>
                                                 {item.mpn && <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 2 }}>MPN: {item.mpn}</div>}
                                             </td>
-                                            <td className="inv-dim">{item.sku || '—'}</td>
-                                            <td><span className="tag tag-dim">{CAT_LABELS[item.category] || item.category}</span></td>
-                                            <td>
+                                            <td className="inv-dim" data-label="SKU">{item.sku || '—'}</td>
+                                            <td data-label="Category"><span className="tag tag-dim">{CAT_LABELS[item.category] || item.category}</span></td>
+                                            <td data-label="Stock">
                                                 <span className={`inv-qty ${isOut ? 'inv-qty-out' : isLow ? 'inv-qty-low' : 'inv-qty-ok'}`}>
                                                     {item.quantity}
                                                     {item.min_threshold > 0 && (
@@ -484,13 +484,13 @@ export default function Inventory() {
                                                     )}
                                                 </span>
                                             </td>
-                                            <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.7 }}>
+                                            <td data-label="Cost → Price" style={{ fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.7 }}>
                                                 {costFmt  ? <div style={{ color: 'var(--text-dim)' }}>{costFmt}</div>  : null}
                                                 {priceFmt ? <div style={{ color: 'var(--accent)'   }}>{priceFmt}</div> : null}
                                                 {!costFmt && !priceFmt && <span style={{ color: 'var(--text-dim)' }}>—</span>}
                                             </td>
-                                            <td className="inv-dim" style={{ fontSize: 12 }}>{item.vendor || '—'}</td>
-                                            <td>
+                                            <td className="inv-dim" data-label="Vendor" style={{ fontSize: 12 }}>{item.vendor || '—'}</td>
+                                            <td data-label="Vehicles">
                                                 <button
                                                     className="inv-btn-sm"
                                                     style={{ color: item.vehicle_count > 0 ? 'var(--accent)' : undefined }}
@@ -499,7 +499,7 @@ export default function Inventory() {
                                                     🚗 {item.vehicle_count > 0 ? item.vehicle_count : 'Assign'}
                                                 </button>
                                             </td>
-                                            <td className="inv-actions">
+                                            <td className="inv-actions" data-label="">
                                                 <button className="inv-btn-sm" onClick={() => setAdjItem(item)}>Adjust</button>
                                                 {canEdit  && <button className="inv-btn-sm" onClick={() => setEditItem(item)}>Edit</button>}
                                                 {canDelete && <button className="inv-btn-sm inv-btn-del" onClick={() => handleDelete(item.id)}>Delete</button>}

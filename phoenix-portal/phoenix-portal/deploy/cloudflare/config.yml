@@ -1,0 +1,13 @@
+# Cloudflare Tunnel config for exposing the Phoenix Portal (runs ON SATURN).
+# Install to: /home/saturn/.cloudflared/config.yml
+#
+# Replace <UUID> with the id printed by `cloudflared tunnel create phxportal`.
+# service: points at SATURN's existing nginx (which serves client/dist and
+# proxies /api -> Express on :5000). Keep the catch-all 404 last.
+tunnel: phxportal
+credentials-file: /home/saturn/.cloudflared/<UUID>.json
+
+ingress:
+  - hostname: phoenix.f9ndthetruth.com
+    service: http://localhost:80
+  - service: http_status:404

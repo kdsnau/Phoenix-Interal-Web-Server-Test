@@ -47,6 +47,18 @@ router.patch('/users/:id/role', requireRole('admin'), async (req, res) => {
         return res.status(400).json({ error: 'Invalid role.' });
     }
 
+    // Don't let an admin demote themselves, or remove the last remaining admin —
+    // either would lock everyone out of admin functions.
+    if (Number(req.params.id) === req.user.id && role !== 'admin') {
+        return res.status(400).json({ error: 'You cannot change your own admin role.' });
+    }
+    if (role !== 'admin') {
+        const admins = await pool.query("SELECT id FROM users WHERE role = 'admin'");
+        if (admins.rowCount <= 1 && admins.rows.some(u => u.id === Number(req.params.id))) {
+            return res.status(400).json({ error: 'Cannot remove the last admin.' });
+        }
+    }
+
     try {
         const result = await pool.query(
             'UPDATE users SET role = $1 WHERE id = $2 RETURNING id, name, email, role',
@@ -96,7 +108,7 @@ router.delete('/users/:id', requireRole('admin'), async (req, res) => {
 });
 
 /* GET /api/admin/alerts — dashboard alerts for all roles */
-router.get('/alerts', authenticate, async (req, res) => {
+router.get('/alerts', requireRole('admin', 'accounting'), async (req, res) => {
     try {
         /* Technicians only see vehicle alerts for the vehicle they're assigned to
            (vehicles.driver_id). Admin / accounting / everyone else see all. */

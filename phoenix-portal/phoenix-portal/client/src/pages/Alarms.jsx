@@ -196,7 +196,7 @@ function PanelTab({ clientId, isAdmin }) {
                     {/* Zones tab */}
                     {tab === 'zones' && (
                         <div className="table-card" style={{ marginTop: 8 }}>
-                            <table className="data-table">
+                            <table className="data-table card-table">
                                 <thead>
                                     <tr><th>Zone</th><th>Type</th><th>State</th><th>Bypassed</th></tr>
                                 </thead>
@@ -1248,7 +1248,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                                 <button className="btn btn-primary" type="submit">Add</button>
                             </form>
                             {txLoading ? <div className="alarm-empty">Loading…</div> : (
-                                <table className="alarm-tx-table">
+                                <table className="alarm-tx-table card-table">
                                     <thead><tr><th>Date</th><th>Description</th><th>Type</th><th>Amount</th><th></th></tr></thead>
                                     <tbody>
                                         {transactions.length === 0 && (
@@ -1305,7 +1305,7 @@ function ClientDetail({ client, onClose, onRefresh, technicians, rollups = [], r
                                     );
                                 }
                                 return (
-                                    <table className="data-table">
+                                    <table className="data-table card-table">
                                         <thead><tr><th>File</th><th>Size</th><th>Modified</th><th></th></tr></thead>
                                         <tbody>
                                             {files.map(f => (
@@ -1883,7 +1883,7 @@ export default function Alarms() {
                             <div className="alarm-empty">Loading…</div>
                         ) : (
                             <div className="table-card">
-                                <table className="data-table">
+                                <table className="data-table card-table">
                                     <thead><tr><th>Customer</th><th>First seen</th><th></th></tr></thead>
                                     <tbody>
                                         {unmon.length === 0 && (

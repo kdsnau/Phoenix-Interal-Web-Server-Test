@@ -577,7 +577,7 @@ function WorkOrdersTable({ orders, canManage, isAdmin, onEdit, onPatch, onDelete
     if (orders.length === 0) return <div className="fin-empty">No work orders yet.</div>;
     return (
         <div className="fin-table-wrap">
-            <table className="fin-table">
+            <table className="fin-table card-table">
                 <thead>
                     <tr><th>#</th><th>Work Order</th><th>Client</th><th>Amount</th><th>Status</th><th>Added By</th><th>Date</th><th></th></tr>
                 </thead>
@@ -618,7 +618,7 @@ function RfqsTable({ rfqs, canManage, onEdit, onDelete, onPrint }) {
     if (rfqs.length === 0) return <div className="fin-empty">No RFQs yet.</div>;
     return (
         <div className="fin-table-wrap">
-            <table className="fin-table">
+            <table className="fin-table card-table">
                 <thead>
                     <tr><th>#</th><th>Customer</th><th>RFQ</th><th>Status</th><th>Hours</th><th>Scheduled</th><th>Invoice #</th><th>Added</th><th></th></tr>
                 </thead>
@@ -658,7 +658,7 @@ function TxTable({ rows, kind, onEdit, onDelete }) {
     if (rows.length === 0) return <div className="fin-empty">No {kind} for this client.</div>;
     return (
         <div className="fin-table-wrap">
-            <table className="fin-table">
+            <table className="fin-table card-table">
                 <thead>
                     <tr><th>Description</th><th style={{ textAlign: 'right' }}>Total</th>
                         {kind === 'invoices' && <><th style={{ textAlign: 'right' }}>Paid</th><th style={{ textAlign: 'right' }}>Balance</th></>}
@@ -700,7 +700,7 @@ function ExpensesTable({ records, isAdmin, onDelete }) {
     if (records.length === 0) return <div className="fin-empty">No expenses recorded.</div>;
     return (
         <div className="fin-table-wrap">
-            <table className="fin-table">
+            <table className="fin-table card-table">
                 <thead><tr><th>#</th><th>Description</th><th>Amount</th><th>Added By</th><th>Date</th>{isAdmin && <th></th>}</tr></thead>
                 <tbody>
                     {records.map(r => (
@@ -738,7 +738,7 @@ function InventoryTable({ data }) {
                 {markup && <div className="stat-card"><div className="stat-label">Avg Markup</div><div className="stat-value" style={{ color: 'var(--accent)' }}>{markup}%</div></div>}
             </div>
             <div className="fin-table-wrap">
-                <table className="fin-table">
+                <table className="fin-table card-table">
                     <thead><tr><th>Category</th><th style={{ textAlign: 'right' }}>SKUs w/ Stock</th><th style={{ textAlign: 'right' }}>Units</th><th style={{ textAlign: 'right' }}>Cost Value</th><th style={{ textAlign: 'right' }}>Sale Value</th><th style={{ textAlign: 'right' }}>Markup</th></tr></thead>
                     <tbody>
                         {by_category.map(row => {
@@ -775,7 +775,7 @@ function FleetTable({ invoices }) {
     const total = invoices.reduce((s, i) => s + Number(i.amount), 0);
     return (
         <div className="fin-table-wrap">
-            <table className="fin-table">
+            <table className="fin-table card-table">
                 <thead><tr><th>Vehicle</th><th>Description</th><th>Amount</th><th>Date</th></tr></thead>
                 <tbody>
                     {invoices.map(inv => (
@@ -860,7 +860,7 @@ function MrrTab({ data }) {
             </div>
 
             <div className="fin-table-wrap">
-                <table className="fin-table">
+                <table className="fin-table card-table">
                     <thead><tr><th style={{ width: 40 }}>#</th><th>Client</th><th>Sources</th><th style={{ textAlign: 'right' }}>ARR</th><th style={{ textAlign: 'right' }}>Share</th></tr></thead>
                     <tbody>
                         {clients.map((c, i) => {
@@ -957,7 +957,7 @@ function FinClientsList({ clients, onOpen }) {
             <input placeholder="Search clients…" value={q} onChange={e => setQ(e.target.value)} style={{ maxWidth: 320, marginBottom: 14 }} />
             {list.length === 0 ? <div className="fin-empty">No clients with financial activity.</div> : (
                 <div className="fin-table-wrap">
-                    <table className="fin-table">
+                    <table className="fin-table card-table">
                         <thead>
                             <tr><th>Client</th>
                                 <th style={{ textAlign: 'right' }}>Invoiced</th>

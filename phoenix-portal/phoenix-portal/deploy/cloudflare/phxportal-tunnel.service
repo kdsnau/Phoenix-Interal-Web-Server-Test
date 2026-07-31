@@ -1,0 +1,21 @@
+# systemd unit for the Cloudflare tunnel exposing the Phoenix Portal.
+# Runs ON SATURN (the office-LAN production box), not the DigitalOcean droplet.
+# Install:
+#   sudo cp deploy/cloudflare/phxportal-tunnel.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now phxportal-tunnel
+[Unit]
+Description=Cloudflare Tunnel for phoenix.f9ndthetruth.com (Phoenix Portal on SATURN)
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=saturn
+# Adjust the binary path if cloudflared is installed elsewhere (which cloudflared).
+ExecStart=/usr/bin/cloudflared tunnel run phxportal
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

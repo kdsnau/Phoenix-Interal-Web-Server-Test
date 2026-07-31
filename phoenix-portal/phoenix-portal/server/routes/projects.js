@@ -124,6 +124,24 @@ function get(fields, keys) {
     return null;
 }
 
+/* Demo/self-contained project reports (SLACK_MOCK=1) in the same bold-label
+   value shape parseFields() expects, so the Projects page has Slack-style
+   cards without a real Slack workspace. */
+function mockProjectMessages() {
+    const now = Math.floor(Date.now() / 1000);
+    const mk = (agoDays, job, rfq, tech, work, ret) => ({
+        ts: (now - agoDays * 86400).toString(),
+        files: [],
+        text: `*Job name*\n${job}\n*RFQ*\n${rfq}\n*Technician*\n${tech}\n` +
+              `*What work was completed*\n${work}\n*Is a return trip required*\n${ret}`,
+    });
+    return [
+        mk(1, '[Demo] Verde Auto — camera expansion', 'RFQ-2041', 'Mia Tech',  'Mounted 4 dome cameras in the service bay, tested NVR.', 'No'),
+        mk(3, '[Demo] Papago Bistro — NVR service',    'RFQ-2044', 'Alex Field','Replaced failed NVR drive, rebuilt array.',              'No'),
+        mk(6, '[Demo] Saguaro Dental — annual service','RFQ-2038', 'Mia Tech',  'Inspected panel + cameras, cleaned lenses.',             'Yes'),
+    ];
+}
+
 /* -----------------------------------------------------------------------
    GET /api/projects
    Groups Slack messages by normalised job name into project cards,
@@ -132,7 +150,19 @@ function get(fields, keys) {
 router.get('/', async (req, res) => {
     try {
         const [slackResult, overrideResult, manualResult] = await Promise.all([
-            slack.conversations.history({ channel: CHANNEL_ID, limit: 1000 }),
+            // Degrade gracefully when Slack isn't configured (e.g. local dev) or the
+            // API call fails — show manual projects instead of 500-ing the whole page.
+            // SLACK_MOCK=1 serves fabricated project reports so the page has content
+            // without a real Slack workspace.
+            (process.env.SLACK_MOCK === '1'
+                ? Promise.resolve({ messages: mockProjectMessages() })
+                : CHANNEL_ID && process.env.SLACK_TOKEN
+                ? slack.conversations.history({ channel: CHANNEL_ID, limit: 1000 })
+                : Promise.resolve({ messages: [] })
+            ).catch(err => {
+                console.warn('Projects: Slack unavailable, showing manual projects only:', err.message);
+                return { messages: [] };
+            }),
             pool.query('SELECT name, completed, updated_at FROM project_completions').catch(() => ({ rows: [] })),
             pool.query('SELECT * FROM manual_projects ORDER BY created_at DESC').catch(() => ({ rows: [] })),
         ]);

@@ -6,6 +6,11 @@ const pool = new Pool({
     database: process.env.DB_NAME,
     user:     process.env.DB_USER,
     password: process.env.DB_PASSWORD,
+    // Larger pool + explicit timeouts so bursts of concurrent mobile requests
+    // don't queue behind the default 10 connections or hang without a limit.
+    max:                     parseInt(process.env.DB_POOL_SIZE, 10) || 20,
+    idleTimeoutMillis:       30000,
+    connectionTimeoutMillis: 5000,
 });
 
 pool.on('error', (err) => {

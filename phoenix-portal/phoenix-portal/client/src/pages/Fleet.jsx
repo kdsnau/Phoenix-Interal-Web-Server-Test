@@ -589,7 +589,7 @@ function VehicleDetail({ vehicleId, onClose }) {
                             </button>
                         </form>
                         <div className="table-card">
-                            <table className="data-table">
+                            <table className="data-table card-table">
                                 <thead>
                                     <tr>
                                         <th>Description</th>
@@ -640,7 +640,7 @@ function VehicleDetail({ vehicleId, onClose }) {
                             <div style={{ color: 'var(--text-dim)', fontSize: 13 }}>No inventory assigned to this vehicle yet.</div>
                         ) : (
                             <div className="table-card">
-                                <table className="data-table">
+                                <table className="data-table card-table">
                                     <thead>
                                         <tr>
                                             <th>Item</th>

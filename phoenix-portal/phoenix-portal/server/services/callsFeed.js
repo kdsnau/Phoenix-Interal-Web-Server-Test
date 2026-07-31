@@ -61,7 +61,25 @@ const CACHE_MS = 60 * 1000;
 
 /* Fetch + normalize calls. Returns { configured, channel, calls }.
    Throws on Slack API errors (caller decides how to surface them). */
+/* Demo/self-contained mode: fabricated calls so the Calls page has content
+   without connecting to a real Slack workspace. Enabled with SLACK_MOCK=1. */
+function mockCalls() {
+    const now = Math.floor(Date.now() / 1000);
+    const mk = (agoMin, category, receiver, text) => {
+        const ts = (now - agoMin * 60).toString();
+        return { ts, date: new Date(Number(ts) * 1000).toISOString(), category, receiver, text };
+    };
+    return { configured: true, channel: 'demo-calls', calls: [
+        mk(15,   'CallRail',  'Mia Tech',   '[Demo] Inbound — Saguaro Dental: camera 3 offline, wants a tech this week.'),
+        mk(95,   'CallRail',  'Alex Field', '[Demo] Inbound — Papago Bistro: NVR beeping after the drive swap.'),
+        mk(240,  'Voicemail', null,         '[Demo] Voicemail — Verde Auto: add cameras to the new parking lot, please quote.'),
+        mk(610,  'CallRail',  'Sam Ledger', '[Demo] Inbound — Ironwood Storage: invoice question on WO-2039.'),
+        mk(1500, 'Voicemail', null,         '[Demo] Voicemail — new Scottsdale lead asking about alarm monitoring.'),
+    ] };
+}
+
 async function fetchCalls() {
+    if (process.env.SLACK_MOCK === '1') return mockCalls();
     const channel = await getChannel();
     if (!slack)   { const e = new Error('Slack is not configured (SLACK_TOKEN missing).'); e.slackError = 'no_token'; throw e; }
     if (!channel) return { configured: false, channel: '', calls: [] };

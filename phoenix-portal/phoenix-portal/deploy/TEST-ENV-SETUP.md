@@ -3,21 +3,15 @@
 Goal: run a full copy of the portal against a **copy** of the production database,
 so testing never touches prod. Separate repo checkout + DB + port + pm2 process.
 
-> **Confirm first:** which repo does this test env use?
-> - **This repo (`PHX-APP`)** — has all our work (security fixes, mobile app UI,
->   seeds, gate). **FLATTENED** layout: `client/` and `server/` are at the repo root
->   (NOT the double-nested `phoenix-portal/phoenix-portal/` of the original repo).
->   Paths below assume this. **Recommended** — validates our changes on real data.
-> - **Original `Phoenix-Interal-Web-Server-Test`** — mirrors current prod code
->   (our improvements are NOT in it), and it has no `test` branch. If you use this,
->   the double-nested paths from the original template apply instead.
+Repo: **`git@github.com:kdsnau/Phoenix-Interal-Web-Server-Test.git`**, branch **`phx-test`**
+(the team's repo; double-nested layout — the app lives under `phoenix-portal/phoenix-portal/`).
 
 ## 1. Code
 ```bash
 cd ~/Documents
-git clone git@github.com:phxcams/PHX-APP.git PHXSECTEST-test
-cd PHXSECTEST-test          # flattened: client/ and server/ are right here
-git checkout test
+git clone git@github.com:kdsnau/Phoenix-Interal-Web-Server-Test.git PHXSECTEST-test
+cd PHXSECTEST-test/phoenix-portal/phoenix-portal     # <- nested app root (client/ + server/ here)
+git checkout phx-test
 npm --prefix server install
 npm --prefix client install
 ```
@@ -94,9 +88,7 @@ sudo nginx -t && sudo systemctl reload nginx
 - NEVER put prod DB creds or live integration keys in this `.env`.
 - Production is only ever READ (`pg_dump`); `pg_restore` writes only to `_test`.
 
-## Corrections vs the original template
-- Real repo URL + **flattened** path (the `phoenix-portal/phoenix-portal` path was
-  for the original repo).
+## Notes vs the original template
 - `CLIENT_ORIGIN=` (the template had a `:` typo) + a complete `.env`, not 3 keys.
 - `VITE_API_URL=/api` before the client build, else API calls break behind `.test`.
 - pm2 started with `cwd=server` so `dotenv` loads `server/.env`.
